@@ -37,6 +37,7 @@ const STATE_DIR = path.join(BASE_DIR, 'state');
 const BOUNDS_FILE = path.join(BASE_DIR, 'window.json'); // {x, y, width}
 const ALIASES_FILE = path.join(BASE_DIR, 'aliases.json'); // {cwd: apelido}
 const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec, escalateIdle, shortcut}
+const SETTINGS_BOUNDS_FILE = path.join(BASE_DIR, 'settings-window.json'); // {x, y, width, height}
 const AUTOSTART_FILE = path.join(process.env.HOME, '.config/autostart/ai-traffic-lights.desktop');
 
 // ---- migração da era claude-traffic-light (pré-rename) ----
@@ -496,15 +497,36 @@ function createTray() {
 
 // ---- janela de Preferências (threshold de idle + atalho) ----
 let settingsWin = null;
+let settingsBoundsTimer = null;
+function loadSettingsBounds() {
+  try { return JSON.parse(fs.readFileSync(SETTINGS_BOUNDS_FILE, 'utf8')); } catch { return null; }
+}
+function saveSettingsBounds() {
+  if (!settingsWin || settingsWin.isDestroyed()) return;
+  clearTimeout(settingsBoundsTimer);
+  settingsBoundsTimer = setTimeout(() => {
+    try {
+      const [x, y] = settingsWin.getPosition();
+      const [width, height] = settingsWin.getSize();
+      fs.writeFileSync(SETTINGS_BOUNDS_FILE, JSON.stringify({ x, y, width, height }));
+    } catch {}
+  }, 300);
+}
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
+  const b = loadSettingsBounds() || {};
   settingsWin = new BrowserWindow({
-    width: 480, height: 320, minWidth: 380, minHeight: 260, resizable: true,
+    width: b.width || 480, height: b.height || 320,
+    minWidth: 380, minHeight: 260, resizable: true,
+    x: typeof b.x === 'number' ? b.x : undefined,
+    y: typeof b.y === 'number' ? b.y : undefined,
     title: 'Preferências',
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
+  settingsWin.on('resize', saveSettingsBounds);
+  settingsWin.on('move', saveSettingsBounds);
   settingsWin.on('closed', () => { settingsWin = null; });
 }
 
