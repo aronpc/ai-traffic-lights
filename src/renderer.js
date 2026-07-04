@@ -3,6 +3,7 @@
 
 let sessions = [];
 let expanded = true;
+let renaming = false;                      // input de rename aberto → suspende render()
 let aliases = {};                          // cwd -> apelido
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
@@ -62,28 +63,43 @@ function alertAwaiting(s) {
 }
 
 // ---- rename in-place ----
+// Enquanto o input está aberto, `renaming` suspende render() — senão o
+// replaceChildren() de um tick de idle (2s) ou de um evento de sessão
+// arrancaria o input do DOM no meio da digitação (issue #2).
 function startRename(s, labelEl) {
-  if (!s.cwd) return;
+  if (!s.cwd || renaming) return;
+  renaming = true;
   const input = document.createElement('input');
   input.className = 'row-input';
   input.value = aliases[s.cwd] || basename(s.cwd);
   labelEl.replaceChildren(input);
   input.focus(); input.select();
-  const commit = () => {
-    window.trafficLight.setAlias(s.cwd, input.value);
-    aliases[s.cwd] = input.value.trim();
+
+  // finish() é idempotente (`done`): ao commitar via Enter, o render()
+  // seguinte remove o input e dispara um blur — que NÃO deve re-salvar
+  // (e no Escape, jamais salvar o texto digitado).
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    renaming = false;
+    if (save) {
+      window.trafficLight.setAlias(s.cwd, input.value);
+      aliases[s.cwd] = input.value.trim();
+    }
     render();
   };
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { render(); }
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
     e.stopPropagation();
   });
-  input.addEventListener('blur', commit);
+  input.addEventListener('blur', () => finish(true));   // clicar fora = commit
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
 function render() {
+  if (renaming) return;                    // não destrói o input aberto (issue #2)
   const nowSec = Math.floor(Date.now() / 1000);
   let worst = 'done';
   const tally = { processing: 0, done: 0, awaiting: 0 };
