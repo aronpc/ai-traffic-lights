@@ -37,6 +37,9 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
   (via D-Bus `TILIX_ID`)
 - 🔔 Beep + notificação nativa quando uma sessão fica vermelha (rate-limited)
 - ⏰ Escalada de idle: sessão pronta e esquecida vira vermelha (configurável)
+- 🔔 **Snooze de alerta** por sessão (silencia o apito por 1h numa sessão vermelha)
+- 🔝 Sessões **ordenadas por urgência** (vermelho → amarelo → verde); **ícone do
+  tray dinâmico** pinta com a pior cor e mostra a contagem no hover
 - ✏️ Duplo-clique renomeia a sessão (apelidos persistem por projeto)
 - ⚙️ **Janela de Preferências** (ícone de engrenagem): threshold de idle,
   atalho global, autostart, instalar/remover hooks, mostrar/ocultar, sair —

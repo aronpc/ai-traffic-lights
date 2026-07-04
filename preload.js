@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   setAlias: (cwd, alias) => ipcRenderer.send('set-alias', { cwd, alias }),
   notify: (title, body) => ipcRenderer.send('notify', { title, body }), // alerta vermelho
   toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
+  setTrayLevel: (info) => ipcRenderer.send('set-tray-level', info), // tray dinâmico: pior cor + contagem
   // Settings (threshold de idle + atalho) — lidos/gravados pela janela de Preferências
   getSettings: () => ipcRenderer.invoke('get-settings'),
   getLang: () => ipcRenderer.invoke('get-lang'),              // idioma da UI (en|pt)

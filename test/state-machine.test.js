@@ -2,7 +2,7 @@
 // agentOf (agents.js). Rodam com `node --test` (nativo, sem dependências).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { computeState, iconFor } = require('../src/state-machine.js');
+const { computeState, iconFor, sortByUrgency } = require('../src/state-machine.js');
 const { agentOf } = require('../src/agents.js');
 
 const NOW = 1_800_000_000;                 // epoch fixo (testes determinísticos)
@@ -52,6 +52,29 @@ test('computeState: escalada idle só no Stop, limite 5min', () => {
 
 test('computeState: evento desconhecido → verde conservador', () => {
   assert.deepEqual(computeState(state('ativo'), NOW), { level: 'done', reason: null });
+});
+
+test('sortByUrgency: vermelhos no topo; dentro de awaiting a mais antiga primeiro', () => {
+  const mk = (level, ts) => ({ s: { last_event_ts: ts }, st: { level } });
+  // verde novo (100), vermelho recente (200), amarelo (300), vermelho antigo (50)
+  const ranked = [mk('done', 100), mk('awaiting', 200), mk('processing', 300), mk('awaiting', 50)];
+  const out = sortByUrgency(ranked).map((r) => `${r.st.level}:${r.s.last_event_ts}`);
+  assert.deepEqual(out, ['awaiting:50', 'awaiting:200', 'processing:300', 'done:100'], '🔴(antigo) → 🔴(novo) → 🟡 → 🟢');
+});
+
+test('sortByUrgency: não muta o array original', () => {
+  const ranked = [{ s: { last_event_ts: 2 }, st: { level: 'done' } }, { s: { last_event_ts: 1 }, st: { level: 'awaiting' } }];
+  const snap = ranked.map((r) => r.st.level);
+  sortByUrgency(ranked);
+  assert.deepEqual(ranked.map((r) => r.st.level), snap, 'original intacto');
+});
+
+test('sortByUrgency: dentro de done/processing o mais recente vem primeiro', () => {
+  const ranked = [
+    { s: { last_event_ts: 10 }, st: { level: 'done' } },
+    { s: { last_event_ts: 90 }, st: { level: 'done' } },
+  ];
+  assert.deepEqual(sortByUrgency(ranked).map((r) => r.s.last_event_ts), [90, 10], 'recente antes');
 });
 
 test('iconFor: cada reason tem seu ícone; fallback por level', () => {

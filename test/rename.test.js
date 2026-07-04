@@ -38,7 +38,7 @@ async function setup() {
       requestSessions() {}, setExpanded() {}, autoHeight() {},
       resizeStart() {}, resizeMove() {}, focus() {},
       getAliases: () => Promise.resolve({}), setAlias: (cwd, v) => calls.setAlias.push([cwd, v]),
-      notify() {}, toggleVisibility() {},
+      notify() {}, toggleVisibility() {}, setTrayLevel() {},
       getSettings: () => Promise.resolve(null), onSettingsChanged() {}, // settings (não usados no teste)
       saveSettings() {}, openSettings() {},
       getLang: () => Promise.resolve('pt'),                             // i18n

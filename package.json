@@ -30,7 +30,7 @@
       "src/**/*",
       "hooks/**/*",
       "adapters/**/*",
-      "assets/tray-icon.png"
+      "assets/tray-icon*.png"
     ],
     "linux": {
       "target": ["AppImage", "deb"],
