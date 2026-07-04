@@ -342,6 +342,17 @@ function saveBounds() {
   }, 300);
 }
 
+// Aplica _NET_WM_STATE_SKIP_TASKBAR + SKIP_PAGER via wmctrl no X11 id da
+// janela. No Wayland wmctrl é inócuo (silencioso). Idempotente.
+function applySkip() {
+  if (!win || win.isDestroyed() || IS_WAYLAND) return;
+  try {
+    const buf = win.getNativeWindowHandle(); // X11: XID little-endian
+    const xid = '0x' + buf.readUInt32LE(0).toString(16).padStart(8, '0');
+    execFileSync('wmctrl', ['-i', '-r', xid, '-b', 'add,skip_taskbar,skip_pager'], { timeout: 1500 });
+  } catch {}
+}
+
 function createWindow() {
   const display = screen.getPrimaryDisplay();
   const scrW = display.workAreaSize.width;
@@ -356,9 +367,8 @@ function createWindow() {
     frame: false,
     transparent: true,
     resizable: true,
-    skipTaskbar: true,
-    type: 'toolbar',        // X11: _NET_WM_WINDOW_TYPE_TOOLBAR → fora do alt-tab/dock
-    maximizable: false,     // (não implementado no Linux; vale nas demais plataformas)
+    skipTaskbar: true,       // fora da barra de tarefas e do alt-tab (SKIP_TASKBAR/PAGER)
+    maximizable: false,      // (não implementado no Linux; vale nas demais plataformas)
     fullscreenable: false,
     alwaysOnTop: true,
     hasShadow: false,
@@ -373,6 +383,14 @@ function createWindow() {
   // Linux/Mutter ignora `maximizable` → reverte na hora qualquer maximize
   // (Super+↑, drag no topo da tela, tiling). Overlay nunca vira tela cheia.
   win.on('maximize', () => { try { win.unmaximize(); } catch {} });
+  // skipTaskbar FORÇADO via wmctrl: no Mutter, com frameless+transparent+
+  // alwaysOnTop, nem a option `skipTaskbar` nem setSkipTaskbar() geram o
+  // hint X11 _NET_WM_STATE_SKIP_TASKBAR/PAGER de forma confiável (ele é
+  // rebuildado e descartado a cada chamada de always-on-top). O `type:
+  // 'toolbar'` fazia o hint na marra — mas removia _NET_WM_ACTION_MOVE,
+  // travando a janela. wmctrl aplica o skip SEM tocar nas allowed actions.
+  // O IS_LINUX/X11 guarda isso: no Wayland nativo wmctrl é inócuo.
+  win.once('ready-to-show', () => { try { win.setSkipTaskbar(true); } catch {} applySkip(); });
   win.loadFile(path.join(__dirname, 'src/index.html'));
   win.webContents.on('did-finish-load', sendSessions);
   win.on('resize', saveBounds);
@@ -514,7 +532,7 @@ app.whenReady().then(() => {
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })
     .on('all', () => sendSessions());
   reapDead();
-  setInterval(() => { _discAt = 0; reapDead(); sendSessions(); }, 5000); // descobre novos + limpa mortos
+  setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
 });
 
 app.on('window-all-closed', () => app.quit());
