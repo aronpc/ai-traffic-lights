@@ -92,10 +92,11 @@ main() {
     pid="$ppid"
   done
 
-  # focus_url: URI nativa de foco do terminal, quando existir. Warp exporta
-  # WARP_FOCUS_URL (warp://session/<uuid>) — abrir essa URI faz raise da janela
-  # E troca pra aba/pane da sessão (aba é invisível pro X11; só isso alcança).
-  local win="${WINDOWID:-}" tp="${TERM_PROGRAM:-}" zs="${ZELLIJ_SESSION_NAME:-}" furl="${WARP_FOCUS_URL:-}"
+  # Canais nativos de foco de aba (invisível pro X11; só o terminal alcança):
+  #  Warp  → WARP_FOCUS_URL (warp://session/<uuid>) via xdg-open
+  #  Tilix → TILIX_ID (uuid) via gdbus activate-terminal
+  local win="${WINDOWID:-}" tp="${TERM_PROGRAM:-}" zs="${ZELLIJ_SESSION_NAME:-}"
+  local furl="${WARP_FOCUS_URL:-}" tid="${TILIX_ID:-}"
 
   # windowid REAL: no UserPromptSubmit/SessionStart a janela focada do desktop
   # É o terminal da sessão (o usuário acabou de digitar nela). Resolve Warp
@@ -129,7 +130,7 @@ main() {
     --argjson pid "$agent_pid" \
     --argjson ts "$ts" \
     --arg agent "$AGENT" --arg cevt "$evt" \
-    --arg awin "$awin" --arg furl "$furl" \
+    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" \
     --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg model "$model" --arg tpath "$transcript" '
       (try ($exs | fromjson) catch {}) as $ex
       | ($in.session_id // "") as $sid
@@ -146,6 +147,7 @@ main() {
           term_program: (if $tp == "" then null else $tp end),
           windowid: (if $awin != "" then $awin elif $win != "" then $win else ($ex.windowid // null) end),
           focus_url: (if $furl != "" then $furl else ($ex.focus_url // null) end),
+          tilix_id: (if $tid != "" then $tid else ($ex.tilix_id // null) end),
           zellij_session: (if $zs == "" then null else $zs end),
           last_event: $evt, last_event_ts: $ts,
           last_tool: (if $tool == "" then null else $tool end),

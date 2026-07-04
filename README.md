@@ -99,7 +99,8 @@ Claude Code session ──hooks──▶ traffic-hook.sh (adapter, <25ms, fork-f
   "cwd": "/home/user/project",   // project dir (basename = default label)
   "term_program": "WarpTerminal",// source terminal (null if unknown)
   "windowid": "67108868",        // X11 window of the session — see below
-  "focus_url": "warp://session/8726…", // terminal-native focus URI (Warp)
+  "focus_url": "warp://session/8726…", // Warp: focus URI (xdg-open)
+  "tilix_id": null,              // Tilix: terminal id for activate-terminal (D-Bus)
   "zellij_session": null,        // zellij session name, when inside zellij
   "last_event": "Stop",          // last hook_event_name
   "last_event_ts": 1783124001,   // epoch of the last event (UTC)
@@ -116,20 +117,25 @@ Claude Code session ──hooks──▶ traffic-hook.sh (adapter, <25ms, fork-f
 
 ### Focusing the right window — and the right tab
 
-- **`windowid`**: at `UserPromptSubmit`/`SessionStart` the desktop's focused
-  window **is** the session's terminal (you just typed in it). The adapter
-  snapshots `xdotool getactivewindow` at that instant and preserves it across
-  events. This disambiguates single-process multi-window terminals (Warp,
-  Tilix, GNOME Terminal) and zellij/tmux (whose process tree leads to a
-  daemonized server, not the visible terminal).
-- **`focus_url`**: tabs don't exist in X11 — only the terminal itself can
-  reach them. Warp exports `WARP_FOCUS_URL=warp://session/<uuid>` in every
-  session; opening it raises the window **and** activates the exact tab/pane.
-  Terminals with similar mechanisms plug in via the `FOCUS_URL_SCHEMES`
-  allowlist (main.js).
+**Window** (`windowid`): captured at `UserPromptSubmit`/`SessionStart` (the
+focused window then **is** the session's terminal) via `xdotool
+getactivewindow`, preserved across events. Before using it, `focusSession()`
+**validates** it against the session's process tree — a stale or recycled id
+whose window no longer belongs to the session is discarded (so a click never
+focuses the wrong window); the fallback is the first window owned by the
+session's process.
 
-`focusSession()` layers: exact `windowid` → process-ancestry fallback →
-`focus_url` for the tab.
+**Tab** (invisible to X11 — only the terminal can select it):
+
+| Terminal | Channel | Env var captured |
+|---|---|---|
+| Warp | `xdg-open warp://session/<uuid>` | `WARP_FOCUS_URL` |
+| Tilix | `gdbus … org.gtk.Actions.Activate activate-terminal <id>` | `TILIX_ID` |
+
+The decision logic (`pickWindow`/`tabChannel`) is a pure module,
+[`src/focus.js`](src/focus.js) — `main.js` only does the I/O. On X11 the window
+is raised, then the tab is selected; on Wayland the tab channel goes first
+(wmctrl only sees XWayland).
 
 ### Event → state mapping (computeState, renderer)
 
@@ -202,6 +208,10 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [ ] Codex adapter (registry entry ready in `src/agents.js`)
 - [x] Packaging: AppImage + .deb (electron-builder) — see [Releases](https://github.com/aronpc/ai-traffic-lights/releases)
 - [x] Test suite (`node:test`) + CI
+- [x] Reliable click-to-focus: window-id validation + exact tab in Warp
+  (`focus_url`) and Tilix (`TILIX_ID` via D-Bus)
+- [ ] Tab focus for terminals without a native channel (GNOME Terminal,
+  zellij/tmux)
 - [ ] Full native-Wayland window focus (today: XWayland + Warp focus URI +
   relaunch-to-toggle)
 - [ ] Configurable idle threshold & shortcut

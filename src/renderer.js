@@ -133,7 +133,7 @@ function render() {
     const li = document.createElement('li');
     li.className = 'row';
     li.title = 'clique: focar terminal · duplo-clique: renomear';
-    li.addEventListener('click', () => window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url }));
+    li.addEventListener('click', () => window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id }));
 
     const led = document.createElement('span');
     led.className = `led led--${st.level}`;

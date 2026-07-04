@@ -27,7 +27,8 @@ export const AiTrafficLights = async ({ directory, $ }) => {
   const boot = {
     term_program: process.env.TERM_PROGRAM || null,
     windowid: process.env.WINDOWID || null,
-    focus_url: process.env.WARP_FOCUS_URL || null,
+    focus_url: process.env.WARP_FOCUS_URL || null,  // Warp: warp://session/<uuid>
+    tilix_id: process.env.TILIX_ID || null,         // Tilix: uuid p/ activate-terminal
     zellij_session: process.env.ZELLIJ_SESSION_NAME || null,
   }
   let lastModel = null    // último modelID visto (mensagens do assistant)
@@ -57,6 +58,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
         term_program: boot.term_program,
         windowid: capturedWin || ex.windowid || boot.windowid || null,
         focus_url: boot.focus_url || ex.focus_url || null,
+        tilix_id: boot.tilix_id || ex.tilix_id || null,
         zellij_session: boot.zellij_session,
         last_event: evt,
         last_event_ts: now,

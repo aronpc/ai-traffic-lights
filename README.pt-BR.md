@@ -98,7 +98,8 @@ Sessão Claude Code ──hooks──▶ traffic-hook.sh (adapter, <25ms, fork-f
   "cwd": "/home/user/projeto",   // diretório do projeto (basename = label padrão)
   "term_program": "WarpTerminal",// terminal de origem (null se desconhecido)
   "windowid": "67108868",        // janela X11 da sessão — ver abaixo
-  "focus_url": "warp://session/8726…", // URI nativa de foco do terminal (Warp)
+  "focus_url": "warp://session/8726…", // Warp: URI de foco (xdg-open)
+  "tilix_id": null,              // Tilix: id do terminal p/ activate-terminal (D-Bus)
   "zellij_session": null,        // nome da sessão zellij, se dentro do zellij
   "last_event": "Stop",          // último hook_event_name
   "last_event_ts": 1783124001,   // epoch do último evento (UTC)
@@ -115,20 +116,24 @@ xdotool ou hex `0x…`; o app normaliza). `pid` é inteiro.
 
 ### Focando a janela certa — e a aba certa
 
-- **`windowid`**: no `UserPromptSubmit`/`SessionStart`, a janela focada do
-  desktop **é** o terminal da sessão (você acabou de digitar nela). O adapter
-  fotografa `xdotool getactivewindow` nesse instante e preserva o valor entre
-  eventos. Isso desambigua terminais single-process multi-janela (Warp, Tilix,
-  GNOME Terminal) e zellij/tmux (cuja árvore de processos leva a um server
-  daemonizado, não ao terminal visível).
-- **`focus_url`**: abas não existem pro X11 — só o próprio terminal as
-  alcança. O Warp exporta `WARP_FOCUS_URL=warp://session/<uuid>` em toda
-  sessão; abrir a URI faz raise da janela **e** ativa a aba/pane exata.
-  Terminais com mecanismos parecidos entram pela allowlist
-  `FOCUS_URL_SCHEMES` (main.js).
+**Janela** (`windowid`): capturado no `UserPromptSubmit`/`SessionStart` (a
+janela focada nesse instante **é** o terminal da sessão) via `xdotool
+getactivewindow`, preservado entre eventos. Antes de usar, o `focusSession()`
+**valida** o id contra a árvore de processos da sessão — um id obsoleto ou
+reciclado, cuja janela não pertence mais à sessão, é descartado (um clique
+nunca foca a janela errada); o fallback é a 1ª janela do processo da sessão.
 
-O `focusSession()` compõe camadas: `windowid` exato → fallback por
-ancestralidade de processos → `focus_url` para a aba.
+**Aba** (invisível pro X11 — só o terminal a seleciona):
+
+| Terminal | Canal | Env var capturada |
+|---|---|---|
+| Warp | `xdg-open warp://session/<uuid>` | `WARP_FOCUS_URL` |
+| Tilix | `gdbus … org.gtk.Actions.Activate activate-terminal <id>` | `TILIX_ID` |
+
+A lógica de decisão (`pickWindow`/`tabChannel`) é um módulo puro,
+[`src/focus.js`](src/focus.js) — o `main.js` só faz o I/O. No X11 a janela sobe
+e então a aba é selecionada; no Wayland o canal de aba vai primeiro (wmctrl só
+enxerga XWayland).
 
 ### Mapeamento evento → estado (computeState, renderer)
 
@@ -201,6 +206,9 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [ ] Adapter do Codex (entrada do registro pronta em `src/agents.js`)
 - [x] Empacotamento: AppImage + .deb (electron-builder) — ver [Releases](https://github.com/aronpc/ai-traffic-lights/releases)
 - [x] Suíte de testes (`node:test`) + CI
+- [x] Click-to-focus confiável: validação do window-id + aba exata no Warp
+  (`focus_url`) e Tilix (`TILIX_ID` via D-Bus)
+- [ ] Foco de aba para terminais sem canal nativo (GNOME Terminal, zellij/tmux)
 - [ ] Foco de janela Wayland nativo completo (hoje: XWayland + URI de foco do
   Warp + relançar-para-alternar)
 - [ ] Threshold de idle e atalho configuráveis

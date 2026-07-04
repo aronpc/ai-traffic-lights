@@ -10,6 +10,7 @@ const { execFileSync } = require('child_process');
 const chokidar = require('chokidar');
 const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
+const focus = require('./src/focus');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
 
@@ -195,70 +196,62 @@ function discoveredTerminalAgents() {
 }
 
 // ---- click-to-focus: ativa a janela (e a ABA, quando possível) da sessão ----
-// Estratégia em camadas (X11):
-//  1) windowid do state file — capturado pelo hook via `xdotool getactivewindow`
-//     no último UserPromptSubmit/SessionStart. Único método que desambigua
-//     terminais single-process multi-janela (Warp, Tilix, gnome-terminal) e
-//     sessões dentro de zellij/tmux (árvore de processos descolada do terminal).
-//  2) fallback: ancestralidade de processos → 1ª janela do PID do emulador.
-//     Acha o app certo, mas pode errar a janela se o processo tiver várias.
-//  3) focus_url — URI nativa de foco do terminal (Warp: warp://session/<uuid>).
-//     Abas são invisíveis pro X11; só o próprio terminal alcança a aba certa.
-//     Roda por último: o raise da janela (1/2) já aconteceu; a URI troca a aba
-//     (no Warp ela também faz raise — camadas se reforçam, nunca conflitam).
-const FOCUS_URL_SCHEMES = ['warp://']; // allowlist — só abrimos URI que conhecemos
+// Duas responsabilidades separadas (a decisão pura vive em src/focus.js):
+//  • JANELA (X11/wmctrl): pickWindow() valida o windowid gravado contra a
+//    árvore de processos da sessão — um id obsoleto/reciclado não foca mais a
+//    janela errada (issue #1, H2); sem id válido, 1ª janela do processo.
+//  • ABA (canal nativo do terminal, invisível pro X11): tabChannel() escolhe
+//    Warp (`xdg-open warp://session/<uuid>`) ou Tilix (`gdbus activate-terminal
+//    <TILIX_ID>`). É a única forma de alcançar a aba/pane certa.
+// Ordem: no X11, raise a janela e então troca a aba. No Wayland, a aba primeiro
+// (wmctrl só enxerga XWayland) e o raise vira tentativa-bônus.
+function ancestorPidsOf(pid) {
+  const set = new Set();
+  let p = pid;
+  for (let i = 0; i < 25 && p > 1; i++) {
+    set.add(p);
+    try {
+      const m = fs.readFileSync(`/proc/${p}/status`, 'utf8').match(/^PPid:\s+(\d+)/m);
+      if (!m) break;
+      p = parseInt(m[1], 10);
+    } catch { break; }
+  }
+  return set;
+}
+
+function raiseWindow(windowid, pid) {
+  if (!pid) return;
+  let list = '';
+  try { list = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch { return; }
+  const wins = [];
+  for (const line of list.split('\n')) {
+    const m = line.match(/^(\S+)\s+\S+\s+(\d+)\s/);
+    if (m) wins.push({ id: m[1], idNum: parseInt(m[1], 16), pid: parseInt(m[2], 10) });
+  }
+  const id = focus.pickWindow(windowid, wins, ancestorPidsOf(pid));
+  if (id) { try { execFileSync('wmctrl', ['-i', '-a', id], { timeout: 2000 }); } catch {} }
+}
+
+function focusTab(state) {
+  const ch = focus.tabChannel(state);
+  if (!ch) return;
+  try {
+    if (ch.kind === 'warp') {
+      execFileSync('xdg-open', [ch.value], { timeout: 2000 });
+    } else if (ch.kind === 'tilix') {
+      execFileSync('gdbus', ['call', '--session', '--dest', 'com.gexperts.Tilix',
+        '--object-path', '/com/gexperts/Tilix', '--method', 'org.gtk.Actions.Activate',
+        'activate-terminal', `[<'${ch.value}'>]`, '{}'], { timeout: 2000 });
+    }
+  } catch {}
+}
+
 function focusSession(target) {
-  const pid = target && target.pid;
-  const windowid = target && target.windowid;
-  const focusUrl = target && target.focus_url;
-
-  // aba certa dentro da janela (Warp) — via handler do scheme
-  const openFocusUrl = () => {
-    if (focusUrl && FOCUS_URL_SCHEMES.some((s) => String(focusUrl).startsWith(s))) {
-      try { execFileSync('xdg-open', [String(focusUrl)], { timeout: 2000 }); } catch {}
-    }
-  };
-
-  // raise da janela via wmctrl: (1) windowid exato, (2) ancestralidade de PID
-  const raiseWindow = () => {
-    let list = '';
-    try { list = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch {}
-    const wins = [];
-    for (const line of list.split('\n')) {
-      const m = line.match(/^(\S+)\s+\S+\s+(\d+)\s/);
-      if (m) wins.push({ id: m[1], idNum: parseInt(m[1], 16), pid: parseInt(m[2], 10) });
-    }
-    const activate = (id) => { try { execFileSync('wmctrl', ['-i', '-a', id], { timeout: 2000 }); } catch {} };
-
-    // 1) janela exata (valida contra a lista — id pode estar obsoleto)
-    if (windowid) {
-      const str = String(windowid);
-      const wid = parseInt(str, str.startsWith('0x') ? 16 : 10);
-      const hit = wins.find((w) => w.idNum === wid);
-      if (hit) { activate(hit.id); return; }
-    }
-
-    // 2) ancestralidade de processos
-    if (!pid) return;
-    const ancestors = new Set();
-    let p = pid;
-    for (let i = 0; i < 25 && p > 1; i++) {
-      ancestors.add(p);
-      try {
-        const m = fs.readFileSync(`/proc/${p}/status`, 'utf8').match(/^PPid:\s+(\d+)/m);
-        if (!m) break;
-        p = parseInt(m[1], 10);
-      } catch { break; }
-    }
-    const hit = wins.find((w) => ancestors.has(w.pid));
-    if (hit) activate(hit.id);
-  };
-
-  // Wayland: wmctrl só alcança XWayland — a URI nativa do terminal é o
-  // caminho confiável e vai PRIMEIRO (o raise vira tentativa-bônus).
-  // X11: raise primeiro, URI por último (troca a aba após a janela subir).
-  if (IS_WAYLAND) { openFocusUrl(); raiseWindow(); }
-  else { raiseWindow(); openFocusUrl(); }
+  if (!target) return;
+  const raise = () => raiseWindow(target.windowid, target.pid);
+  const tab = () => focusTab(target);
+  if (IS_WAYLAND) { tab(); raise(); }
+  else { raise(); tab(); }
 }
 
 // ---- aliases (apelido manual por cwd) ----
