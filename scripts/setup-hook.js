@@ -34,23 +34,31 @@ function preflight() {
 
 try {
   if (process.argv.includes('--remove')) {
-    const r = installer.remove();
-    console.log(r.removed
-      ? `✓ hook removido (${r.removed} entradas). State files antigos são limpos pelo próprio overlay.`
-      : '✓ nada instalado.');
+    for (const id of Object.keys(installer.TARGETS)) {
+      const t = installer.TARGETS[id];
+      const r = installer.remove(id);
+      console.log(r.removed
+        ? `✓ ${t.label}: hook removido (${r.removed} entradas).`
+        : `✓ ${t.label}: nada instalado.`);
+    }
+    console.log('  State files antigos são limpos pelo próprio overlay.');
   } else {
     preflight();
     const dest = installer.syncHookCopy(path.resolve(__dirname, '..', 'hooks', 'traffic-hook.sh'), BASE_DIR);
-    const r = installer.install(`bash ${dest}`);
-    if (r.skipped.length) console.warn(`⚠ eventos com formato inesperado, pulados: ${r.skipped.join(', ')}`);
-    if (!r.wrote) {
-      console.log('✓ hook já instalado e atualizado — nada a fazer.');
-    } else {
-      console.log(`✓ hook instalado (${r.added} eventos adicionados, ${r.updated} caminhos atualizados).`);
-      console.log(`  Comando registrado: bash ${dest}`);
-      console.log('  Sessões novas do Claude Code aparecem no semáforo imediatamente;');
-      console.log('  sessões já abertas, a partir do próximo evento delas.');
+    for (const id of Object.keys(installer.TARGETS)) {
+      const t = installer.TARGETS[id];
+      if (!installer.available(id)) {
+        console.log(`- ${t.label}: ${t.detectDir} não existe — pulado.`);
+        continue;
+      }
+      const r = installer.install(id, dest);
+      if (r.skipped.length) console.warn(`⚠ ${t.label}: eventos com formato inesperado, pulados: ${r.skipped.join(', ')}`);
+      console.log(!r.wrote
+        ? `✓ ${t.label}: já instalado e atualizado.`
+        : `✓ ${t.label}: instalado (${r.added} eventos, ${r.updated} caminhos atualizados).`);
     }
+    console.log(`  Cópia do hook: ${dest}`);
+    console.log('  Sessões novas aparecem no semáforo imediatamente; as já abertas, no próximo evento.');
   }
 } catch (e) {
   console.error(`✗ ${e.message}`);

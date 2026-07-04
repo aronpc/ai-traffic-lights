@@ -58,9 +58,15 @@ function migrateOldBase() {
   } catch {}
 }
 
-// Mapa comm(/proc) → agent id, derivado do registro (src/agents.js).
+// Mapas de detecção → agent id, derivados do registro (src/agents.js).
+// comm: nome do processo. argv: basename do script (p/ CLIs Node cujo comm
+// é "node" — ex.: gemini — identifica pelo caminho em /proc/<pid>/cmdline).
 const COMM_TO_AGENT = new Map();
-for (const [id, a] of Object.entries(AGENTS)) for (const c of a.comm || []) COMM_TO_AGENT.set(c, id);
+const ARGV_TO_AGENT = new Map();
+for (const [id, a] of Object.entries(AGENTS)) {
+  for (const c of a.comm || []) COMM_TO_AGENT.set(c, id);
+  for (const s of a.argv || []) ARGV_TO_AGENT.set(s, id);
+}
 
 const DEFAULT_W = 360;
 const HEADER_H = 58; // tem que casar com --header-h do CSS
@@ -160,7 +166,14 @@ function discoverAgentProcs() {
       if (!/^\d+$/.test(ent)) continue;
       try {
         const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
-        const agent = COMM_TO_AGENT.get(comm);
+        let agent = COMM_TO_AGENT.get(comm);
+        // CLIs Node (comm="node"): identifica pelo basename do script no argv
+        if (!agent && comm === 'node' && ARGV_TO_AGENT.size) {
+          try {
+            const argv = fs.readFileSync(`/proc/${ent}/cmdline`, 'utf8').split('\0');
+            agent = ARGV_TO_AGENT.get(path.basename(argv[1] || ''));
+          } catch {}
+        }
         if (!agent) continue;
         const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
         const m = status.match(/^PPid:\s+(\d+)/m);
@@ -386,16 +399,25 @@ function toggleWin() {
 function installHookFromApp() {
   try {
     const dest = hookInstaller.syncHookCopy(path.join(__dirname, 'hooks/traffic-hook.sh'), BASE_DIR);
-    const r = hookInstaller.install(`bash ${dest}`);
-    notifyUser(r.wrote
-      ? `Hook instalado (${r.added} eventos, ${r.updated} atualizados).`
-      : 'Hook já instalado e atualizado.');
+    const parts = [];
+    for (const id of Object.keys(hookInstaller.TARGETS)) {
+      const t = hookInstaller.TARGETS[id];
+      if (!hookInstaller.available(id)) continue;      // agente não presente na máquina
+      const r = hookInstaller.install(id, dest);
+      parts.push(`${t.label}: ${r.wrote ? `instalado (${r.added}+${r.updated})` : 'ok'}`);
+    }
+    notifyUser(parts.length ? parts.join(' · ') : 'Nenhum agente suportado encontrado.');
   } catch (e) { notifyUser(`Falha ao instalar hook: ${e.message}`); }
 }
 function removeHookFromApp() {
   try {
-    const r = hookInstaller.remove();
-    notifyUser(r.removed ? `Hook removido (${r.removed} entradas).` : 'Nada instalado.');
+    const parts = [];
+    for (const id of Object.keys(hookInstaller.TARGETS)) {
+      const t = hookInstaller.TARGETS[id];
+      const r = hookInstaller.remove(id);
+      if (r.removed) parts.push(`${t.label}: ${r.removed} removidas`);
+    }
+    notifyUser(parts.length ? parts.join(' · ') : 'Nada instalado.');
   } catch (e) { notifyUser(`Falha ao remover hook: ${e.message}`); }
 }
 function notifyUser(body) {
@@ -412,8 +434,8 @@ function createTray() {
     { type: 'checkbox', label: 'Iniciar com o sistema', checked: autostartEnabled(),
       click: (it) => { setAutostart(it.checked); } },
     { type: 'separator' },
-    { label: 'Instalar/atualizar hook (Claude Code)', click: installHookFromApp },
-    { label: 'Remover hook', click: removeHookFromApp },
+    { label: 'Instalar/atualizar hooks (Claude, Gemini)', click: installHookFromApp },
+    { label: 'Remover hooks', click: removeHookFromApp },
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
   ]);

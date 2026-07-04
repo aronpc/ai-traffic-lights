@@ -15,8 +15,10 @@ const AGENTS = {
   // gemini-cli é script Node (#!/usr/bin/env node) e NÃO seta process.title:
   // /proc/comm = "node" (verificado empiricamente) — comm vazio de propósito,
   // senão a sonda casaria com QUALQUER processo Node (falso positivo).
-  // Sessões Gemini só aparecem quando houver adapter (roadmap).
-  gemini:   { label: 'Gemini',   comm: [],           adapter: null },
+  // A sonda identifica pelo argv (basename do script em /proc/<pid>/cmdline).
+  // Adapter: o MESMO traffic-hook.sh com AI_TL_AGENT=gemini (o hook traduz
+  // BeforeAgent/BeforeTool/AfterTool/AfterAgent pro vocabulário canônico).
+  gemini:   { label: 'Gemini',   comm: [], argv: ['gemini'], adapter: 'hooks/traffic-hook.sh (AI_TL_AGENT=gemini)' },
   codex:    { label: 'Codex',    comm: ['codex'],    adapter: null }, // binário Rust
   opencode: { label: 'OpenCode', comm: ['opencode'], adapter: null }, // binário ELF (verificado)
 };

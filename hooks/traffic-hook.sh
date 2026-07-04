@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
-# traffic-hook.sh — adaptador Claude Code do ai-traffic-lights.
+# traffic-hook.sh — adapter de hooks do ai-traffic-lights.
+#
+# Serve DOIS agentes (payloads de hook quase idênticos — session_id,
+# hook_event_name, cwd, tool_name via stdin):
+#   Claude Code  → instalado em ~/.claude/settings.json  (AI_TL_AGENT ausente)
+#   Gemini CLI   → instalado em ~/.gemini/settings.json  (AI_TL_AGENT=gemini)
+# Eventos do Gemini são traduzidos pro vocabulário canônico do contrato
+# (BeforeAgent→UserPromptSubmit, BeforeTool→PreToolUse, AfterTool→PostToolUse,
+# AfterAgent→Stop) — o renderer nunca precisa conhecer dialetos.
 #
 # Filosofia (revisão v5): este hook SÓ REGISTRA EVENTOS (append-only).
 # NÃO computa o estado do semáforo — isso fica no renderer (computeState),
 # porque a escalada idle (verde→vermelho após N min) exige relógio.
 #
-# Este é O ADAPTER do Claude: qualquer agente (gemini, codex, opencode...)
-# que escreva um JSON válido no state dir aparece no overlay. O contrato é
-# o state file, não este script.
-#
-# Instalado em ~/.claude/settings.json.
-# Recebe JSON no stdin: {session_id, hook_event_name, cwd, tool_name, ...}
 # Grava: ${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/state/<session_id>.json
 #
 # Requisito duro: RÁPIDO (<25ms) e nunca falha — roda em TODO tool call
@@ -25,6 +27,7 @@
 
 set -u
 STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state"
+AGENT="${AI_TL_AGENT:-claude}"              # qual agente registrou este hook
 
 main() {
   local input
@@ -44,6 +47,17 @@ main() {
     evt="${BASH_REMATCH[1]}"
   fi
 
+  # Tradução de dialeto → vocabulário canônico do contrato (fork-free).
+  # Eventos desconhecidos passam crus (computeState trata como verde).
+  if [ "$AGENT" = "gemini" ]; then
+    case "$evt" in
+      BeforeAgent) evt="UserPromptSubmit" ;;
+      BeforeTool)  evt="PreToolUse" ;;
+      AfterTool)   evt="PostToolUse" ;;
+      AfterAgent)  evt="Stop" ;;
+    esac
+  fi
+
   # SessionEnd: sessão encerrou limpo — remove o state file (não vira zombie).
   if [ "$evt" = "SessionEnd" ]; then
     rm -f "$STATE_DIR/${sid}.json" 2>/dev/null
@@ -58,13 +72,15 @@ main() {
     fi
   fi
 
-  # Sobe a árvore até achar o claude (cobre CLI nativo e ACP). Zero forks.
-  local claude_pid=$$ pid=$$ comm="" ppid=""
+  # Sobe a árvore até achar o processo do agente. Zero forks.
+  # claude: binário próprio (comm=claude). gemini: script Node (comm=node) —
+  # o PRIMEIRO ancestral node é o gemini (cadeia: bash-hook → node-gemini).
+  local agent_pid=$$ pid=$$ comm="" ppid=""
   while [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
     comm=""
     read -r comm < "/proc/$pid/comm" 2>/dev/null
-    case "$comm" in
-      claude|claude-agent-acp) claude_pid="$pid"; break ;;
+    case "$AGENT:$comm" in
+      claude:claude|claude:claude-agent-acp|gemini:node) agent_pid="$pid"; break ;;
     esac
     ppid=""
     while IFS=$' \t' read -r k v; do
@@ -108,18 +124,19 @@ main() {
   jq -n -c \
     --argjson in "$input" \
     --arg exs "$existing" \
-    --argjson pid "$claude_pid" \
+    --argjson pid "$agent_pid" \
     --argjson ts "$ts" \
+    --arg agent "$AGENT" --arg cevt "$evt" \
     --arg awin "$awin" --arg furl "$furl" \
     --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg model "$model" --arg tpath "$transcript" '
       (try ($exs | fromjson) catch {}) as $ex
       | ($in.session_id // "") as $sid
-      | ($in.hook_event_name // "") as $evt
+      | $cevt as $evt
       | ($in.cwd // "") as $cwd
       | ($in.tool_name // "") as $tool
       | {
           schema_version: 2,
-          agent: "claude",
+          agent: $agent,
           session_id: $sid, pid: $pid,
           cwd: (if $cwd == "" then null else $cwd end),
           transcript_path: (if $tpath == "" then null else $tpath end),

@@ -6,8 +6,9 @@ Overlay translúcido sempre no topo (Electron) que mostra o estado de cada
 sessão de **agente de IA em terminal** no seu desktop como um semáforo:
 🟢 pronto · 🟡 trabalhando · 🔴 precisa de você.
 
-Monitora **Claude Code** hoje. A arquitetura é agnóstica — Gemini CLI, Codex
-e OpenCode entram via adapters (ver [Adicionando um agente](#adicionando-um-novo-agente)).
+Monitora **Claude Code** e **Gemini CLI** hoje. A arquitetura é agnóstica —
+Codex e OpenCode entram via adapters (ver
+[Adicionando um agente](#adicionando-um-novo-agente)).
 
 ![Overlay do AI Traffic Lights](assets/screenshots/overlay.png)
 
@@ -46,7 +47,8 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 git clone https://github.com/aronpc/ai-traffic-lights.git
 cd ai-traffic-lights
 npm install
-npm run setup-hook   # registra o adapter do Claude Code no ~/.claude/settings.json
+npm run setup-hook   # registra o adapter no Claude Code (~/.claude) e no
+                     # Gemini CLI (~/.gemini), conforme presentes
 npm start            # abre o overlay
 ```
 
@@ -144,9 +146,16 @@ Dois passos — o app se adapta ao que você declarar:
    (UI) e `comm` (nomes de processo em `/proc/<pid>/comm`, para detectar
    sessões vivas que ainda não têm state file).
 2. **Escreva um adapter**: qualquer coisa que grave state files seguindo o
-   contrato acima. O adapter do Claude Code
-   ([`hooks/traffic-hook.sh`](hooks/traffic-hook.sh)) é a implementação de
-   referência.
+   contrato acima. O [`hooks/traffic-hook.sh`](hooks/traffic-hook.sh) é a
+   implementação de referência — e já serve **dois** agentes: para o Gemini
+   CLI ele roda com `AI_TL_AGENT=gemini` e traduz o dialeto de eventos
+   (`BeforeAgent`→`UserPromptSubmit`, `BeforeTool`→`PreToolUse`,
+   `AfterTool`→`PostToolUse`, `AfterAgent`→`Stop`) pro vocabulário canônico —
+   o renderer nunca aprende dialetos por agente.
+
+Para CLIs Node cujo `comm` de processo é só `node` (Gemini), a sonda `/proc`
+identifica sessões pelo basename do script no argv — declarado via campo
+`argv` no registro.
 
 Detalhes em [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -183,7 +192,8 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 
 ## Roadmap
 
-- [ ] Adapters: Gemini CLI · Codex · OpenCode (entradas do registro prontas em
+- [x] Adapter do Gemini CLI (hooks) + detecção de idle via sonda argv
+- [ ] Adapters: Codex · OpenCode (entradas do registro prontas em
   `src/agents.js`; falta pesquisar os mecanismos de evento de cada um)
 - [ ] Foco de janela Wayland nativo completo (hoje: XWayland + URI de foco do
   Warp + relançar-para-alternar)

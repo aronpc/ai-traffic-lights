@@ -29,7 +29,7 @@ function ageText(nowSec, ts) {
 function labelFor(s) {
   if (s.cwd && aliases[s.cwd]) return aliases[s.cwd];
   if (s.cwd) return basename(s.cwd);
-  return 'claude · ' + s.pid;
+  return AGENTS[agentOf(s)].label.toLowerCase() + ' · ' + s.pid;
 }
 
 function setExpanded(v) {
