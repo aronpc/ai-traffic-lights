@@ -13,6 +13,19 @@ const hookInstaller = require('./src/hook-installer');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
 
+// Instância única: relançar o app não duplica o overlay — TOGGLA o existente
+// e sai. Previne overlays duplicados (autostart + lançamento manual) e dá um
+// caminho de atalho no Wayland, onde X grabs (globalShortcut) não disparam
+// com um app Wayland nativo em foco: vincule um atalho do GNOME ao comando
+// do app e cada acionamento mostra/oculta.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', () => toggleWin());
+
+// Sessão gráfica: no Wayland, wmctrl/xdotool só enxergam janelas XWayland —
+// o foco por janela degrada e a URI nativa do terminal vira o caminho titular.
+const IS_WAYLAND = process.env.XDG_SESSION_TYPE === 'wayland' ||
+  (!!process.env.WAYLAND_DISPLAY && process.env.XDG_SESSION_TYPE !== 'x11');
+
 // Diretório de dados neutro (XDG) — o state dir é o contrato entre adapters
 // (escritores) e este app (leitor). Ver src/agents.js e hooks/traffic-hook.sh.
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(process.env.HOME, '.local/share');
@@ -185,26 +198,35 @@ function focusSession(target) {
   const pid = target && target.pid;
   const windowid = target && target.windowid;
   const focusUrl = target && target.focus_url;
-  let list = '';
-  try { list = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch {}
-  const wins = [];
-  for (const line of list.split('\n')) {
-    const m = line.match(/^(\S+)\s+\S+\s+(\d+)\s/);
-    if (m) wins.push({ id: m[1], idNum: parseInt(m[1], 16), pid: parseInt(m[2], 10) });
-  }
-  const activate = (id) => { try { execFileSync('wmctrl', ['-i', '-a', id], { timeout: 2000 }); } catch {} };
 
-  // 1) janela exata (valida contra a lista — id pode estar obsoleto)
-  let raised = false;
-  if (windowid) {
-    const str = String(windowid);
-    const wid = parseInt(str, str.startsWith('0x') ? 16 : 10);
-    const hit = wins.find((w) => w.idNum === wid);
-    if (hit) { activate(hit.id); raised = true; }
-  }
+  // aba certa dentro da janela (Warp) — via handler do scheme
+  const openFocusUrl = () => {
+    if (focusUrl && FOCUS_URL_SCHEMES.some((s) => String(focusUrl).startsWith(s))) {
+      try { execFileSync('xdg-open', [String(focusUrl)], { timeout: 2000 }); } catch {}
+    }
+  };
 
-  // 2) ancestralidade de processos
-  if (!raised && pid) {
+  // raise da janela via wmctrl: (1) windowid exato, (2) ancestralidade de PID
+  const raiseWindow = () => {
+    let list = '';
+    try { list = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch {}
+    const wins = [];
+    for (const line of list.split('\n')) {
+      const m = line.match(/^(\S+)\s+\S+\s+(\d+)\s/);
+      if (m) wins.push({ id: m[1], idNum: parseInt(m[1], 16), pid: parseInt(m[2], 10) });
+    }
+    const activate = (id) => { try { execFileSync('wmctrl', ['-i', '-a', id], { timeout: 2000 }); } catch {} };
+
+    // 1) janela exata (valida contra a lista — id pode estar obsoleto)
+    if (windowid) {
+      const str = String(windowid);
+      const wid = parseInt(str, str.startsWith('0x') ? 16 : 10);
+      const hit = wins.find((w) => w.idNum === wid);
+      if (hit) { activate(hit.id); return; }
+    }
+
+    // 2) ancestralidade de processos
+    if (!pid) return;
     const ancestors = new Set();
     let p = pid;
     for (let i = 0; i < 25 && p > 1; i++) {
@@ -217,12 +239,13 @@ function focusSession(target) {
     }
     const hit = wins.find((w) => ancestors.has(w.pid));
     if (hit) activate(hit.id);
-  }
+  };
 
-  // 3) aba certa dentro da janela (Warp) — via handler do scheme
-  if (focusUrl && FOCUS_URL_SCHEMES.some((s) => String(focusUrl).startsWith(s))) {
-    try { execFileSync('xdg-open', [String(focusUrl)], { timeout: 2000 }); } catch {}
-  }
+  // Wayland: wmctrl só alcança XWayland — a URI nativa do terminal é o
+  // caminho confiável e vai PRIMEIRO (o raise vira tentativa-bônus).
+  // X11: raise primeiro, URI por último (troca a aba após a janela subir).
+  if (IS_WAYLAND) { openFocusUrl(); raiseWindow(); }
+  else { raiseWindow(); openFocusUrl(); }
 }
 
 // ---- aliases (apelido manual por cwd) ----

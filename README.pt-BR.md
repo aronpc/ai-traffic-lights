@@ -32,7 +32,10 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 
 ## Requisitos
 
-- **Linux + X11** (testado em GNOME/Mutter; Wayland está no roadmap)
+- **Linux**. X11: suporte completo (testado em GNOME/Mutter). **Wayland:
+  parcial** — o overlay roda via XWayland; o foco de aba funciona no Warp
+  (`focus_url`); o foco de janela alcança só terminais XWayland. Ver Solução
+  de problemas.
 - `wmctrl`, `xdotool`, `jq` — `sudo apt install wmctrl xdotool jq`
 - Node.js 20+
 - Um agente suportado: [Claude Code](https://claude.com/claude-code) hoje
@@ -154,6 +157,12 @@ Detalhes em [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Clique não foca / foca a janela errada** — `wmctrl` e `xdotool`
   instalados? No Wayland eles não funcionam (roadmap). O pulo pra aba exata
   só existe no Warp por enquanto.
+- **Wayland** — o overlay em si roda bem (XWayland). Janelas Wayland nativas
+  não podem ser focadas por terceiros, então o click-to-focus depende da URI
+  de foco do terminal (Warp hoje); o atalho global pode não disparar com um
+  app Wayland nativo em foco. Alternativas: clique no ícone do tray, ou
+  vincule um atalho customizado do GNOME ao comando do app — **relançar
+  alterna mostrar/ocultar** (instância única).
 - **Onde ficam meus dados?** — `${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/`
   (state files, posição da janela, apelidos). Pode apagar; regenera sozinho.
 - **Debug do renderer** — `ATL_DEBUG=1 npm start` loga em `/tmp/atl-renderer.log`.
@@ -174,8 +183,10 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 
 ## Roadmap
 
-- [ ] Adapters: Gemini CLI · Codex · OpenCode (pesquisar mecanismos de evento de cada um)
-- [ ] Suporte a Wayland (foco + posição da janela)
+- [ ] Adapters: Gemini CLI · Codex · OpenCode (entradas do registro prontas em
+  `src/agents.js`; falta pesquisar os mecanismos de evento de cada um)
+- [ ] Foco de janela Wayland nativo completo (hoje: XWayland + URI de foco do
+  Warp + relançar-para-alternar)
 - [ ] Empacotamento: AppImage + .deb (electron-builder)
 - [ ] Threshold de idle e atalho configuráveis
 

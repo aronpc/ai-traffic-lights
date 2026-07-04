@@ -33,7 +33,9 @@ terminal — **window _and_ tab**.
 
 ## Requirements
 
-- **Linux + X11** (GNOME/Mutter tested; Wayland is on the roadmap)
+- **Linux**. X11: full support (GNOME/Mutter tested). **Wayland: partial** —
+  the overlay runs via XWayland; tab-focus works in Warp (`focus_url`);
+  window focus reaches XWayland terminals only. See Troubleshooting.
 - `wmctrl`, `xdotool`, `jq` — `sudo apt install wmctrl xdotool jq`
 - Node.js 20+
 - A supported agent: [Claude Code](https://claude.com/claude-code) today
@@ -156,6 +158,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 - **Click doesn't focus / focuses the wrong window** — check `wmctrl` and
   `xdotool` are installed; on Wayland they don't work (roadmap). The exact-tab
   jump only works in Warp for now.
+- **Wayland** — the overlay itself runs fine (XWayland). Native-Wayland
+  windows can't be focused by third parties, so click-to-focus relies on the
+  terminal's focus URI (Warp today); the global shortcut may not fire while a
+  native-Wayland app has focus. Workarounds: click the tray icon, or bind a
+  GNOME custom shortcut to the app's launch command — **relaunching toggles
+  the overlay** (single-instance).
 - **Where is my data?** — `${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/`
   (state files, window position, aliases). Delete it freely; it regenerates.
 - **Renderer debug** — `ATL_DEBUG=1 npm start` logs to `/tmp/atl-renderer.log`.
@@ -176,8 +184,10 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 
 ## Roadmap
 
-- [ ] Adapters: Gemini CLI · Codex · OpenCode (research per-tool event mechanisms)
-- [ ] Wayland support (focus + window position)
+- [ ] Adapters: Gemini CLI · Codex · OpenCode (registry entries ready in
+  `src/agents.js`; per-tool event mechanisms to research)
+- [ ] Full native-Wayland window focus (today: XWayland + Warp focus URI +
+  relaunch-to-toggle)
 - [ ] Packaging: AppImage + .deb (electron-builder)
 - [ ] Configurable idle threshold & shortcut
 

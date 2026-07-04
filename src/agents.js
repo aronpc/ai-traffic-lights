@@ -12,12 +12,13 @@
 //   adapter — caminho do integrador (informativo/documentação)
 const AGENTS = {
   claude: { label: 'Claude', comm: ['claude', 'claude-agent-acp'], adapter: 'hooks/traffic-hook.sh' },
-  // TODO(aron): preencha os agentes que quer suportar — 1 linha cada, o resto
-  // do app se adapta sozinho (sonda /proc + label na UI). Os adapters de
-  // evento de cada um vêm depois (roadmap):
-  // gemini:   { label: 'Gemini',   comm: ['gemini'],   adapter: null },
-  // codex:    { label: 'Codex',    comm: ['codex'],    adapter: null },
-  // opencode: { label: 'OpenCode', comm: ['opencode'], adapter: null },
+  // gemini-cli é script Node (#!/usr/bin/env node) e NÃO seta process.title:
+  // /proc/comm = "node" (verificado empiricamente) — comm vazio de propósito,
+  // senão a sonda casaria com QUALQUER processo Node (falso positivo).
+  // Sessões Gemini só aparecem quando houver adapter (roadmap).
+  gemini:   { label: 'Gemini',   comm: [],           adapter: null },
+  codex:    { label: 'Codex',    comm: ['codex'],    adapter: null }, // binário Rust
+  opencode: { label: 'OpenCode', comm: ['opencode'], adapter: null }, // binário ELF (verificado)
 };
 
 const DEFAULT_AGENT = 'claude';
