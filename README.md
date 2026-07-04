@@ -2,6 +2,8 @@
 
 **English** | [Português (Brasil)](README.pt-BR.md)
 
+[![CI](https://github.com/aronpc/ai-traffic-lights/actions/workflows/ci.yml/badge.svg)](https://github.com/aronpc/ai-traffic-lights/actions/workflows/ci.yml)
+
 A translucent always-on-top overlay (Electron) that shows the state of every
 **terminal AI agent session** on your desktop as a traffic light: 🟢 done ·
 🟡 working · 🔴 needs you.
@@ -198,9 +200,10 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [x] OpenCode adapter (plugin: chat/tool/idle/permission events, model
   capture — see `adapters/opencode/`)
 - [ ] Codex adapter (registry entry ready in `src/agents.js`)
+- [x] Packaging: AppImage + .deb (electron-builder) — see [Releases](https://github.com/aronpc/ai-traffic-lights/releases)
+- [x] Test suite (`node:test`) + CI
 - [ ] Full native-Wayland window focus (today: XWayland + Warp focus URI +
   relaunch-to-toggle)
-- [ ] Packaging: AppImage + .deb (electron-builder)
 - [ ] Configurable idle threshold & shortcut
 
 ## License

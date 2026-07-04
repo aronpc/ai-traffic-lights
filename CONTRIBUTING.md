@@ -65,15 +65,25 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 echo '{"session_id":"t","hook_event_name":"SessionEnd"}' | bash hooks/traffic-hook.sh  # cleanup
 ```
 
-`src/state-machine.js` is a pure function — if you touch the event → color
-mapping, add/update a quick check there (a proper test suite is on the
-roadmap; `node -e` snippets in the PR description are fine meanwhile).
+There's a test suite (`node:test`, no dependencies):
 
-Before opening a PR:
+```bash
+npm test
+```
+
+- `test/state-machine.test.js` — the pure `computeState`/`iconFor`/`agentOf`
+  functions. Touch the event → color mapping? Add/adjust a case here.
+- `test/rename.test.js` — loads the real renderer scripts in a `vm` with a
+  mock DOM and drives the actual dblclick/keydown/blur handlers (regression
+  for #2). It's the pattern to copy for other renderer behavior.
+
+CI (`.github/workflows/ci.yml`) runs the syntax checks and `npm test` on every
+push and PR. Before opening a PR, the same checks locally:
 
 ```bash
 bash -n hooks/traffic-hook.sh
 node --check main.js preload.js src/*.js scripts/*.js
+npm test
 ```
 
 ## PR guidelines

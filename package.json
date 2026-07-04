@@ -8,6 +8,7 @@
     "setup-hook": "node scripts/setup-hook.js",
     "remove-hook": "node scripts/setup-hook.js --remove",
     "hook:test": "bash hooks/traffic-hook.sh",
+    "test": "node --test",
     "dist": "electron-builder --linux"
   },
   "author": "Aron Peyroteo <aronpeyroteo@gmail.com>",

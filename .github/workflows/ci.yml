@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # os testes não iniciam o Electron — pula o download do binário (~100MB)
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Syntax checks
+        run: |
+          bash -n hooks/traffic-hook.sh
+          node --check main.js preload.js
+          for f in src/*.js scripts/*.js; do node --check "$f"; done
+      - name: Tests
+        run: npm test
