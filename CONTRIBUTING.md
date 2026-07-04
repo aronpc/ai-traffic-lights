@@ -91,6 +91,9 @@ npm test
 - Small, focused PRs beat big ones.
 - Explain the *why*, not just the *what* — this codebase documents decisions
   in comments and README; keep that habit.
+- **Update [`CHANGELOG.md`](CHANGELOG.md)** under `[Unreleased]` (Added /
+  Changed / Fixed / Removed) for anything a user would notice. User-visible
+  changes always get a line; pure refactors/test additions don't.
 - Schema changes: bump `schema_version`, update **both** READMEs and keep the
   renderer backward-compatible with the previous version.
 - UI changes: include a screenshot.
