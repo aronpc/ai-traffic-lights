@@ -6,6 +6,7 @@ let expanded = true;
 let renaming = false;                      // input de rename aberto → suspende render()
 let aliases = {};                          // cwd -> apelido
 let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} do settings.json
+let T = makeT('en');                       // i18n — troca pro idioma do sistema via get-lang
 let firstRender = true;                    // hidrata prevLevels sem alertar no boot
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
@@ -61,7 +62,13 @@ function beep() {
 }
 function alertAwaiting(s) {
   beep();
-  window.trafficLight.notify(`⚠ ${AGENTS[agentOf(s)].label} precisa de você`, labelFor(s));
+  window.trafficLight.notify('⚠ ' + T('needs_you', { agent: AGENTS[agentOf(s)].label }), labelFor(s));
+}
+
+// Textos estáticos do HTML (empty state, tooltips) no idioma do sistema.
+function applyStaticI18n() {
+  for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
+  for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = T(el.dataset.i18nTitle);
 }
 
 // ---- rename in-place ----
@@ -136,7 +143,7 @@ function render() {
 
     const li = document.createElement('li');
     li.className = 'row';
-    li.title = 'clique: focar terminal · duplo-clique: renomear';
+    li.title = T('row_tooltip');
     li.addEventListener('click', () => window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id }));
 
     const led = document.createElement('span');
@@ -169,11 +176,11 @@ function render() {
   if (tally.processing) parts.push(`🟡${tally.processing}`);
   if (tally.done) parts.push(`🟢${tally.done}`);
   if (tally.awaiting) parts.push(`🔴${tally.awaiting}`);
-  $counts.textContent = sessions.length === 0 ? '—' : `${parts.join(' ')}  (${sessions.length})`;
+  $counts.textContent = sessions.length === 0 ? '—' : parts.join(' ');
 
   $empty.hidden = sessions.length > 0;
   if (sessions.length > 0 && expanded) $list.hidden = false;
-  document.title = `ATL · ${sessions.length} sessões · ${parts.join(' ')}`;
+  document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();
   firstRender = false;
 }
@@ -209,7 +216,8 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', () => { resizing = null; });
 
-// Recebe sessões; pede carga inicial; carrega apelidos e settings.
+// Recebe sessões; pede carga inicial; carrega idioma, apelidos e settings.
+window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
 window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
 window.trafficLight.requestSessions();
 window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });

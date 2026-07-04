@@ -13,6 +13,11 @@
       background: var(--bg); color: var(--ink); font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
       padding: 18px 20px; font-size: 13.5px; -webkit-user-select: none;
     }
+    /* O mínimo da janela (main.js) comporta todo o conteúdo; se algum tema/
+       fonte estourar por pixels, rola sem exibir barra (truque da lista do
+       overlay) — nunca aparece scrollbar nem corta botão. */
+    html, body { scrollbar-width: none; }
+    body::-webkit-scrollbar { display: none; }
     h1 { font-size: 14px; font-weight: 700; margin-bottom: 14px; letter-spacing: 0.3px; }
     .section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
     .section:last-of-type { border-bottom: none; }
@@ -44,59 +49,60 @@
   </style>
 </head>
 <body>
-  <h1>🚦 Preferências</h1>
+  <h1 data-i18n="prefs_h1">🚦 Preferências</h1>
 
   <div class="section">
-    <div class="section-title">Comportamento</div>
+    <div class="section-title" data-i18n="sec_behavior">Comportamento</div>
     <div class="field">
-      <label class="top" for="idle">Tempo parado até virar vermelho (idle)</label>
+      <label class="top" for="idle" data-i18n="idle_label">Tempo parado até virar vermelho (idle)</label>
       <select id="idle">
-        <option value="60">1 minuto</option>
-        <option value="120">2 minutos</option>
-        <option value="300">5 minutos (padrão)</option>
-        <option value="600">10 minutos</option>
-        <option value="900">15 minutos</option>
-        <option value="never">Nunca (sempre verde quando pronto)</option>
+        <option value="60" data-i18n="idle_1m">1 minuto</option>
+        <option value="120" data-i18n="idle_2m">2 minutos</option>
+        <option value="300" data-i18n="idle_5m">5 minutos (padrão)</option>
+        <option value="600" data-i18n="idle_10m">10 minutos</option>
+        <option value="900" data-i18n="idle_15m">15 minutos</option>
+        <option value="never" data-i18n="idle_never">Nunca (sempre verde quando pronto)</option>
       </select>
-      <div class="hint">Uma sessão que terminou e ficou parada por mais que isso vira 🔴.</div>
+      <div class="hint" data-i18n="idle_hint">Uma sessão que terminou e ficou parada por mais que isso vira 🔴.</div>
     </div>
     <div class="field">
-      <label class="top" for="shortcut">Atalho de mostrar/ocultar</label>
+      <label class="top" for="shortcut" data-i18n="shortcut_label">Atalho de mostrar/ocultar</label>
       <div class="shortcut" id="shortcut" tabindex="0">—</div>
-      <div class="hint">Clique e pressione a combinação. Precisa de um modificador (Ctrl/Alt/Shift/Super).</div>
+      <div class="hint" data-i18n="shortcut_hint">Clique e pressione a combinação. Precisa de um modificador (Ctrl/Alt/Shift/Super).</div>
     </div>
   </div>
 
   <div class="section">
-    <div class="section-title">Inicialização</div>
+    <div class="section-title" data-i18n="sec_startup">Inicialização</div>
     <div class="row">
       <input type="checkbox" id="autostart">
-      <label for="autostart">Iniciar com o sistema</label>
+      <label for="autostart" data-i18n="autostart_label">Iniciar com o sistema</label>
     </div>
   </div>
 
   <div class="section">
-    <div class="section-title">Integração (agentes)</div>
+    <div class="section-title" data-i18n="sec_integration">Integração (agentes)</div>
     <div class="btn-row">
-      <button id="installHooks">Instalar/atualizar hooks</button>
-      <button id="removeHooks" class="danger">Remover hooks</button>
+      <button id="installHooks" data-i18n="hooks_install_btn">Instalar/atualizar hooks</button>
+      <button id="removeHooks" class="danger" data-i18n="hooks_remove_btn">Remover hooks</button>
     </div>
-    <div class="hint">Registra o adapter em ~/.claude, ~/.gemini, ~/.codex e o plugin do OpenCode. No Codex, rode <code>/hooks</code> depois pra confiar.</div>
+    <div class="hint" data-i18n="hooks_hint">Registra o adapter em ~/.claude, ~/.gemini, ~/.codex e o plugin do OpenCode. No Codex, rode /hooks depois pra confiar.</div>
   </div>
 
   <div class="section">
-    <div class="section-title">Janela</div>
+    <div class="section-title" data-i18n="sec_window">Janela</div>
     <div class="btn-row">
-      <button id="toggleVis">Mostrar/Ocultar overlay</button>
-      <button id="quit" class="danger">Sair</button>
+      <button id="toggleVis" data-i18n="win_toggle_btn">Mostrar/Ocultar overlay</button>
+      <button id="quit" class="danger" data-i18n="win_quit_btn">Sair</button>
     </div>
   </div>
 
   <div class="actions">
-    <button id="cancel">Cancelar</button>
-    <button id="save" class="primary">Salvar</button>
+    <button id="cancel" data-i18n="btn_cancel">Cancelar</button>
+    <button id="save" class="primary" data-i18n="btn_save">Salvar</button>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="settings-renderer.js"></script>
 </body>
 </html>

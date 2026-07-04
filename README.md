@@ -31,6 +31,7 @@ terminal — **window _and_ tab**.
 
 - 🟢🟡🔴 One light per session, plus an aggregate light in the header
 - 🤖 **Four agents, one overlay**: Claude Code, Gemini CLI, Codex and OpenCode
+- 🌐 UI in English & Portuguese — follows the system locale
 - **Click-to-focus**: jumps to the session's terminal — the exact window, and
   in Warp the exact **tab** (via `warp://session/<uuid>`) and in Tilix the
   exact terminal (via D-Bus `TILIX_ID`)

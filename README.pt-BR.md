@@ -30,6 +30,7 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 
 - 🟢🟡🔴 Uma luz por sessão + luz agregada no cabeçalho
 - 🤖 **Quatro agentes, um overlay**: Claude Code, Gemini CLI, Codex e OpenCode
+- 🌐 Interface em inglês e português — segue o idioma do sistema
 - **Click-to-focus**: pula pro terminal da sessão — a janela exata e, no Warp,
   a **aba** exata (via `warp://session/<uuid>`); no Tilix, o terminal exato
   (via D-Bus `TILIX_ID`)

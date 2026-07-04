@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
   // Settings (threshold de idle + atalho) — lidos/gravados pela janela de Preferências
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  getLang: () => ipcRenderer.invoke('get-lang'),              // idioma da UI (en|pt)
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),
