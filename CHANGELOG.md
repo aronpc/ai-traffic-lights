@@ -7,18 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-04
+
 ### Added
 - **Quick Launcher**: start a terminal AI agent straight from the overlay/tray.
-  Each detected CLI (Claude Code, Gemini CLI, Codex, OpenCode) gets a "+ Agent"
-  button — in the empty state and under a tray "Launch" submenu — that opens
-  the configured terminal in the most-recent project cwd and runs the agent.
-  The new session lights up via the normal hook path (the overlay doesn't
-  track the spawned process). Detection is a fork-free PATH scan (the Electron
-  process sees real binaries, not shell aliases); CLIs that exist only as a
-  shell alias take an override in `settings.json` (`launchers.<agent>`). The
-  terminal is selectable in Preferences (Automatic / Tilix / GNOME Terminal /
-  Ghostty / Custom command with `{cwd}` and `{cmd}` placeholders). Pure
-  `src/launcher.js` (terminal templates + `pickTerminal`) is tested.
+  Each detected CLI (Claude Code, Gemini CLI, Codex, OpenCode) gets a
+  brand-colored **icon pill** in a persistent footer bar (and a tray "Launch"
+  submenu) — on hover the agent name slides in ("✦ Claude"). A click opens the
+  configured terminal in the most-recent project cwd and runs the agent; the new
+  session lights up via the normal hook path (the overlay doesn't track the
+  spawned process). Detection is a fork-free PATH scan (the Electron process
+  sees real binaries, not shell aliases); CLIs that exist only as a shell alias
+  take an override in `settings.json` (`launchers.<agent>`). The terminal is
+  selectable in Preferences (Automatic / Tilix / GNOME Terminal / Ghostty /
+  Custom command with `{cwd}` and `{cmd}` placeholders). Pure `src/launcher.js`
+  (terminal templates + `pickTerminal`) is tested.
+
+### Fixed
+- **Window no longer resizes on its own.** After the overlay became a
+  flex-column, autosize read `list.scrollHeight` — but a `flex:1` + `overflow:auto`
+  element returns its flex-grown height in Chromium, so the measured value
+  depended on the current window height (feedback loop → grew a few px/render).
+  Now it measures the last row's natural `offsetTop`, which is independent of
+  the flex height.
+- **Window minimum height tracks content**: you can't drag the overlay smaller
+  than its full content (header + sessions + launcher bar) — no hiding rows.
 
 ## [0.2.0] - 2026-07-04
 
@@ -178,7 +191,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bilingual docs (EN / pt-BR), `setup-hook` installer with a stable hook copy
   (AppImage-safe, move-safe), AppImage + `.deb` packaging.
 
-[Unreleased]: https://github.com/aronpc/ai-traffic-lights/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/aronpc/ai-traffic-lights/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/aronpc/ai-traffic-lights/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aronpc/ai-traffic-lights/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aronpc/ai-traffic-lights/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aronpc/ai-traffic-lights/releases/tag/v0.1.0
