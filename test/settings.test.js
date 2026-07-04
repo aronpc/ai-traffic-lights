@@ -42,3 +42,12 @@ test('mergeWithDefaults: atalho inválido é ignorado (mantém default)', () => 
   assert.equal(mergeWithDefaults({ shortcut: 'H' }).shortcut, DEFAULTS.shortcut);
   assert.equal(mergeWithDefaults({ shortcut: 'Control+Que' }).shortcut, DEFAULTS.shortcut);
 });
+
+test('mergeWithDefaults: lang aceita auto/en/pt; inválido cai no default (auto)', () => {
+  assert.equal(DEFAULTS.lang, 'auto');
+  assert.equal(mergeWithDefaults({ lang: 'pt' }).lang, 'pt');
+  assert.equal(mergeWithDefaults({ lang: 'en' }).lang, 'en');
+  assert.equal(mergeWithDefaults({ lang: 'auto' }).lang, 'auto');
+  assert.equal(mergeWithDefaults({ lang: 'de' }).lang, 'auto');   // não suportado
+  assert.equal(mergeWithDefaults({ lang: 42 }).lang, 'auto');     // tipo errado
+});
