@@ -12,6 +12,7 @@ const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
+const settingsLib = require('./src/settings');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
 
@@ -35,6 +36,8 @@ const BASE_DIR = path.join(DATA_HOME, 'ai-traffic-lights');
 const STATE_DIR = path.join(BASE_DIR, 'state');
 const BOUNDS_FILE = path.join(BASE_DIR, 'window.json'); // {x, y, width}
 const ALIASES_FILE = path.join(BASE_DIR, 'aliases.json'); // {cwd: apelido}
+const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec, escalateIdle, shortcut}
+const SETTINGS_BOUNDS_FILE = path.join(BASE_DIR, 'settings-window.json'); // {x, y, width, height}
 const AUTOSTART_FILE = path.join(process.env.HOME, '.config/autostart/ai-traffic-lights.desktop');
 
 // ---- migração da era claude-traffic-light (pré-rename) ----
@@ -272,6 +275,31 @@ function saveAlias(cwd, alias) {
   try { fs.writeFileSync(ALIASES_FILE, JSON.stringify(a)); } catch {}
 }
 
+// ---- settings (threshold de idle + atalho global) ----
+let settingsCfg = settingsLib.mergeWithDefaults(null);   // sempre válido
+function loadSettings() {
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch {}
+  return settingsLib.mergeWithDefaults(raw);
+}
+function persistSettings(cfg) {
+  settingsCfg = settingsLib.mergeWithDefaults(cfg);
+  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settingsCfg, null, 2)); } catch {}
+  return settingsCfg;
+}
+
+// Registra o atalho configurado de mostrar/ocultar. Idempotente: limpa os
+// anteriores antes. Mantém o legado CommandOrControl+Shift+Alt+L como rede
+// de segurança (se o usuário muda o primário e esquece, ainda há um caminho).
+function applyShortcut() {
+  try { globalShortcut.unregisterAll(); } catch {}
+  for (const acc of [settingsCfg.shortcut, 'CommandOrControl+Shift+Alt+L']) {
+    if (acc && settingsLib.isValidShortcut(acc)) {
+      try { globalShortcut.register(acc, toggleWin); } catch {}
+    }
+  }
+}
+
 // ---- autostart ----
 function autostartEnabled() {
   try { return fs.existsSync(AUTOSTART_FILE); } catch { return false; }
@@ -460,10 +488,46 @@ function createTray() {
     { label: 'Instalar/atualizar hooks (Claude, Gemini)', click: installHookFromApp },
     { label: 'Remover hooks', click: removeHookFromApp },
     { type: 'separator' },
+    { label: 'Preferências…', click: createSettingsWindow },
     { label: 'Sair', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu());
   tray.on('click', toggleWin);
+}
+
+// ---- janela de Preferências (threshold de idle + atalho) ----
+let settingsWin = null;
+let settingsBoundsTimer = null;
+function loadSettingsBounds() {
+  try { return JSON.parse(fs.readFileSync(SETTINGS_BOUNDS_FILE, 'utf8')); } catch { return null; }
+}
+function saveSettingsBounds() {
+  if (!settingsWin || settingsWin.isDestroyed()) return;
+  clearTimeout(settingsBoundsTimer);
+  settingsBoundsTimer = setTimeout(() => {
+    try {
+      const [x, y] = settingsWin.getPosition();
+      const [width, height] = settingsWin.getSize();
+      fs.writeFileSync(SETTINGS_BOUNDS_FILE, JSON.stringify({ x, y, width, height }));
+    } catch {}
+  }, 300);
+}
+function createSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
+  const b = loadSettingsBounds() || {};
+  settingsWin = new BrowserWindow({
+    width: b.width || 480, height: b.height || 320,
+    minWidth: 380, minHeight: 260, resizable: true,
+    x: typeof b.x === 'number' ? b.x : undefined,
+    y: typeof b.y === 'number' ? b.y : undefined,
+    title: 'Preferências',
+    autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
+  settingsWin.on('resize', saveSettingsBounds);
+  settingsWin.on('move', saveSettingsBounds);
+  settingsWin.on('closed', () => { settingsWin = null; });
 }
 
 // ---- IPC ----
@@ -504,6 +568,16 @@ ipcMain.on('focus', (_e, target) => focusSession(target));
 ipcMain.handle('get-aliases', () => loadAliases());
 ipcMain.on('set-alias', (_e, { cwd, alias }) => { saveAlias(cwd, alias); sendSessions(); });
 
+// Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
+// e abertura da janela a partir do renderer (caso queira botão no overlay um dia).
+ipcMain.handle('get-settings', () => settingsCfg);
+ipcMain.on('save-settings', (_e, cfg) => {
+  settingsCfg = persistSettings(cfg);
+  applyShortcut();                                    // re-registra o atalho novo
+  if (win && !win.isDestroyed()) win.webContents.send('settings-changed', settingsCfg);
+});
+ipcMain.on('open-settings', () => createSettingsWindow());
+
 // Notificação no vermelho.
 ipcMain.on('notify', (_e, { title, body }) => {
   try { new Notification({ title, body, silent: true }).show(); } catch {}
@@ -519,14 +593,10 @@ app.whenReady().then(() => {
   try { hookInstaller.syncHookCopy(path.join(__dirname, 'hooks/traffic-hook.sh'), BASE_DIR); } catch {}
   // idem pro plugin do OpenCode (só se o usuário já o instalou)
   hookInstaller.syncOpencodeIfInstalled(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
+  settingsCfg = loadSettings();                      // threshold/atalho do usuário
   createWindow();
   createTray();
-  // Atalho global de exibir/ocultar: Ctrl+Alt+H (primário) + legado
-  // Ctrl+Shift+Alt+L. Rede de segurança contra "× esconde e o tray some".
-  // (Registro pode falhar se o desktop já usa a combinação — o tray cobre.)
-  for (const acc of ['Control+Alt+H', 'CommandOrControl+Shift+Alt+L']) {
-    try { globalShortcut.register(acc, toggleWin); } catch {}
-  }
+  applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
   chokidar
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })

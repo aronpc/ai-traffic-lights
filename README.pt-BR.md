@@ -211,7 +211,8 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [ ] Foco de aba para terminais sem canal nativo (GNOME Terminal, zellij/tmux)
 - [ ] Foco de janela Wayland nativo completo (hoje: XWayland + URI de foco do
   Warp + relançar-para-alternar)
-- [ ] Threshold de idle e atalho configuráveis
+- [x] Threshold de idle e atalho configuráveis (tray → Preferências — guardado
+  em `~/.local/share/ai-traffic-lights/settings.json`)
 
 ## Licença
 

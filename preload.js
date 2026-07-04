@@ -14,4 +14,9 @@ contextBridge.exposeInMainWorld('trafficLight', {
   setAlias: (cwd, alias) => ipcRenderer.send('set-alias', { cwd, alias }),
   notify: (title, body) => ipcRenderer.send('notify', { title, body }), // alerta vermelho
   toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
+  // Settings (threshold de idle + atalho) — lidos/gravados pela janela de Preferências
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
+  openSettings: () => ipcRenderer.send('open-settings'),
+  onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),
 });

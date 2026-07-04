@@ -214,7 +214,8 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
   zellij/tmux)
 - [ ] Full native-Wayland window focus (today: XWayland + Warp focus URI +
   relaunch-to-toggle)
-- [ ] Configurable idle threshold & shortcut
+- [x] Configurable idle threshold & shortcut (tray → Preferences — stored in
+  `~/.local/share/ai-traffic-lights/settings.json`)
 
 ## License
 
