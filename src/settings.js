@@ -13,7 +13,7 @@ const KEY = /^[A-Z0-9]$|^(F1[0-2]?|F[2-9])$|^(Space|Up|Down|Left|Right)$/;
 const MODS = new Set(['Command', 'CommandOrControl', 'Control', 'Alt', 'Shift', 'Super', 'Option', 'Meta']);
 
 // Um accelerator é válido se tem ≥1 modificador + ≥1 tecla não-modificadora,
-// e todos os tokens são reconhecidos. Evita登録 combinação inútil/inválida.
+// e todos os tokens são reconhecidos. Evita registrar combinação inútil/inválida.
 function isValidShortcut(acc) {
   if (typeof acc !== 'string') return false;
   const parts = acc.split('+').map((s) => s.trim()).filter(Boolean);

@@ -12,12 +12,12 @@ Monitora **Claude Code**, **Gemini CLI**, **Codex** e **OpenCode** hoje. A
 arquitetura é agnóstica — agentes novos entram via adapters (ver
 [Adicionando um agente](#adicionando-um-novo-agente)).
 
-![AI Traffic Lights — overlay ao vivo](assets/screenshots/overlay-pulse.gif)
+<p align="center"><img src="assets/screenshots/overlay-pulse.gif" alt="AI Traffic Lights — overlay ao vivo" width="340"></p>
 
 _Uma luz por sessão de agente em terminal: 🟢 pronto · 🟡 trabalhando · 🔴
 precisa de você. Animação: o LED vermelho pulsa. Print estático abaixo._
 
-![Overlay do AI Traffic Lights — todos os agentes](assets/screenshots/overlay.png)
+<p align="center"><img src="assets/screenshots/overlay.png" alt="Overlay do AI Traffic Lights — todos os agentes" width="340"></p>
 
 ## Por quê
 
@@ -42,7 +42,7 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 - Ícone no tray + atalho global **`Ctrl+Alt+H`** (configurável)
 - Sai do caminho: fora da barra de janelas/alt-tab, nunca maximiza, sem scrollbar
 
-![Janela de Preferências](assets/screenshots/preferences.png)
+<p align="center"><img src="assets/screenshots/preferences.png" alt="Janela de Preferências" width="400"></p>
 
 ## Requisitos
 
@@ -52,7 +52,9 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
   de problemas.
 - `wmctrl`, `xdotool`, `jq` — `sudo apt install wmctrl xdotool jq`
 - Node.js 20+
-- Um agente suportado: [Claude Code](https://claude.com/claude-code) hoje
+- Um agente suportado: [Claude Code](https://claude.com/claude-code),
+  [Gemini CLI](https://github.com/google-gemini/gemini-cli),
+  [Codex](https://github.com/openai/codex) ou [OpenCode](https://opencode.ai)
 
 ## Instalação (do fonte)
 
