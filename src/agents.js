@@ -19,7 +19,10 @@ const AGENTS = {
   // Adapter: o MESMO traffic-hook.sh com AI_TL_AGENT=gemini (o hook traduz
   // BeforeAgent/BeforeTool/AfterTool/AfterAgent pro vocabulário canônico).
   gemini:   { label: 'Gemini',   comm: [], argv: ['gemini'], adapter: 'hooks/traffic-hook.sh (AI_TL_AGENT=gemini)' },
-  codex:    { label: 'Codex',    comm: ['codex'],    adapter: null }, // binário Rust
+  // codex-cli é Node (#!/usr/bin/env node) → comm="node" (verificado);
+  // detectado pelo basename do script no argv, como o Gemini. Sem adapter
+  // por enquanto — sessões aparecem como "ativo" (presença via /proc).
+  codex:    { label: 'Codex',    comm: [], argv: ['codex'], adapter: null },
   // Adapter: plugin JS que roda dentro do OpenCode (instalado em
   // ~/.config/opencode/plugin/ pelo setup-hook).
   opencode: { label: 'OpenCode', comm: ['opencode'], adapter: 'adapters/opencode/ai-traffic-lights.js' },

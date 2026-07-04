@@ -45,6 +45,18 @@ const TARGETS = {
     // schema do Gemini aceita name — aparece nos logs/CLI dele
     entry: (cmd) => ({ name: 'ai-traffic-lights', type: 'command', command: cmd }),
   },
+  codex: {
+    // Codex usa o MESMO schema de hooks do Claude (hooks.json em JSON, mesmos
+    // eventos, mesmo payload) — sem tradução de dialeto. Bônus: o campo
+    // `model` vem direto no payload. Atenção: hooks do Codex precisam ser
+    // confiados via `/hooks` no CLI antes de rodar (trust por hash).
+    label: 'Codex',
+    settings: path.join(os.homedir(), '.codex', 'hooks.json'),
+    detectDir: path.join(os.homedir(), '.codex'),
+    events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'SubagentStop'],
+    command: (dest) => `AI_TL_AGENT=codex bash ${dest}`,
+    entry: (cmd) => ({ type: 'command', command: cmd }),
+  },
 };
 
 // Alvo está presente na máquina? (dir de config do agente existe)

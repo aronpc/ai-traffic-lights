@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Codex support**: adapter via `~/.codex/hooks.json` (Codex shares Claude's
+  hooks schema, so the same `traffic-hook.sh` runs with `AI_TL_AGENT=codex` —
+  no event translation). Model is read straight from the payload. After
+  `setup-hook`, run `/hooks` in the Codex CLI once to trust the hook.
 - **Gemini CLI support**: adapter via hooks (`AI_TL_AGENT=gemini`), translating
   `BeforeAgent`/`BeforeTool`/`AfterTool`/`AfterAgent` into the canonical event
   vocabulary. Idle Gemini sessions detected by the script basename in the
