@@ -34,12 +34,14 @@ main() {
   IFS= read -rd '' input || true          # slurpa stdin sem fork
   [ -z "$input" ] && return 0
 
-  # session_id via regex bash (fork-free) — decide o nome do arquivo
+  # session_id via regex bash (fork-free) — decide o nome do arquivo.
+  # Validação anti-path-traversal: só [A-Za-z0-9._-]. Um payload com "../"
+  # (de um agente malicioso/bugado) NÃO pode escapar do STATE_DIR.
   local sid=""
   if [[ $input =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     sid="${BASH_REMATCH[1]}"
   fi
-  [ -z "$sid" ] && return 0
+  if [[ ! $sid =~ ^[A-Za-z0-9._-]+$ ]]; then return 0; fi
 
   # hook_event_name via regex bash (fork-free) — usado 3x abaixo
   local evt=""
