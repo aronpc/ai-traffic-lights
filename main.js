@@ -11,6 +11,7 @@ const chokidar = require('chokidar');
 const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
 const focus = require('./src/focus');
+const sessions = require('./src/sessions');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
 
@@ -79,29 +80,18 @@ let win;
 function readSessions() {
   try {
     const files = fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json'));
-    const sessions = [];
+    const stateFileSessions = [];
     for (const f of files) {
       try {
         const s = JSON.parse(fs.readFileSync(path.join(STATE_DIR, f), 'utf8'));
-        if (s && s.session_id) sessions.push(s);
+        if (s && s.session_id) stateFileSessions.push(s);
       } catch { /* parcial/inválido — ignora */ }
     }
-    // Acrescenta agentes em terminal sem state file (idle / pré-hook) via /proc.
-    for (const { pid, agent } of discoveredTerminalAgents()) {
-      if (!sessions.some((s) => s.pid === pid)) {
-        sessions.push({ session_id: `proc-${pid}`, pid, agent, cwd: null, term_program: 'terminal', last_event: 'ativo', last_event_ts: 0 });
-      }
-    }
-    // Dedupe por pid: o mesmo processo pode aparecer com 2 session_ids
-    // (ex.: job/background roteando 2 contextos). Mantém o mais recente.
-    // Modelo do usuário: 1 processo = 1 terminal = 1 linha.
-    const byPid = new Map();
-    for (const s of sessions) {
-      const key = s.pid || s.session_id;
-      const prev = byPid.get(key);
-      if (!prev || (s.last_event_ts || 0) >= (prev.last_event_ts || 0)) byPid.set(key, s);
-    }
-    return [...byPid.values()].filter((s) => s.term_program); // esconde headless (sem terminal)
+    // Merge + dedup (lógica pura em src/sessions.js). Sem filtro por
+    // term_program: Tilix não exporta TERM_PROGRAM e sumia do overlay.
+    // O gate de "interativo" é o parent=shell (sonda /proc) e o próprio
+    // state file (o hook só dispara em sessão interativa).
+    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents());
   } catch { return []; }
 }
 
