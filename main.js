@@ -13,6 +13,7 @@ const hookInstaller = require('./src/hook-installer');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const settingsLib = require('./src/settings');
+const i18n = require('./src/i18n');
 const { desktopEscape } = require('./src/validate');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
@@ -76,7 +77,7 @@ for (const [id, a] of Object.entries(AGENTS)) {
 
 const DEFAULT_W = 360;
 const HEADER_H = 58; // tem que casar com --header-h do CSS
-const MIN_W = 280, MAX_W = 720;
+const MIN_W = 320, MAX_W = 720; // 320: header inteiro (ícone+título+contadores+botões) sem quebrar
 const MIN_H = HEADER_H + 40, MAX_H = 640;
 
 let win;
@@ -278,6 +279,13 @@ function saveAlias(cwd, alias) {
   try { fs.writeFileSync(ALIASES_FILE, JSON.stringify(a)); } catch {}
 }
 
+// ---- idioma (i18n) ----
+// Resolvido do locale do sistema no whenReady (app.getLocale só vale lá) e
+// distribuído aos renderers via IPC get-lang. Default en até o ready — nada
+// visível é criado antes disso.
+let LANG = 'en';
+let T = i18n.makeT(LANG);
+
 // ---- settings (threshold de idle + atalho global) ----
 let settingsCfg = settingsLib.mergeWithDefaults(null);   // sempre válido
 function loadSettings() {
@@ -399,6 +407,9 @@ function createWindow() {
   win = new BrowserWindow({
     width, height: HEADER_H + 120, // placeholder; renderer corrige via auto-height
     x, y,
+    // Clamp no nível do WM: o gripper já limitava, mas o resize pela BORDA da
+    // janela (resizable) ignorava MIN_W e deixava o header quebrar.
+    minWidth: MIN_W, minHeight: HEADER_H,
     frame: false,
     transparent: true,
     resizable: true,
@@ -457,14 +468,14 @@ function installHookFromApp() {
       const t = hookInstaller.TARGETS[id];
       if (!hookInstaller.available(id)) continue;      // agente não presente na máquina
       const r = hookInstaller.install(id, dest);
-      parts.push(`${t.label}: ${r.wrote ? `instalado (${r.added}+${r.updated})` : 'ok'}`);
+      parts.push(`${t.label}: ${r.wrote ? T('ntf_installed', { a: r.added, u: r.updated }) : T('ntf_ok')}`);
     }
     if (hookInstaller.opencodeAvailable()) {
       hookInstaller.installOpencode(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
-      parts.push('OpenCode: plugin ok');
+      parts.push('OpenCode: ' + T('ntf_plugin_ok'));
     }
-    notifyUser(parts.length ? parts.join(' · ') : 'Nenhum agente suportado encontrado.');
-  } catch (e) { notifyUser(`Falha ao instalar hook: ${e.message}`); }
+    notifyUser(parts.length ? parts.join(' · ') : T('ntf_none_found'));
+  } catch (e) { notifyUser(T('ntf_install_fail', { msg: e.message })); }
 }
 function removeHookFromApp() {
   try {
@@ -472,11 +483,11 @@ function removeHookFromApp() {
     for (const id of Object.keys(hookInstaller.TARGETS)) {
       const t = hookInstaller.TARGETS[id];
       const r = hookInstaller.remove(id);
-      if (r.removed) parts.push(`${t.label}: ${r.removed} removidas`);
+      if (r.removed) parts.push(`${t.label}: ${T('ntf_removed', { n: r.removed })}`);
     }
-    if (hookInstaller.removeOpencode().removed) parts.push('OpenCode: plugin removido');
-    notifyUser(parts.length ? parts.join(' · ') : 'Nada instalado.');
-  } catch (e) { notifyUser(`Falha ao remover hook: ${e.message}`); }
+    if (hookInstaller.removeOpencode().removed) parts.push('OpenCode: ' + T('ntf_plugin_removed'));
+    notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
+  } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
 }
 function notifyUser(body) {
   try { new Notification({ title: 'AI Traffic Lights', body, silent: true }).show(); } catch {}
@@ -488,15 +499,15 @@ function createTray() {
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('AI Traffic Lights');
   const menu = () => Menu.buildFromTemplate([
-    { label: 'Mostrar/Ocultar', accelerator: 'Ctrl+Alt+H', click: toggleWin },
-    { type: 'checkbox', label: 'Iniciar com o sistema', checked: autostartEnabled(),
+    { label: T('tray_show_hide'), accelerator: 'Ctrl+Alt+H', click: toggleWin },
+    { type: 'checkbox', label: T('tray_autostart'), checked: autostartEnabled(),
       click: (it) => { setAutostart(it.checked); } },
     { type: 'separator' },
-    { label: 'Instalar/atualizar hooks (Claude, Gemini)', click: installHookFromApp },
-    { label: 'Remover hooks', click: removeHookFromApp },
+    { label: T('tray_install_hooks'), click: installHookFromApp },
+    { label: T('tray_remove_hooks'), click: removeHookFromApp },
     { type: 'separator' },
-    { label: 'Preferências…', click: createSettingsWindow },
-    { label: 'Sair', click: () => app.quit() },
+    { label: T('tray_preferences'), click: createSettingsWindow },
+    { label: T('tray_quit'), click: () => app.quit() },
   ]);
   tray.setContextMenu(menu());
   tray.on('click', toggleWin);
@@ -519,18 +530,27 @@ function saveSettingsBounds() {
     } catch {}
   }, 300);
 }
+// Mínimos que comportam TODO o conteúdo (4 seções + ações) sem rolagem —
+// o WM não deixa encolher além disso, então o layout nunca quebra.
+const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 600;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
   settingsWin = new BrowserWindow({
-    width: b.width || 480, height: b.height || 560,
-    minWidth: 380, minHeight: 420, resizable: true,
+    width: Math.max(b.width || 480, SETTINGS_MIN_W),   // bounds salvos por versões
+    height: Math.max(b.height || 620, SETTINGS_MIN_H), // antigas sobem pro mínimo
+    minWidth: SETTINGS_MIN_W, minHeight: SETTINGS_MIN_H, resizable: true,
     x: typeof b.x === 'number' ? b.x : undefined,
     y: typeof b.y === 'number' ? b.y : undefined,
-    title: 'Preferências',
+    title: T('prefs_title'),
+    icon: path.join(__dirname, 'assets/tray-icon.png'),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
+  // O overlay é always-on-top nível 'screen-saver' — sem elevar as Preferências
+  // ao MESMO nível, elas abrem ATRÁS dele quando as janelas se sobrepõem.
+  // Mesmo nível + criada depois = fica na frente.
+  settingsWin.setAlwaysOnTop(true, 'screen-saver');
   settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
   settingsWin.on('resize', saveSettingsBounds);
   settingsWin.on('move', saveSettingsBounds);
@@ -585,6 +605,7 @@ ipcMain.on('set-alias', (_e, { cwd, alias }) => {
 // Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
 // e abertura da janela a partir do renderer (caso queira botão no overlay um dia).
 ipcMain.handle('get-settings', () => settingsCfg);
+ipcMain.handle('get-lang', () => LANG);
 ipcMain.on('save-settings', (_e, cfg) => {
   settingsCfg = persistSettings(cfg);
   applyShortcut();                                    // re-registra o atalho novo
@@ -615,6 +636,8 @@ app.whenReady().then(() => {
   // idem pro plugin do OpenCode (só se o usuário já o instalou)
   hookInstaller.syncOpencodeIfInstalled(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
   settingsCfg = loadSettings();                      // threshold/atalho do usuário
+  LANG = i18n.pickLang(app.getLocale());             // idioma da UI segue o sistema
+  T = i18n.makeT(LANG);
   createWindow();
   createTray();
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)

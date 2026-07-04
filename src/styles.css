@@ -41,18 +41,25 @@ html, body {
   -webkit-app-region: drag;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 0 12px 0 16px;
   height: var(--header-h);
   border-bottom: 1px solid var(--border);
 }
+/* Nada do header encolhe/quebra em largura mínima — só .counts (ellipsis). */
+.bar > * { flex-shrink: 0; }
 .led-summary { width: 14px; height: 14px; }
 .title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.3px;
   text-shadow: var(--shadow-txt);
+  white-space: nowrap;
 }
+.logo { width: 16px; height: 16px; border-radius: 3px; }
 .bar-divider {
   width: 1px;
   height: 22px;
@@ -65,6 +72,11 @@ html, body {
   color: var(--ink-dim);
   letter-spacing: 0.5px;
   white-space: nowrap;
+  /* único item que cede espaço no mínimo: corta com ellipsis, nunca quebra */
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .spacer { flex: 1; }
 .btn {

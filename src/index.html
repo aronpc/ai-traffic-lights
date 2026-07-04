@@ -9,21 +9,22 @@
 <body>
   <div class="overlay" id="overlay">
     <header class="bar">
-      <span class="led led-summary" id="summaryLed" title="estado agregado"></span>
-      <span class="title">AI Lights</span>
+      <span class="led led-summary" id="summaryLed" title="estado agregado" data-i18n-title="tooltip_summary"></span>
+      <span class="title"><img class="logo" src="../assets/tray-icon.png" alt="">AI&nbsp;Lights</span>
       <span class="bar-divider" title=""></span>
       <span class="counts" id="counts">—</span>
       <span class="spacer"></span>
-      <button class="btn" id="settingsBtn" title="preferências">⚙</button>
-      <button class="btn" id="expandBtn" title="expandir/recolher">▾</button>
-      <button class="btn btn-close" id="quitBtn" title="fechar">×</button>
+      <button class="btn" id="settingsBtn" title="preferências" data-i18n-title="tooltip_settings">⚙</button>
+      <button class="btn" id="expandBtn" title="expandir/recolher" data-i18n-title="tooltip_expand">▾</button>
+      <button class="btn btn-close" id="quitBtn" title="ocultar" data-i18n-title="tooltip_close">×</button>
     </header>
     <ul class="list" id="list" hidden></ul>
-    <div class="empty" id="empty" hidden>Nenhuma sessão de IA ativa.</div>
-    <div class="grip" id="grip" title="arraste para redimensionar"></div>
+    <div class="empty" id="empty" hidden data-i18n="empty_state">Nenhuma sessão de IA ativa.</div>
+    <div class="grip" id="grip" title="arraste para redimensionar" data-i18n-title="tooltip_grip"></div>
   </div>
   <script src="agents.js"></script>
   <script src="state-machine.js"></script>
+  <script src="i18n.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // Regressão da issue #2: o rename in-place deve sobreviver a re-renders.
-// Carrega os scripts REAIS do renderer (agents + state-machine + renderer)
-// num contexto vm com um DOM mock e exercita os handlers reais de
-// dblclick/keydown/blur. Sem browser, sem dependências.
+// Carrega os scripts REAIS do renderer (agents + state-machine + i18n +
+// renderer, na mesma ordem do index.html) num contexto vm com um DOM mock e
+// exercita os handlers reais de dblclick/keydown/blur. Sem browser, sem deps.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const SRC = path.join(__dirname, '..', 'src');
-const CODE = ['agents.js', 'state-machine.js', 'renderer.js']
+const CODE = ['agents.js', 'state-machine.js', 'i18n.js', 'renderer.js']
   .map((f) => fs.readFileSync(path.join(SRC, f), 'utf8')).join('\n');
 
 function mkEl() {
@@ -41,9 +41,11 @@ async function setup() {
       notify() {}, toggleVisibility() {},
       getSettings: () => Promise.resolve(null), onSettingsChanged() {}, // settings (não usados no teste)
       saveSettings() {}, openSettings() {},
+      getLang: () => Promise.resolve('pt'),                             // i18n
+
     },
   };
-  const document = { getElementById: (id) => els[id], createElement: () => mkEl(), title: '' };
+  const document = { getElementById: (id) => els[id], createElement: () => mkEl(), querySelectorAll: () => [], title: '' };
   const ctx = { document, window, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date, Math, console };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);

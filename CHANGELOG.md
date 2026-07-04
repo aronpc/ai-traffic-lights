@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **UI in English & Portuguese (i18n)**: the interface follows the system
+  locale (`pt*` → Portuguese, anything else → English) — overlay, tray menu,
+  installer notifications and the Preferences window. Pure `src/i18n.js`
+  module with a key-parity test between the two languages.
+- **App icon in the overlay header**, next to the "AI Lights" title (also set
+  as the Preferences window icon).
+
+### Fixed
+- **Minimum sizes enforced at the WM level**: resizing by the window edge
+  could shrink the overlay (now min 320 px wide) and the Preferences window
+  (now min 420×600) past the point where the layout broke. The header title
+  never wraps — only the counters give way (ellipsis) — and Preferences fits
+  all four sections with no scrolling.
+- **Preferences window stays above the overlay** (raised to the same
+  always-on-top level) — it used to open behind it when the windows
+  overlapped.
+
+### Changed
+- **Header counters dropped the total-sessions figure** — the per-color
+  tallies (🟡 🟢 🔴) remain.
+
 ## [0.1.1] - 2026-07-04
 
 ### Security
