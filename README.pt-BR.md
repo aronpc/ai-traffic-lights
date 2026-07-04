@@ -8,8 +8,8 @@ Overlay translúcido sempre no topo (Electron) que mostra o estado de cada
 sessão de **agente de IA em terminal** no seu desktop como um semáforo:
 🟢 pronto · 🟡 trabalhando · 🔴 precisa de você.
 
-Monitora **Claude Code**, **Gemini CLI** e **OpenCode** hoje. A arquitetura é
-agnóstica — agentes novos entram via adapters (ver
+Monitora **Claude Code**, **Gemini CLI**, **Codex** e **OpenCode** hoje. A
+arquitetura é agnóstica — agentes novos entram via adapters (ver
 [Adicionando um agente](#adicionando-um-novo-agente)).
 
 ![Overlay do AI Traffic Lights](assets/screenshots/overlay.png)
@@ -203,7 +203,8 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [x] Adapter do Gemini CLI (hooks) + detecção de idle via sonda argv
 - [x] Adapter do OpenCode (plugin: eventos chat/tool/idle/permission, captura
   de modelo — ver `adapters/opencode/`)
-- [ ] Adapter do Codex (entrada do registro pronta em `src/agents.js`)
+- [x] Adapter do Codex (mesmo schema de hooks do Claude; model do payload) —
+  atenção: após `setup-hook`, rode `/hooks` no CLI do Codex uma vez pra confiar
 - [x] Empacotamento: AppImage + .deb (electron-builder) — ver [Releases](https://github.com/aronpc/ai-traffic-lights/releases)
 - [x] Suíte de testes (`node:test`) + CI
 - [x] Click-to-focus confiável: validação do window-id + aba exata no Warp

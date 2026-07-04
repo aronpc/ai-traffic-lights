@@ -63,26 +63,28 @@ main() {
     rm -f "$STATE_DIR/${sid}.json" 2>/dev/null
     return 0
   fi
-  # tail -n 5000 limita o custo em transcripts grandes; grep -P extrai só o valor.
+  # Model: preferido do payload (Codex manda "model" direto no JSON — sem
+  # custo); fallback pro grep do transcript (Claude/Gemini). tail limita o custo
+  # em transcripts grandes; \s* tolera JSONL compacto e JSON pretty-printed.
   local transcript="" model=""
   if [[ $input =~ \"transcript_path\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     transcript="${BASH_REMATCH[1]}"
-    if [ -f "$transcript" ]; then
-      # \s* tolera os dois formatos: JSONL compacto do Claude ("model":"x")
-      # e JSON pretty-printed do Gemini ("model": "x").
-      model=$(tail -n 5000 "$transcript" 2>/dev/null | grep -oP '"model"\s*:\s*"\K[^"]+' | tail -1)
-    fi
+  fi
+  if [[ $input =~ \"model\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+    model="${BASH_REMATCH[1]}"
+  elif [ -n "$transcript" ] && [ -f "$transcript" ]; then
+    model=$(tail -n 5000 "$transcript" 2>/dev/null | grep -oP '"model"\s*:\s*"\K[^"]+' | tail -1)
   fi
 
   # Sobe a árvore até achar o processo do agente. Zero forks.
   # claude: binário próprio (comm=claude). gemini: script Node (comm=node) —
-  # o PRIMEIRO ancestral node é o gemini (cadeia: bash-hook → node-gemini).
+  # o PRIMEIRO ancestral node é o gemini. codex: binário Rust (comm=codex).
   local agent_pid=$$ pid=$$ comm="" ppid=""
   while [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
     comm=""
     read -r comm < "/proc/$pid/comm" 2>/dev/null
     case "$AGENT:$comm" in
-      claude:claude|claude:claude-agent-acp|gemini:node) agent_pid="$pid"; break ;;
+      claude:claude|claude:claude-agent-acp|gemini:node|codex:codex) agent_pid="$pid"; break ;;
     esac
     ppid=""
     while IFS=$' \t' read -r k v; do
