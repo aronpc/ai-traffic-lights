@@ -7,6 +7,9 @@ const DEFAULTS = Object.freeze({
   escalateIdle: true,           // false = nunca escalar idle (sempre verde no Stop)
   shortcut: 'Control+Alt+H',    // atalho global de mostrar/ocultar
   lang: 'auto',                 // idioma da UI: 'auto' (locale do sistema) | 'en' | 'pt'
+  terminal: 'auto',             // Quick Launcher: 'auto' (1º presente) | 'tilix' | 'gnome-terminal' | 'ghostty' | 'custom'
+  terminalCmd: '',              // comando customizado p/ 'custom' (ex.: 'kitty --directory {cwd} -e {cmd}')
+  launchers: {},                // override de path por agente: { claude: '/usr/local/bin/claude' }
 });
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).
@@ -39,6 +42,21 @@ function mergeWithDefaults(raw) {
     if (typeof raw.escalateIdle === 'boolean') out.escalateIdle = raw.escalateIdle;
     if (isValidShortcut(raw.shortcut)) out.shortcut = raw.shortcut;
     if (raw.lang === 'auto' || raw.lang === 'en' || raw.lang === 'pt') out.lang = raw.lang;
+    const TERMINAL_OK = new Set(['auto', 'tilix', 'gnome-terminal', 'ghostty', 'custom']);
+    if (TERMINAL_OK.has(raw.terminal)) out.terminal = raw.terminal;
+    if (typeof raw.terminalCmd === 'string' && raw.terminalCmd.length <= 1000) out.terminalCmd = raw.terminalCmd;
+    // launchers: só strings (paths), chaves curtas — ignorado se malformado.
+    if (raw.launchers && typeof raw.launchers === 'object' && !Array.isArray(raw.launchers)) {
+      const clean = {};
+      let n = 0;
+      for (const [k, v] of Object.entries(raw.launchers)) {
+        if (typeof k === 'string' && k.length <= 64 && typeof v === 'string' && v.length <= 4096) {
+          clean[k] = v;
+          if (++n > 32) break;
+        }
+      }
+      out.launchers = clean;
+    }
   }
   return out;
 }

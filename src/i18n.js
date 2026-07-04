@@ -42,6 +42,11 @@ const STRINGS = {
     ntf_nothing_installed: 'Nothing installed.',
     ntf_install_fail: 'Failed to install hook: {msg}',
     ntf_remove_fail: 'Failed to remove hook: {msg}',
+    ntf_no_launcher: '{agent} CLI not found — add its path in Preferences',
+    ntf_no_terminal: 'No supported terminal found (install tilix / gnome-terminal / ghostty)',
+    launch_label: 'Terminal to launch agents',
+    launch_auto: 'Automatic (first available)',
+    launch_custom: 'Custom command',
     // janela de Preferências
     prefs_title: 'Preferences — AI Traffic Lights',
     prefs_h1: '🚦 Preferences',
@@ -106,6 +111,11 @@ const STRINGS = {
     ntf_nothing_installed: 'Nada instalado.',
     ntf_install_fail: 'Falha ao instalar hook: {msg}',
     ntf_remove_fail: 'Falha ao remover hook: {msg}',
+    ntf_no_launcher: 'CLI do {agent} não encontrado — adicione o caminho nas Preferências',
+    ntf_no_terminal: 'Nenhum terminal suportado (instale tilix / gnome-terminal / ghostty)',
+    launch_label: 'Terminal para abrir agentes',
+    launch_auto: 'Automático (primeiro disponível)',
+    launch_custom: 'Comando customizado',
     // janela de Preferências
     prefs_title: 'Preferências — AI Traffic Lights',
     prefs_h1: '🚦 Preferências',

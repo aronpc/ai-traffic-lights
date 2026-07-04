@@ -67,6 +67,8 @@ $save.addEventListener('click', () => {
     : { escalateIdle: true, idleThresholdSec: parseInt(v, 10) };
   if (captured) cfg.shortcut = captured;
   cfg.lang = $lang.value;                  // 'auto' | 'en' | 'pt'
+  cfg.terminal = $terminal.value;          // Quick Launcher: terminal de spawn
+  if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
   window.trafficLight.saveSettings(cfg);   // main aplica (atalho + idioma + overlay) e fecha
   window.close();
 });
@@ -101,5 +103,14 @@ window.trafficLight.getSettings().then((c) => {
   else $idle.value = String(c.idleThresholdSec || 300);
   $lang.value = c.lang || 'auto';
   setShortcut(c.shortcut || null);
+  $terminal.value = c.terminal || 'auto';
+  $terminalCmd.value = c.terminalCmd || '';
+  syncTerminalCmdField();
 });
+// ---- Quick Launcher: mostra o campo de comando custom só no modo 'custom' ----
+const $terminal = document.getElementById('terminal');
+const $terminalCmd = document.getElementById('terminalCmd');
+const $terminalCmdField = document.getElementById('terminalCmdField');
+function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
+$terminal.addEventListener('change', syncTerminalCmdField);
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Quick Launcher**: start a terminal AI agent straight from the overlay/tray.
+  Each detected CLI (Claude Code, Gemini CLI, Codex, OpenCode) gets a "+ Agent"
+  button — in the empty state and under a tray "Launch" submenu — that opens
+  the configured terminal in the most-recent project cwd and runs the agent.
+  The new session lights up via the normal hook path (the overlay doesn't
+  track the spawned process). Detection is a fork-free PATH scan (the Electron
+  process sees real binaries, not shell aliases); CLIs that exist only as a
+  shell alias take an override in `settings.json` (`launchers.<agent>`). The
+  terminal is selectable in Preferences (Automatic / Tilix / GNOME Terminal /
+  Ghostty / Custom command with `{cwd}` and `{cmd}` placeholders). Pure
+  `src/launcher.js` (terminal templates + `pickTerminal`) is tested.
+
 ## [0.2.0] - 2026-07-04
 
 ### Fixed

@@ -51,3 +51,25 @@ test('mergeWithDefaults: lang aceita auto/en/pt; inválido cai no default (auto)
   assert.equal(mergeWithDefaults({ lang: 'de' }).lang, 'auto');   // não suportado
   assert.equal(mergeWithDefaults({ lang: 42 }).lang, 'auto');     // tipo errado
 });
+
+test('mergeWithDefaults: terminal aceita auto/ids/custom; inválido cai no default', () => {
+  assert.equal(DEFAULTS.terminal, 'auto');
+  assert.equal(mergeWithDefaults({ terminal: 'tilix' }).terminal, 'tilix');
+  assert.equal(mergeWithDefaults({ terminal: 'custom' }).terminal, 'custom');
+  assert.equal(mergeWithDefaults({ terminal: 'kitty' }).terminal, 'auto'); // não suportado
+  assert.equal(mergeWithDefaults({ terminal: 1 }).terminal, 'auto');
+});
+
+test('mergeWithDefaults: terminalCmd só aceita string curta', () => {
+  assert.equal(mergeWithDefaults({ terminalCmd: 'kitty -e {cmd}' }).terminalCmd, 'kitty -e {cmd}');
+  assert.equal(mergeWithDefaults({ terminalCmd: 9 }).terminalCmd, '');
+  assert.equal(mergeWithDefaults({ terminalCmd: 'x'.repeat(1001) }).terminalCmd, '');
+});
+
+test('mergeWithDefaults: launchers filtra pares chave/string válidos', () => {
+  assert.deepEqual(mergeWithDefaults({ launchers: { claude: '/x/claude', gemini: '/y/gemini' } }).launchers,
+    { claude: '/x/claude', gemini: '/y/gemini' });
+  assert.deepEqual(mergeWithDefaults({ launchers: { claude: 9 } }).launchers, {}); // valor não-string
+  assert.deepEqual(mergeWithDefaults({ launchers: [] }).launchers, {});            // array, não objeto
+  assert.deepEqual(mergeWithDefaults({ launchers: 'nope' }).launchers, {});
+});

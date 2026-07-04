@@ -40,6 +40,9 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 - 🔔 **Snooze de alerta** por sessão (silencia o apito por 1h numa sessão vermelha)
 - 🔝 Sessões **ordenadas por urgência** (vermelho → amarelo → verde); **ícone do
   tray dinâmico** pinta com a pior cor e mostra a contagem no hover
+- 🚀 **Quick Launcher**: inicia um agente (+ Claude / + Gemini / + Codex / +
+  OpenCode) pelo empty state do overlay ou pelo tray — abre o terminal no
+  último projeto e a sessão acende sozinha
 - ✏️ Duplo-clique renomeia a sessão (apelidos persistem por projeto)
 - ⚙️ **Janela de Preferências** (ícone de engrenagem): threshold de idle,
   atalho global, autostart, instalar/remover hooks, mostrar/ocultar, sair —

@@ -12,6 +12,7 @@ const prevLevels = new Map();              // pid -> level (detecção de transi
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 const snoozed = new Map();                 // key -> ms (silencia o ALERTA até então; a cor fica)
 let everHadSessions = false;               // onboarding: mostra "instalar hooks" só enquanto nunca teve sessão
+let launchers = [];                        // Quick Launcher: [{id,label}] dos CLIs detectados
 const SNOOZE_MS = 60 * 60 * 1000;          // 1h
 function snoozeKey(s) { return s.pid || s.session_id; }
 function isSnoozed(key) {
@@ -20,6 +21,8 @@ function isSnoozed(key) {
   if (Date.now() > until) { snoozed.delete(key); return false; } // expirou — limpa
   return true;
 }
+
+const HEADER_H = 58; // tem que casar com --header-h do CSS
 
 const $list = document.getElementById('list');
 const $empty = document.getElementById('empty');
@@ -237,7 +240,7 @@ function render() {
   everHadSessions = everHadSessions || sessions.length > 0;
   $empty.hidden = sessions.length > 0;
   if (!everHadSessions) {
-    $empty.replaceChildren(
+    const kids = [
       Object.assign(document.createElement('strong'), { textContent: T('onboard_title') }),
       Object.assign(document.createElement('div'), { textContent: T('onboard_body'), className: 'onboard__body' }),
       Object.assign(document.createElement('button'), {
@@ -245,24 +248,55 @@ function render() {
         className: 'onboard__btn',
         onclick: () => window.trafficLight.installHooks(),
       }),
-    );
+    ];
+    $empty.replaceChildren(...kids);
   }
+  renderLauncher();
   if (sessions.length > 0 && expanded) $list.hidden = false;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();
   firstRender = false;
 }
 
+// Barra persistente de Quick Launcher (rodapé do overlay): um botão-ícone por
+// CLI detectado, com a marca/cor de cada agente. Visível sempre que houver
+// launchers — não só no empty state.
+function renderLauncher() {
+  const $bar = document.getElementById('launcher');
+  if (!$bar) return;
+  $bar.replaceChildren();
+  for (const l of launchers) {
+    const a = AGENTS[l.id];
+    if (!a || !a.mark) continue;
+    const btn = document.createElement('button');
+    btn.className = 'launcher-btn';
+    btn.style.setProperty('--agent-color', a.color || 'rgba(255,255,255,0.10)');
+    btn.title = '+ ' + a.label;
+    // Ícone + label: o label desliza (max-width) no hover, formando uma pílula
+    // "✦ Claude" animada. Sem hover, só o ícone (compacto, 26px).
+    btn.innerHTML = '<span class="launcher-btn__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + a.mark + '</svg></span><span class="launcher-btn__label">' + a.label + '</span>';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.launchAgent({ agent: l.id }); });
+    $bar.append(btn);
+  }
+  $bar.hidden = launchers.length === 0;
+}
+
 function autosize() {
   if (!expanded) return;
-  // Mede pelo fundo da última linha (offsetTop é relativo ao .overlay, já
-  // inclui o header). scrollHeight não serve: nunca encolhe abaixo do
-  // container — a janela crescia mas não voltava quando sessões fechavam.
-  const last = $list.lastElementChild;
-  const h = (sessions.length && last)
-    ? last.offsetTop + last.offsetHeight + 10   // + padding inferior da lista
-    : 58 + 56;                                  // header + estado vazio
-  window.trafficLight.autoHeight(h);
+  // Mede a posição NATURAL da última linha (ou do empty). offsetTop é relativo
+  // ao .overlay (position:relative), já inclui o header. As linhas ficam no
+  // topo do list, então essa posição é a natural — independe da altura flex
+  // da janela (o que evita o loop de feedback que a fazia crescer sozinha).
+  const $bar = document.getElementById('launcher');
+  const launcherH = ($bar && !$bar.hidden) ? $bar.offsetHeight : 0;
+  let bottom;
+  if (sessions.length) {
+    const last = $list.lastElementChild;
+    bottom = last ? (last.offsetTop + last.offsetHeight + 10) : (HEADER_H + 40);
+  } else {
+    bottom = $empty.offsetTop + $empty.offsetHeight + 8;
+  }
+  window.trafficLight.autoHeight(bottom + launcherH + 4);
 }
 
 // Eventos de UI
@@ -289,6 +323,7 @@ window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18
 window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
 window.trafficLight.requestSessions();
 window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });
+window.trafficLight.getLaunchers().then((l) => { launchers = l || []; render(); });
 window.trafficLight.getSettings().then((c) => { settingsCfg = c; render(); });
 window.trafficLight.onSettingsChanged((c) => {
   settingsCfg = c;
