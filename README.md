@@ -41,6 +41,9 @@ terminal — **window _and_ tab**.
 - 🔔 Per-session **alert snooze** (mute the beep for 1h on a red session)
 - 🔝 Sessions **sort by urgency** (red → yellow → green); **dynamic tray icon**
   paints with the worst color and shows counts on hover
+- 🚀 **Quick Launcher**: start an agent (+ Claude / + Gemini / + Codex / +
+  OpenCode) from the overlay empty-state or the tray — opens the terminal in
+  the last project and the session lights up automatically
 - ✏️ Double-click to rename a session (aliases persist per project)
 - ⚙️ **Preferences window** (gear icon): idle threshold, global shortcut,
   autostart, install/remove hooks, show/hide, quit — with the app version and a
