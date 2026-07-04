@@ -516,8 +516,8 @@ function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
   settingsWin = new BrowserWindow({
-    width: b.width || 480, height: b.height || 320,
-    minWidth: 380, minHeight: 260, resizable: true,
+    width: b.width || 480, height: b.height || 560,
+    minWidth: 380, minHeight: 420, resizable: true,
     x: typeof b.x === 'number' ? b.x : undefined,
     y: typeof b.y === 'number' ? b.y : undefined,
     title: 'Preferências',
@@ -577,6 +577,13 @@ ipcMain.on('save-settings', (_e, cfg) => {
   if (win && !win.isDestroyed()) win.webContents.send('settings-changed', settingsCfg);
 });
 ipcMain.on('open-settings', () => createSettingsWindow());
+
+// Preferências espelha o tray: autostart, hooks, mostrar/ocultar, sair.
+ipcMain.handle('get-autostart', () => autostartEnabled());
+ipcMain.on('set-autostart', (_e, on) => setAutostart(!!on));
+ipcMain.on('install-hooks', () => installHookFromApp());
+ipcMain.on('remove-hooks', () => removeHookFromApp());
+ipcMain.on('quit', () => app.quit());
 
 // Notificação no vermelho.
 ipcMain.on('notify', (_e, { title, body }) => {

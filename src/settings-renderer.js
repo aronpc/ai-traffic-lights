@@ -62,6 +62,14 @@ $save.addEventListener('click', () => {
 });
 $cancel.addEventListener('click', () => window.close());
 
+// ---- espelho do tray: autostart, hooks, mostrar/ocultar, sair ----
+const $autostart = document.getElementById('autostart');
+$autostart.addEventListener('change', () => window.trafficLight.setAutostart($autostart.checked));
+document.getElementById('installHooks').addEventListener('click', () => window.trafficLight.installHooks());
+document.getElementById('removeHooks').addEventListener('click', () => window.trafficLight.removeHooks());
+document.getElementById('toggleVis').addEventListener('click', () => window.trafficLight.toggleVisibility());
+document.getElementById('quit').addEventListener('click', () => window.trafficLight.quit());
+
 // Carga inicial
 window.trafficLight.getSettings().then((c) => {
   if (!c) return;
@@ -69,3 +77,4 @@ window.trafficLight.getSettings().then((c) => {
   else $idle.value = String(c.idleThresholdSec || 300);
   setShortcut(c.shortcut || null);
 });
+window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });

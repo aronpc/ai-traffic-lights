@@ -5,17 +5,21 @@
   <title>Preferências — AI Traffic Lights</title>
   <style>
     :root {
-      --bg: #1a1d24; --panel: #22262f; --ink: #f4f6f9; --dim: #a8b2be;
-      --accent: #3fb96b; --border: rgba(255,255,255,0.12);
+      --bg: #1a1d24; --panel: #22262f; --panel2: #2a2f39; --ink: #f4f6f9; --dim: #a8b2be;
+      --accent: #3fb96b; --danger: #e0563f; --border: rgba(255,255,255,0.12);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: var(--bg); color: var(--ink); font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      padding: 20px; font-size: 13.5px; -webkit-user-select: none;
+      padding: 18px 20px; font-size: 13.5px; -webkit-user-select: none;
     }
-    h1 { font-size: 14px; font-weight: 700; margin-bottom: 18px; letter-spacing: 0.3px; }
-    .field { margin-bottom: 16px; }
-    .field label { display: block; color: var(--dim); font-size: 11.5px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    h1 { font-size: 14px; font-weight: 700; margin-bottom: 14px; letter-spacing: 0.3px; }
+    .section { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .section:last-of-type { border-bottom: none; }
+    .section-title { color: var(--dim); font-size: 10.5px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.6px; }
+    .field { margin-bottom: 10px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label.top { display: block; color: var(--dim); font-size: 11.5px; margin-bottom: 6px; }
     select, .shortcut {
       width: 100%; background: var(--panel); color: var(--ink); border: 1px solid var(--border);
       border-radius: 8px; padding: 9px 11px; font-size: 13px; outline: none;
@@ -24,36 +28,68 @@
     .shortcut { cursor: pointer; font-variant-numeric: tabular-nums; }
     .shortcut.capturing { color: var(--dim); font-style: italic; }
     .hint { color: var(--dim); font-size: 11px; margin-top: 5px; }
-    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+    .row label { cursor: pointer; }
     button {
       background: var(--panel); color: var(--ink); border: 1px solid var(--border);
-      border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-weight: 600;
+      border-radius: 8px; padding: 8px 14px; font-size: 12.5px; cursor: pointer; font-weight: 600;
     }
-    button:hover { background: rgba(255,255,255,0.07); }
+    button:hover { background: var(--panel2); }
     button.primary { background: var(--accent); border-color: var(--accent); color: #0d1f14; }
     button.primary:hover { filter: brightness(1.08); }
+    button.danger:hover { background: rgba(224,86,63,0.18); border-color: var(--danger); color: var(--danger); }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
   </style>
 </head>
 <body>
   <h1>🚦 Preferências</h1>
 
-  <div class="field">
-    <label for="idle">Tempo parado até virar vermelho (idle)</label>
-    <select id="idle">
-      <option value="60">1 minuto</option>
-      <option value="120">2 minutos</option>
-      <option value="300">5 minutos (padrão)</option>
-      <option value="600">10 minutos</option>
-      <option value="900">15 minutos</option>
-      <option value="never">Nunca (sempre verde quando pronto)</option>
-    </select>
-    <div class="hint">Uma sessão que terminou e ficou parada por mais que isso vira 🔴.</div>
+  <div class="section">
+    <div class="section-title">Comportamento</div>
+    <div class="field">
+      <label class="top" for="idle">Tempo parado até virar vermelho (idle)</label>
+      <select id="idle">
+        <option value="60">1 minuto</option>
+        <option value="120">2 minutos</option>
+        <option value="300">5 minutos (padrão)</option>
+        <option value="600">10 minutos</option>
+        <option value="900">15 minutos</option>
+        <option value="never">Nunca (sempre verde quando pronto)</option>
+      </select>
+      <div class="hint">Uma sessão que terminou e ficou parada por mais que isso vira 🔴.</div>
+    </div>
+    <div class="field">
+      <label class="top" for="shortcut">Atalho de mostrar/ocultar</label>
+      <div class="shortcut" id="shortcut" tabindex="0">—</div>
+      <div class="hint">Clique e pressione a combinação. Precisa de um modificador (Ctrl/Alt/Shift/Super).</div>
+    </div>
   </div>
 
-  <div class="field">
-    <label for="shortcut">Atalho de mostrar/ocultar</label>
-    <div class="shortcut" id="shortcut" tabindex="0">—</div>
-    <div class="hint">Clique e pressione a combinação. Precisa de um modificador (Ctrl/Alt/Shift/Super).</div>
+  <div class="section">
+    <div class="section-title">Inicialização</div>
+    <div class="row">
+      <input type="checkbox" id="autostart">
+      <label for="autostart">Iniciar com o sistema</label>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Integração (agentes)</div>
+    <div class="btn-row">
+      <button id="installHooks">Instalar/atualizar hooks</button>
+      <button id="removeHooks" class="danger">Remover hooks</button>
+    </div>
+    <div class="hint">Registra o adapter em ~/.claude, ~/.gemini, ~/.codex e o plugin do OpenCode. No Codex, rode <code>/hooks</code> depois pra confiar.</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Janela</div>
+    <div class="btn-row">
+      <button id="toggleVis">Mostrar/Ocultar overlay</button>
+      <button id="quit" class="danger">Sair</button>
+    </div>
   </div>
 
   <div class="actions">

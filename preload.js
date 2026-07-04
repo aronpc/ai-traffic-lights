@@ -19,4 +19,10 @@ contextBridge.exposeInMainWorld('trafficLight', {
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),
+  // Espelho do tray na janela de Preferências
+  getAutostart: () => ipcRenderer.invoke('get-autostart'),
+  setAutostart: (on) => ipcRenderer.send('set-autostart', on),
+  installHooks: () => ipcRenderer.send('install-hooks'),
+  removeHooks: () => ipcRenderer.send('remove-hooks'),
+  quit: () => ipcRenderer.send('quit'),
 });

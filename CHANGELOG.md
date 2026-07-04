@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Preferences window mirrors the tray**: autostart toggle, install/remove
+  hooks, show/hide overlay, and quit are now all available from the gear icon
+  → Preferences (not only the tray menu). New "Inicialização", "Integração"
+  and "Janela" sections.
 - **Codex support**: adapter via `~/.codex/hooks.json` (Codex shares Claude's
   hooks schema, so the same `traffic-hook.sh` runs with `AI_TL_AGENT=codex` —
   no event translation). Model is read straight from the payload. After
