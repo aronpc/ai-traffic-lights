@@ -140,7 +140,9 @@ function backfillModels() {
         const m = tp && lastModel(tp);
         if (m) {
           s.transcript_path = tp; s.model = m;
-          fs.writeFileSync(p, JSON.stringify(s));
+          // tmp+rename: mesma escrita atômica dos adapters (sem race com o hook)
+          fs.writeFileSync(p + '.tmp', JSON.stringify(s));
+          fs.renameSync(p + '.tmp', p);
           changed = true;
         }
       } catch {}
@@ -590,12 +592,12 @@ ipcMain.on('save-settings', (_e, cfg) => {
 });
 ipcMain.on('open-settings', () => createSettingsWindow());
 
-// Preferências espelha o tray: autostart, hooks, mostrar/ocultar, sair.
+// Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair
+// reusam os canais 'toggle-visibility' e 'quit' já registrados.
 ipcMain.handle('get-autostart', () => autostartEnabled());
 ipcMain.on('set-autostart', (_e, on) => setAutostart(!!on));
 ipcMain.on('install-hooks', () => installHookFromApp());
 ipcMain.on('remove-hooks', () => removeHookFromApp());
-ipcMain.on('quit', () => app.quit());
 
 // Notificação no vermelho.
 ipcMain.on('notify', (_e, { title, body }) => {

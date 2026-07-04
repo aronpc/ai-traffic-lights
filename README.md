@@ -12,12 +12,12 @@ Monitors **Claude Code**, **Gemini CLI**, **Codex** and **OpenCode** today. The
 architecture is agent-agnostic — new agents land via adapters (see
 [Adding an agent](#adding-a-new-agent)).
 
-![AI Traffic Lights — live overlay](assets/screenshots/overlay-pulse.gif)
+<p align="center"><img src="assets/screenshots/overlay-pulse.gif" alt="AI Traffic Lights — live overlay" width="340"></p>
 
 _One light per terminal AI session: 🟢 done · 🟡 working · 🔴 needs you. Animated:
 the red LED pulses. Static shot below._
 
-![AI Traffic Lights overlay — all agents](assets/screenshots/overlay.png)
+<p align="center"><img src="assets/screenshots/overlay.png" alt="AI Traffic Lights overlay — all agents" width="340"></p>
 
 ## Why
 
@@ -43,7 +43,7 @@ terminal — **window _and_ tab**.
 - Tray icon + global shortcut **`Ctrl+Alt+H`** (configurable)
 - Stays out of your way: no taskbar/alt-tab entry, never maximizes, no scrollbar
 
-![Preferences window](assets/screenshots/preferences.png)
+<p align="center"><img src="assets/screenshots/preferences.png" alt="Preferences window" width="400"></p>
 
 ## Requirements
 
@@ -52,7 +52,9 @@ terminal — **window _and_ tab**.
   window focus reaches XWayland terminals only. See Troubleshooting.
 - `wmctrl`, `xdotool`, `jq` — `sudo apt install wmctrl xdotool jq`
 - Node.js 20+
-- A supported agent: [Claude Code](https://claude.com/claude-code) today
+- A supported agent: [Claude Code](https://claude.com/claude-code),
+  [Gemini CLI](https://github.com/google-gemini/gemini-cli),
+  [Codex](https://github.com/openai/codex) or [OpenCode](https://opencode.ai)
 
 ## Install (from source)
 
