@@ -30,6 +30,22 @@ function pickWindow(windowid, wins, ancestorPids) {
   return owned ? owned.id : null;
 }
 
+// Extrai os hints de foco de um /proc/<pid>/environ (KEY=VAL separados por
+// NUL). É a fonte VIVA — usada no clique pra enriquecer sessões cujo state
+// ainda não tem o hint (evento anterior ao hook novo, ou sessão só-/proc).
+function parseEnviron(text) {
+  const out = { focus_url: null, tilix_id: null };
+  if (!text) return out;
+  for (const line of text.split('\0')) {
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const k = line.slice(0, eq);
+    if (k === 'WARP_FOCUS_URL') out.focus_url = line.slice(eq + 1);
+    else if (k === 'TILIX_ID') out.tilix_id = line.slice(eq + 1);
+  }
+  return out;
+}
+
 // Escolhe o canal nativo que foca a ABA/sessão exata dentro do terminal
 // (janela é responsabilidade do X11; aba é interna ao terminal).
 //   warp  → xdg-open  warp://session/<uuid>   (state.focus_url)
@@ -43,4 +59,4 @@ function tabChannel(state) {
   return null;
 }
 
-if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel };
+if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, parseEnviron };

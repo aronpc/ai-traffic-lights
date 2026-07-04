@@ -246,10 +246,27 @@ function focusTab(state) {
   } catch {}
 }
 
+// Enriquece o alvo com os hints de foco lidos AO VIVO do /proc/<pid>/environ.
+// O state file guarda um snapshot capturado no prompt; o environ é a fonte
+// viva — cobre sessões cujo evento veio antes do hook atual e as detectadas
+// só via /proc (sem focus_url/tilix_id no state). O state tem precedência.
+function enrichTarget(target) {
+  if (!target || !target.pid || (target.focus_url && target.tilix_id)) return target;
+  try {
+    const hints = focus.parseEnviron(fs.readFileSync(`/proc/${target.pid}/environ`, 'utf8'));
+    return {
+      ...target,
+      focus_url: target.focus_url || hints.focus_url,
+      tilix_id: target.tilix_id || hints.tilix_id,
+    };
+  } catch { return target; }
+}
+
 function focusSession(target) {
   if (!target) return;
-  const raise = () => raiseWindow(target.windowid, target.pid);
-  const tab = () => focusTab(target);
+  const t = enrichTarget(target);
+  const raise = () => raiseWindow(t.windowid, t.pid);
+  const tab = () => focusTab(t);
   if (IS_WAYLAND) { tab(); raise(); }
   else { raise(); tab(); }
 }

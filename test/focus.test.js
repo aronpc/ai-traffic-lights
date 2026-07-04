@@ -1,7 +1,7 @@
 // Testes da lógica pura de click-to-focus (issue #1).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseWindowId, pickWindow, tabChannel } = require('../src/focus.js');
+const { parseWindowId, pickWindow, tabChannel, parseEnviron } = require('../src/focus.js');
 
 test('parseWindowId: hex, decimal, inválidos', () => {
   assert.equal(parseWindowId('0x06a00007'), 0x06a00007);
@@ -59,6 +59,17 @@ test('#1 tabChannel: focus_url tem precedência sobre tilix_id', () => {
     tabChannel({ focus_url: 'warp://session/x', tilix_id: 'y' }),
     { kind: 'warp', value: 'warp://session/x' },
   );
+});
+
+test('#1 parseEnviron: extrai WARP_FOCUS_URL e TILIX_ID do environ (NUL-sep)', () => {
+  const warp = 'PATH=/bin\0WARP_FOCUS_URL=warp://session/xyz\0HOME=/h\0';
+  assert.deepEqual(parseEnviron(warp), { focus_url: 'warp://session/xyz', tilix_id: null });
+  const tilix = 'TERM=xterm\0TILIX_ID=b6c1585a-uuid\0USER=aron\0';
+  assert.deepEqual(parseEnviron(tilix), { focus_url: null, tilix_id: 'b6c1585a-uuid' });
+  assert.deepEqual(parseEnviron(''), { focus_url: null, tilix_id: null });
+  assert.deepEqual(parseEnviron(null), { focus_url: null, tilix_id: null });
+  // valor com '=' interno preservado; chave sem '=' ignorada
+  assert.equal(parseEnviron('WARP_FOCUS_URL=warp://s/a=b\0BARE').focus_url, 'warp://s/a=b');
 });
 
 test('#1 tabChannel: sem canal (gnome-terminal etc.) → null', () => {
