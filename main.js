@@ -499,7 +499,7 @@ let settingsWin = null;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   settingsWin = new BrowserWindow({
-    width: 380, height: 240, resizable: false,
+    width: 480, height: 320, minWidth: 380, minHeight: 260, resizable: true,
     title: 'Preferências',
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
