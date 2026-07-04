@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Traffic Lights</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="overlay" id="overlay">
+    <header class="bar">
+      <span class="led led-summary" id="summaryLed" title="estado agregado"></span>
+      <span class="title">AI Lights</span>
+      <span class="bar-divider" title=""></span>
+      <span class="counts" id="counts">—</span>
+      <span class="spacer"></span>
+      <button class="btn" id="expandBtn" title="expandir/recolher">▾</button>
+      <button class="btn btn-close" id="quitBtn" title="fechar">×</button>
+    </header>
+    <ul class="list" id="list" hidden></ul>
+    <div class="empty" id="empty" hidden>Nenhuma sessão de IA ativa.</div>
+    <div class="grip" id="grip" title="arraste para redimensionar"></div>
+  </div>
+  <script src="agents.js"></script>
+  <script src="state-machine.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+{
+  "name": "ai-traffic-lights",
+  "version": "0.1.0",
+  "description": "Overlay com um semáforo 🟢🟡🔴 por sessão de agente de IA no desktop — Claude Code hoje; Gemini, Codex e OpenCode via adapters (roadmap)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "setup-hook": "node scripts/setup-hook.js",
+    "remove-hook": "node scripts/setup-hook.js --remove",
+    "hook:test": "bash hooks/traffic-hook.sh",
+    "dist": "electron-builder --linux"
+  },
+  "author": "Aron Peyroteo <aronpeyroteo@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/aronpc/ai-traffic-lights",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aronpc/ai-traffic-lights.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aronpc/ai-traffic-lights/issues"
+  },
+  "build": {
+    "appId": "dev.aitrafficlights.app",
+    "productName": "AI Traffic Lights",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "hooks/**/*",
+      "assets/tray-icon.png"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "synopsis": "Traffic light overlay for terminal AI agent sessions"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0"
+  }
+}

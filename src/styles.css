@@ -1,0 +1,181 @@
+/* styles.css — overlay (painel sólido) + LEDs semaforiais. Espaçamento generoso. */
+
+:root {
+  --amber: #e0a020;
+  --green: #3fb96b;
+  --red:   #e0563f;
+  --ink:   #f4f6f9;
+  --ink-dim: #a8b2be;
+  --bg: rgba(18, 21, 28, 0.97);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-bright: rgba(255, 255, 255, 0.18);
+  --row-hover: rgba(255, 255, 255, 0.07);
+  --shadow-txt: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --header-h: 58px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: transparent;
+  font-family: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  color: var(--ink);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.overlay {
+  position: relative;
+  height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-bright);
+  border-radius: 14px;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+/* ---------- header (arrastável) ---------- */
+.bar {
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  height: var(--header-h);
+  border-bottom: 1px solid var(--border);
+}
+.led-summary { width: 14px; height: 14px; }
+.title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-shadow: var(--shadow-txt);
+}
+.bar-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border-bright);
+  flex-shrink: 0;
+}
+.counts {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.spacer { flex: 1; }
+.btn {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: none;
+  color: var(--ink-dim);
+  font-size: 16px;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.btn:hover { background: rgba(255,255,255,0.10); color: var(--ink); }
+.btn-close:hover { background: rgba(224,86,63,0.22); color: var(--red); }
+
+/* ---------- LEDs ---------- */
+.led {
+  width: 12px; height: 12px; border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--ink-dim);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.20);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.led--processing { background: var(--amber); box-shadow: 0 0 8px rgba(224,160,32,0.75); }
+.led--done       { background: var(--green); box-shadow: 0 0 6px rgba(63,185,107,0.55); }
+.led--awaiting   { background: var(--red);   box-shadow: 0 0 10px rgba(224,86,63,0.9); animation: pulse 1.4s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(224,86,63,0.5); transform: scale(1); }
+  50%      { box-shadow: 0 0 14px rgba(224,86,63,1); transform: scale(1.18); }
+}
+@media (prefers-reduced-motion: reduce) { .led--awaiting { animation: none; } }
+
+/* ---------- lista ---------- */
+.list {
+  list-style: none;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  height: calc(100% - var(--header-h));
+  scrollbar-width: none;               /* sem barra visível; wheel continua rolando */
+}
+.list::-webkit-scrollbar { display: none; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.row + .row { margin-top: 3px; } /* respiro entre linhas */
+.row:hover { background: var(--row-hover); }
+.row .led { width: 11px; height: 11px; }
+
+.row__main { min-width: 0; flex: 1; }
+.row__label {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: var(--shadow-txt);
+}
+.row__sub {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink-dim);
+  margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.row__icon { font-size: 11.5px; margin-right: 6px; }
+
+/* rename in-place */
+.row-input {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  padding: 1px 5px;
+  width: 70%;
+  outline: none;
+}
+.row-input:focus { border-color: var(--green); }
+
+.empty { padding: 18px 16px; font-size: 12.5px; color: var(--ink-dim); }
+
+/* ---------- gripper de resize (canto inf. direito — largura) ---------- */
+.grip {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  right: 0; bottom: 0;
+  width: 20px; height: 20px;
+  cursor: nwse-resize;
+  z-index: 5;
+}
+.grip::after {
+  content: '';
+  position: absolute;
+  right: 4px; bottom: 4px;
+  width: 9px; height: 9px;
+  border-right: 2px solid var(--ink-dim);
+  border-bottom: 2px solid var(--ink-dim);
+  opacity: 0.4;
+}
+.grip:hover::after { opacity: 0.9; }

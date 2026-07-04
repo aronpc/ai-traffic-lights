@@ -1,0 +1,12 @@
+# dependências e builds
+node_modules/
+dist/
+
+# estado local de ferramentas de desenvolvimento
+.omc/
+.claude/
+
+# temporários
+*.log
+*.tmp
+.DS_Store
