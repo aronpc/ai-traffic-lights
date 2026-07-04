@@ -162,7 +162,18 @@ function render() {
     const li = document.createElement('li');
     li.className = 'row';
     li.title = T('row_tooltip');
-    li.addEventListener('click', () => window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id }));
+    // Clique simples = focar terminal; mas o dblclick (rename) dispara 2 cliques
+    // antes — sem debounce, cada clique levanta o terminal e rouba o foco do
+    // teclado do input de rename, que abre vazio/fecha na hora. Solução: espera
+    // 220ms; se vier um 2º clique (dblclick), cancela o foco e deixa o rename.
+    let clickTimer = null;
+    li.addEventListener('click', () => {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; } // 2º click do dblclick
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+      }, 220);
+    });
 
     const led = document.createElement('span');
     led.className = `led led--${st.level}`;
@@ -176,7 +187,11 @@ function render() {
     icon.className = 'row__icon';
     icon.textContent = iconFor(st);
     labelEl.append(icon, label);
-    labelEl.addEventListener('dblclick', (e) => { e.stopPropagation(); startRename(s, labelEl); });
+    labelEl.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; } // era clique simples pendente → cancela o foco
+      startRename(s, labelEl);
+    });
 
     const subEl = document.createElement('span');
     subEl.className = 'row__sub';
