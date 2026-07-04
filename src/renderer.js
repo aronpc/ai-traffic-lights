@@ -10,6 +10,16 @@ let T = makeT('en');                       // i18n — troca pro idioma do siste
 let firstRender = true;                    // hidrata prevLevels sem alertar no boot
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
+const snoozed = new Map();                 // key -> ms (silencia o ALERTA até então; a cor fica)
+let everHadSessions = false;               // onboarding: mostra "instalar hooks" só enquanto nunca teve sessão
+const SNOOZE_MS = 60 * 60 * 1000;          // 1h
+function snoozeKey(s) { return s.pid || s.session_id; }
+function isSnoozed(key) {
+  const until = snoozed.get(key);
+  if (!until) return false;
+  if (Date.now() > until) { snoozed.delete(key); return false; } // expirou — limpa
+  return true;
+}
 
 const $list = document.getElementById('list');
 const $empty = document.getElementById('empty');
@@ -125,7 +135,7 @@ function render() {
     // não deve apitar (só transições reais disparam alerta).
     const key = s.pid || s.session_id;
     const was = prevLevels.get(key);
-    if (!firstRender && st.level === 'awaiting' && was !== 'awaiting') {
+    if (!firstRender && st.level === 'awaiting' && was !== 'awaiting' && !isSnoozed(key)) {
       const nowMs = Date.now();
       if (!lastAlert.has(key) || nowMs - lastAlert.get(key) > 30000) {
         lastAlert.set(key, nowMs);
@@ -174,6 +184,24 @@ function render() {
 
     main.append(labelEl, subEl);
     li.append(led, main);
+
+    // Snooze do alerta (só em vermelho): não apaga a cor, só cala o beep/notif.
+    if (st.level === 'awaiting') {
+      const sk = snoozeKey(s);
+      const muted = isSnoozed(sk);
+      const btn = document.createElement('button');
+      btn.className = 'row__snooze' + (muted ? ' is-on' : '');
+      btn.textContent = muted ? '🔕' : '🔔';
+      btn.title = T(muted ? 'snooze_off' : 'snooze_on');
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isSnoozed(sk)) snoozed.delete(sk);
+        else snoozed.set(sk, Date.now() + SNOOZE_MS);
+        render();
+      });
+      li.append(btn);
+    }
+
     return li;
   });
 
@@ -189,7 +217,21 @@ function render() {
   // Tray dinâmico: o ícone pinta com a pior cor e o tooltip leva a contagem.
   window.trafficLight.setTrayLevel({ level: worst, awaiting: tally.awaiting, processing: tally.processing, done: tally.done });
 
+  // Onboarding: só enquanto NUNCA apareceu uma sessão (sinal de hooks não instalados).
+  // Assim que a 1ª sessão surge, o banner some pra sempre nesta execução.
+  everHadSessions = everHadSessions || sessions.length > 0;
   $empty.hidden = sessions.length > 0;
+  if (!everHadSessions) {
+    $empty.replaceChildren(
+      Object.assign(document.createElement('strong'), { textContent: T('onboard_title') }),
+      Object.assign(document.createElement('div'), { textContent: T('onboard_body'), className: 'onboard__body' }),
+      Object.assign(document.createElement('button'), {
+        textContent: T('onboard_btn'),
+        className: 'onboard__btn',
+        onclick: () => window.trafficLight.installHooks(),
+      }),
+    );
+  }
   if (sessions.length > 0 && expanded) $list.hidden = false;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();

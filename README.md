@@ -38,6 +38,9 @@ terminal — **window _and_ tab**.
   exact terminal (via D-Bus `TILIX_ID`)
 - 🔔 Beep + desktop notification when a session turns red (rate-limited)
 - ⏰ Idle escalation: a finished session left unattended turns red (configurable)
+- 🔔 Per-session **alert snooze** (mute the beep for 1h on a red session)
+- 🔝 Sessions **sort by urgency** (red → yellow → green); **dynamic tray icon**
+  paints with the worst color and shows counts on hover
 - ✏️ Double-click to rename a session (aliases persist per project)
 - ⚙️ **Preferences window** (gear icon): idle threshold, global shortcut,
   autostart, install/remove hooks, show/hide, quit

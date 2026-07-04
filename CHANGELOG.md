@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip carries the per-color counts, so the state is visible at a glance
   even with the overlay hidden. Falls back to the neutral icon when no session
   is running.
+- **Per-session alert snooze**: a 🔔 button on red sessions silences the
+  beep/notification for that session for 1h (the LED stays red — it only mutes
+  the alert, not the state). Toggle back with 🔕.
+- **In-app onboarding**: when the overlay opens with no sessions ever seen, the
+  empty state shows a "Install hooks" prompt with a one-click button — the
+  invisible path (tray/CLI) for AppImage users who never ran `setup-hook`.
 
 ### Added
 - **UI in English & Portuguese (i18n)**: the interface follows the system

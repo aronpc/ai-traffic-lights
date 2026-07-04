@@ -12,6 +12,11 @@ const STRINGS = {
   en: {
     // overlay
     empty_state: 'No active AI sessions.',
+    onboard_title: 'No sessions yet?',
+    onboard_body: 'Install the hooks to monitor Claude Code, Gemini, Codex and OpenCode sessions.',
+    onboard_btn: 'Install hooks',
+    snooze_on: 'Silence alerts 1h',
+    snooze_off: 'Restore alerts',
     tooltip_settings: 'preferences',
     tooltip_expand: 'expand/collapse',
     tooltip_close: 'hide',
@@ -71,6 +76,11 @@ const STRINGS = {
   pt: {
     // overlay
     empty_state: 'Nenhuma sessão de IA ativa.',
+    onboard_title: 'Nenhuma sessão ainda?',
+    onboard_body: 'Instale os hooks pra monitorar sessões de Claude Code, Gemini, Codex e OpenCode.',
+    onboard_btn: 'Instalar hooks',
+    snooze_on: 'Silenciar alertas 1h',
+    snooze_off: 'Restaurar alertas',
     tooltip_settings: 'preferências',
     tooltip_expand: 'expandir/recolher',
     tooltip_close: 'ocultar',
