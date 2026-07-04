@@ -22,6 +22,8 @@ function isSnoozed(key) {
   return true;
 }
 
+const HEADER_H = 58; // tem que casar com --header-h do CSS
+
 const $list = document.getElementById('list');
 const $empty = document.getElementById('empty');
 const $counts = document.getElementById('counts');
@@ -247,36 +249,54 @@ function render() {
         onclick: () => window.trafficLight.installHooks(),
       }),
     ];
-    // Quick Launcher: um botão por CLI detectado (abre o terminal e sobe o agente).
-    if (launchers.length) {
-      const row = Object.assign(document.createElement('div'), { className: 'onboard__launch' });
-      for (const l of launchers) {
-        row.append(Object.assign(document.createElement('button'), {
-          textContent: '+ ' + l.label,
-          className: 'onboard__agent',
-          onclick: () => window.trafficLight.launchAgent({ agent: l.id }),
-        }));
-      }
-      kids.push(row);
-    }
     $empty.replaceChildren(...kids);
   }
+  renderLauncher();
   if (sessions.length > 0 && expanded) $list.hidden = false;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();
   firstRender = false;
 }
 
+// Barra persistente de Quick Launcher (rodapé do overlay): um botão-ícone por
+// CLI detectado, com a marca/cor de cada agente. Visível sempre que houver
+// launchers — não só no empty state.
+function renderLauncher() {
+  const $bar = document.getElementById('launcher');
+  if (!$bar) return;
+  $bar.replaceChildren();
+  for (const l of launchers) {
+    const a = AGENTS[l.id];
+    if (!a || !a.mark) continue;
+    const btn = document.createElement('button');
+    btn.className = 'launcher-btn';
+    btn.style.setProperty('--agent-color', a.color || 'rgba(255,255,255,0.10)');
+    btn.title = '+ ' + a.label;
+    // Ícone + label: o label desliza (max-width) no hover, formando uma pílula
+    // "✦ Claude" animada. Sem hover, só o ícone (compacto, 26px).
+    btn.innerHTML = '<span class="launcher-btn__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + a.mark + '</svg></span><span class="launcher-btn__label">' + a.label + '</span>';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.launchAgent({ agent: l.id }); });
+    $bar.append(btn);
+  }
+  $bar.hidden = launchers.length === 0;
+}
+
 function autosize() {
   if (!expanded) return;
-  // Mede pelo fundo da última linha (offsetTop é relativo ao .overlay, já
-  // inclui o header). scrollHeight não serve: nunca encolhe abaixo do
-  // container — a janela crescia mas não voltava quando sessões fechavam.
-  const last = $list.lastElementChild;
-  const h = (sessions.length && last)
-    ? last.offsetTop + last.offsetHeight + 10   // + padding inferior da lista
-    : 58 + 56;                                  // header + estado vazio
-  window.trafficLight.autoHeight(h);
+  // Mede a posição NATURAL da última linha (ou do empty). offsetTop é relativo
+  // ao .overlay (position:relative), já inclui o header. As linhas ficam no
+  // topo do list, então essa posição é a natural — independe da altura flex
+  // da janela (o que evita o loop de feedback que a fazia crescer sozinha).
+  const $bar = document.getElementById('launcher');
+  const launcherH = ($bar && !$bar.hidden) ? $bar.offsetHeight : 0;
+  let bottom;
+  if (sessions.length) {
+    const last = $list.lastElementChild;
+    bottom = last ? (last.offsetTop + last.offsetHeight + 10) : (HEADER_H + 40);
+  } else {
+    bottom = $empty.offsetTop + $empty.offsetHeight + 8;
+  }
+  window.trafficLight.autoHeight(bottom + launcherH + 4);
 }
 
 // Eventos de UI

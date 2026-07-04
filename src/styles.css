@@ -29,12 +29,17 @@ html, body {
 .overlay {
   position: relative;
   height: 100%;
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   border: 1px solid var(--border-bright);
   border-radius: 14px;
   box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
+.bar { flex: 0 0 auto; }
+.list { flex: 1 1 auto; min-height: 0; }
+.empty { flex: 0 0 auto; width: 100%; }
 
 /* ---------- header (arrastável) ---------- */
 .bar {
@@ -128,10 +133,45 @@ html, body {
   list-style: none;
   overflow-y: auto;
   padding: 8px 10px 10px;
-  height: calc(100% - var(--header-h));
   scrollbar-width: none;               /* sem barra visível; wheel continua rolando */
 }
 .list::-webkit-scrollbar { display: none; }
+
+/* ---------- Quick Launcher (barra persistente no rodapé do overlay) ---------- */
+.launcher-bar {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+}
+.launcher-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 7px;
+  border: none;
+  cursor: pointer;
+  background: var(--agent-color, rgba(255,255,255,0.10));
+  color: #fff;
+  overflow: hidden;
+  transition: filter 0.12s, transform 0.12s;
+}
+.launcher-btn__icon { display: inline-flex; }
+.launcher-btn__icon svg { width: 15px; height: 15px; display: block; }
+/* Label desliza no hover: max-width 0→80px + opacity, vira pílula "✦ Claude". */
+.launcher-btn__label {
+  max-width: 0; opacity: 0;
+  overflow: hidden; white-space: nowrap;
+  font-size: 11px; font-weight: 700;
+  transition: max-width 0.2s ease, opacity 0.15s ease, margin-left 0.2s ease;
+}
+.launcher-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+.launcher-btn:hover .launcher-btn__label { max-width: 80px; opacity: 1; margin-left: 5px; }
+.launcher-btn:active { transform: translateY(0); }
 
 .row {
   display: flex;

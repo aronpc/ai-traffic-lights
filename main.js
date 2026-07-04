@@ -687,16 +687,23 @@ ipcMain.on('request-sessions', sendSessions);
 
 ipcMain.on('set-expanded', (_e, expanded) => {
   if (!win || win.isDestroyed()) return;
-  // expandido = altura auto (renderer pede); recolhido = só header
-  if (!expanded) win.setSize(win.getSize()[0], HEADER_H, false);
+  // expandido = altura auto (renderer pede); recolhido = só header.
+  if (!expanded) {
+    const [w] = win.getSize();
+    win.setSize(w, HEADER_H, false);
+    win.setMinimumSize(MIN_W, HEADER_H);   // recolhido: mínimo = header
+  }
 });
 
 // Altura automática pelo conteúdo (n linhas). Largura e posição preservadas.
+// O MÍNIMO da janela acompanha o conteúdo: não dá pra arrastar pra menos e
+// cortar sessões — o overlay sempre cabe tudo (até o teto MAX_H, onde rola).
 ipcMain.on('auto-height', (_e, h) => {
   if (!win || win.isDestroyed()) return;
   const clamped = Math.max(MIN_H, Math.min(Math.round(h), MAX_H));
   const [w] = win.getSize();
   win.setSize(w, clamped, false);
+  win.setMinimumSize(MIN_W, clamped);
 });
 
 // Gripper: só largura (altura é auto). Persiste ao soltar.
