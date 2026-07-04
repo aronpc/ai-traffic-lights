@@ -89,9 +89,21 @@ html, body {
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
+  /* Centraliza o glyph na caixa 28×28 qualquer que seja a métrica de fonte
+     (emoji ⚙ vs texto ▾ × têm baseline/ascender diferentes — sem isso eles
+     ficam em alturas visuais diferentes). line-height:1 + flex centrado. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .btn:hover { background: rgba(255,255,255,0.10); color: var(--ink); }
 .btn-close:hover { background: rgba(224,86,63,0.22); color: var(--red); }
+/* Ícones SVG (substituem glyphs de texto/emoji — alinhamento perfeito pois
+   o desenho é centrado no viewBox, sem depender de métrica de fonte). */
+.btn svg { width: 16px; height: 16px; display: block; }
+#expandBtn svg { transition: transform 0.15s ease; }
+#expandBtn.is-expanded svg { transform: rotate(180deg); }
 
 /* ---------- LEDs ---------- */
 .led {

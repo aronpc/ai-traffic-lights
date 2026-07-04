@@ -39,13 +39,20 @@
     button {
       background: var(--panel); color: var(--ink); border: 1px solid var(--border);
       border-radius: 8px; padding: 8px 14px; font-size: 12.5px; cursor: pointer; font-weight: 600;
+      text-align: center;          /* rótulo centrado p/ o grid de igual largura */
     }
     button:hover { background: var(--panel2); }
     button.primary { background: var(--accent); border-color: var(--accent); color: #0d1f14; }
     button.primary:hover { filter: brightness(1.08); }
     button.danger:hover { background: rgba(224,86,63,0.18); border-color: var(--danger); color: var(--danger); }
-    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    /* Grid de 2 colunas iguais: ambos os botões da linha ganham MESMA largura e
+       altura (o mais alto dita a linha) — acaba com o look ragged de rótulos
+       longo + curto lado a lado (Instalar hooks / Remover hooks etc.). */
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn-row button { width: 100%; }
+    /* Cancelar/Salvar uniformes e alinhados à direita, mesma largura. */
     .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+    .actions button { min-width: 112px; }
     .appfoot {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);

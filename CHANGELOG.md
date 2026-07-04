@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v0.1.1") next to a clickable **GitHub** link (`shell.openExternal`, http(s)
   only), and in the **tray tooltip** ("AI Traffic Lights v0.1.1").
 
+### Changed
+- **Overlay header buttons are SVG icons** (gear / chevron / close) instead of
+  text/emoji glyphs — they now align perfectly on the same axis regardless of
+  font metrics (the triangle and emoji sat at different heights). The expand
+  chevron rotates 180° with a smooth transition instead of swapping characters.
+- **Preferences button rows use an equal-width grid** so pairs like
+  "Instalar/atualizar hooks" + "Remover hooks" share the same width and height
+  (no more ragged long/short look); Cancelar/Salvar are uniform too.
+
 ### Added
 - **UI in English & Portuguese (i18n)**: the interface follows the system
   locale (`pt*` → Portuguese, anything else → English) — overlay, tray menu,
