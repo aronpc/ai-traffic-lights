@@ -3,7 +3,7 @@
 // envia sessões ao renderer, auto-redimensiona a altura pelo nº de linhas,
 // e persiste largura + posição entre reinícios.
 
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
@@ -17,6 +17,11 @@ const i18n = require('./src/i18n');
 const { desktopEscape } = require('./src/validate');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
+
+// Versão do app (do package.json — app.getVersion lê direto, funciona no asar)
+// e URL pública do repo (rodapé das Preferências + tooltip do tray).
+const APP_VERSION = app.getVersion();
+const REPO_URL = 'https://github.com/aronpc/ai-traffic-lights';
 
 // Instância única: relançar o app não duplica o overlay — TOGGLA o existente
 // e sai. Previne overlays duplicados (autostart + lançamento manual) e dá um
@@ -517,7 +522,7 @@ function buildTrayMenu() {
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('AI Traffic Lights');
+  tray.setToolTip(`AI Traffic Lights v${APP_VERSION}`);
   tray.setContextMenu(buildTrayMenu());
   tray.on('click', toggleWin);
 }
@@ -541,13 +546,13 @@ function saveSettingsBounds() {
 }
 // Mínimos que comportam TODO o conteúdo (4 seções + ações) sem rolagem —
 // o WM não deixa encolher além disso, então o layout nunca quebra.
-const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 670;
+const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 700;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
   settingsWin = new BrowserWindow({
     width: Math.max(b.width || 480, SETTINGS_MIN_W),   // bounds salvos por versões
-    height: Math.max(b.height || 700, SETTINGS_MIN_H), // antigas sobem pro mínimo
+    height: Math.max(b.height || 730, SETTINGS_MIN_H), // antigas sobem pro mínimo
     minWidth: SETTINGS_MIN_W, minHeight: SETTINGS_MIN_H, resizable: true,
     x: typeof b.x === 'number' ? b.x : undefined,
     y: typeof b.y === 'number' ? b.y : undefined,
@@ -615,6 +620,15 @@ ipcMain.on('set-alias', (_e, { cwd, alias }) => {
 // e abertura da janela a partir do renderer (caso queira botão no overlay um dia).
 ipcMain.handle('get-settings', () => settingsCfg);
 ipcMain.handle('get-lang', () => LANG);
+ipcMain.handle('get-version', () => APP_VERSION);              // rodapé das Preferências
+// Abre URL externa no navegador padrão. Só aceita http(s) — o renderer passa
+// só o link do repo, mas o guarda evita que qualquer string vire comando/protocolo.
+ipcMain.on('open-external', (_e, url) => {
+  if (typeof url === 'string' && /^https?:\/\//.test(url)) {
+    try { shell.openExternal(url); } catch {}
+  }
+});
+ipcMain.handle('get-repo-url', () => REPO_URL);
 ipcMain.on('save-settings', (_e, cfg) => {
   settingsCfg = persistSettings(cfg);
   applyShortcut();                                    // re-registra o atalho novo

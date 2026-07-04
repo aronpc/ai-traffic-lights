@@ -40,7 +40,7 @@ function setExpanded(v) {
   expanded = v;
   $list.hidden = !v;
   $empty.hidden = !v || sessions.length > 0;
-  $expand.textContent = v ? '▴' : '▾';
+  $expand.classList.toggle('is-expanded', v);
   window.trafficLight.setExpanded(v);
 }
 

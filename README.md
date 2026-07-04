@@ -40,7 +40,8 @@ terminal — **window _and_ tab**.
 - ⏰ Idle escalation: a finished session left unattended turns red (configurable)
 - ✏️ Double-click to rename a session (aliases persist per project)
 - ⚙️ **Preferences window** (gear icon): idle threshold, global shortcut,
-  autostart, install/remove hooks, show/hide, quit
+  autostart, install/remove hooks, show/hide, quit — with the app version and a
+  link to the repo in the footer
 - Auto-height, drag anywhere, width-resizable, position persisted
 - Tray icon + global shortcut **`Ctrl+Alt+H`** (configurable)
 - Stays out of your way: no taskbar/alt-tab entry, never maximizes, no scrollbar

@@ -81,6 +81,19 @@ document.getElementById('toggleVis').addEventListener('click', () => window.traf
 document.getElementById('quit').addEventListener('click', () => window.trafficLight.quit());
 
 // Carga inicial
+window.trafficLight.getVersion().then((v) => { if (v) document.getElementById('ver').textContent = v; });
+window.trafficLight.getRepoUrl().then((url) => {
+  const $repo = document.getElementById('repoLink');
+  if (url) {
+    $repo.dataset.url = url;
+    $repo.title = url.replace(/^https?:\/\//, '');
+  }
+});
+document.getElementById('repoLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  const url = e.currentTarget.dataset.url;
+  if (url) window.trafficLight.openExternal(url);
+});
 window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyI18n(); });
 window.trafficLight.getSettings().then((c) => {
   if (!c) return;
