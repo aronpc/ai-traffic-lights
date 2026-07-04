@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Refreshed screenshots & demo GIF**: README hero is now an animated GIF
+  (red LED pulse) plus a static shot of all four agents (Claude, Gemini, Codex,
+  OpenCode) across every state, and a Preferences-window screenshot — captured
+  window-only at 2× from mocked state files.
+
 ### Fixed
 - **Path traversal hardened**: session ids from hook payloads are validated
   (`[A-Za-z0-9._-]`) before becoming file paths — a malicious `../` payload

@@ -12,7 +12,12 @@ Monitora **Claude Code**, **Gemini CLI**, **Codex** e **OpenCode** hoje. A
 arquitetura é agnóstica — agentes novos entram via adapters (ver
 [Adicionando um agente](#adicionando-um-novo-agente)).
 
-![Overlay do AI Traffic Lights](assets/screenshots/overlay.png)
+![AI Traffic Lights — overlay ao vivo](assets/screenshots/overlay-pulse.gif)
+
+_Uma luz por sessão de agente em terminal: 🟢 pronto · 🟡 trabalhando · 🔴
+precisa de você. Animação: o LED vermelho pulsa. Print estático abaixo._
+
+![Overlay do AI Traffic Lights — todos os agentes](assets/screenshots/overlay.png)
 
 ## Por quê
 
@@ -24,14 +29,20 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 ## Funcionalidades
 
 - 🟢🟡🔴 Uma luz por sessão + luz agregada no cabeçalho
+- 🤖 **Quatro agentes, um overlay**: Claude Code, Gemini CLI, Codex e OpenCode
 - **Click-to-focus**: pula pro terminal da sessão — a janela exata e, no Warp,
-  a **aba** exata (via `warp://session/<uuid>`)
+  a **aba** exata (via `warp://session/<uuid>`); no Tilix, o terminal exato
+  (via D-Bus `TILIX_ID`)
 - 🔔 Beep + notificação nativa quando uma sessão fica vermelha (rate-limited)
-- ⏰ Escalada de idle: sessão pronta e esquecida por 5 min vira vermelha
+- ⏰ Escalada de idle: sessão pronta e esquecida vira vermelha (configurável)
 - ✏️ Duplo-clique renomeia a sessão (apelidos persistem por projeto)
+- ⚙️ **Janela de Preferências** (ícone de engrenagem): threshold de idle,
+  atalho global, autostart, instalar/remover hooks, mostrar/ocultar, sair
 - Altura automática, arrasta por qualquer lugar, largura ajustável, posição persistida
-- Ícone no tray (mostrar/ocultar, autostart, sair) + atalho global **`Ctrl+Alt+H`**
+- Ícone no tray + atalho global **`Ctrl+Alt+H`** (configurável)
 - Sai do caminho: fora da barra de janelas/alt-tab, nunca maximiza, sem scrollbar
+
+![Janela de Preferências](assets/screenshots/preferences.png)
 
 ## Requisitos
 

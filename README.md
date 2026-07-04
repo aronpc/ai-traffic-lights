@@ -12,7 +12,12 @@ Monitors **Claude Code**, **Gemini CLI**, **Codex** and **OpenCode** today. The
 architecture is agent-agnostic — new agents land via adapters (see
 [Adding an agent](#adding-a-new-agent)).
 
-![AI Traffic Lights overlay](assets/screenshots/overlay.png)
+![AI Traffic Lights — live overlay](assets/screenshots/overlay-pulse.gif)
+
+_One light per terminal AI session: 🟢 done · 🟡 working · 🔴 needs you. Animated:
+the red LED pulses. Static shot below._
+
+![AI Traffic Lights overlay — all agents](assets/screenshots/overlay.png)
 
 ## Why
 
@@ -25,14 +30,20 @@ terminal — **window _and_ tab**.
 ## Features
 
 - 🟢🟡🔴 One light per session, plus an aggregate light in the header
+- 🤖 **Four agents, one overlay**: Claude Code, Gemini CLI, Codex and OpenCode
 - **Click-to-focus**: jumps to the session's terminal — the exact window, and
-  in Warp the exact **tab** (via `warp://session/<uuid>`)
+  in Warp the exact **tab** (via `warp://session/<uuid>`) and in Tilix the
+  exact terminal (via D-Bus `TILIX_ID`)
 - 🔔 Beep + desktop notification when a session turns red (rate-limited)
-- ⏰ Idle escalation: a finished session left unattended for 5 min turns red
+- ⏰ Idle escalation: a finished session left unattended turns red (configurable)
 - ✏️ Double-click to rename a session (aliases persist per project)
+- ⚙️ **Preferences window** (gear icon): idle threshold, global shortcut,
+  autostart, install/remove hooks, show/hide, quit
 - Auto-height, drag anywhere, width-resizable, position persisted
-- Tray icon (show/hide, autostart, quit) + global shortcut **`Ctrl+Alt+H`**
+- Tray icon + global shortcut **`Ctrl+Alt+H`** (configurable)
 - Stays out of your way: no taskbar/alt-tab entry, never maximizes, no scrollbar
+
+![Preferences window](assets/screenshots/preferences.png)
 
 ## Requirements
 
