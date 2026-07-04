@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-04
+
 ### Fixed
 - **Benign notifications no longer turn red.** The `Notification` hook event is
   now classified by its `notification_type` field (per the Claude Code hooks
@@ -17,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   localize). The adapter captures `notification_type` into the state file;
   an unknown type falls back to red (conservative). Closes the long-standing
   "false red" UX risk.
+- **Rename no longer loses focus to the terminal.** Double-clicking a label to
+  rename fired two row clicks first, each raising the terminal via `wmctrl` —
+  that stole keyboard focus from the input the instant it opened (it blurred
+  and committed empty). A click debounce now distinguishes single-click (focus)
+  from double-click (rename).
 
 ### Added
 - **Version visibility**: the app version (read from `package.json` via
@@ -158,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bilingual docs (EN / pt-BR), `setup-hook` installer with a stable hook copy
   (AppImage-safe, move-safe), AppImage + `.deb` packaging.
 
-[Unreleased]: https://github.com/aronpc/ai-traffic-lights/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/aronpc/ai-traffic-lights/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/aronpc/ai-traffic-lights/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/aronpc/ai-traffic-lights/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aronpc/ai-traffic-lights/releases/tag/v0.1.0

@@ -15,6 +15,7 @@ const CODE = ['agents.js', 'state-machine.js', 'i18n.js', 'renderer.js']
 function mkEl() {
   return {
     _l: {}, children: [], className: '', textContent: '', hidden: false, value: '',
+    classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener(t, f) { (this._l[t] = this._l[t] || []).push(f); },
     dispatch(t, ev) { (this._l[t] || []).forEach((f) => f(ev || {})); },
     append(...e) { this.children.push(...e); },

@@ -542,7 +542,7 @@ function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
   if (awaiting) parts.push(`🔴${awaiting}`);
   if (processing) parts.push(`🟡${processing}`);
   if (done) parts.push(`🟢${done}`);
-  tray.setToolTip(total > 0 ? `AI Traffic Lights  ${parts.join(' ')}` : 'AI Traffic Lights');
+  tray.setToolTip(total > 0 ? `AI Traffic Lights v${APP_VERSION}  ${parts.join(' ')}` : `AI Traffic Lights v${APP_VERSION}`);
 }
 
 function createTray() {
