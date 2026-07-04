@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('trafficLight', {
   // Settings (threshold de idle + atalho) — lidos/gravados pela janela de Preferências
   getSettings: () => ipcRenderer.invoke('get-settings'),
   getLang: () => ipcRenderer.invoke('get-lang'),              // idioma da UI (en|pt)
+  getVersion: () => ipcRenderer.invoke('get-version'),        // rodapé das Preferências
+  getRepoUrl: () => ipcRenderer.invoke('get-repo-url'),       // link do repo no rodapé
+  openExternal: (url) => ipcRenderer.send('open-external', url), // abre no navegador (http/s só)
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),

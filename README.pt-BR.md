@@ -39,7 +39,8 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 - ⏰ Escalada de idle: sessão pronta e esquecida vira vermelha (configurável)
 - ✏️ Duplo-clique renomeia a sessão (apelidos persistem por projeto)
 - ⚙️ **Janela de Preferências** (ícone de engrenagem): threshold de idle,
-  atalho global, autostart, instalar/remover hooks, mostrar/ocultar, sair
+  atalho global, autostart, instalar/remover hooks, mostrar/ocultar, sair —
+  com a versão do app e um link do repo no rodapé
 - Altura automática, arrasta por qualquer lugar, largura ajustável, posição persistida
 - Ícone no tray + atalho global **`Ctrl+Alt+H`** (configurável)
 - Sai do caminho: fora da barra de janelas/alt-tab, nunca maximiza, sem scrollbar

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Version visibility**: the app version (read from `package.json` via
+  `app.getVersion`) shows in the **Preferences footer** ("AI Traffic Lights
+  v0.1.1") next to a clickable **GitHub** link (`shell.openExternal`, http(s)
+  only), and in the **tray tooltip** ("AI Traffic Lights v0.1.1").
+
+### Added
 - **UI in English & Portuguese (i18n)**: the interface follows the system
   locale (`pt*` → Portuguese, anything else → English) — overlay, tray menu,
   installer notifications and the Preferences window. The language can also be

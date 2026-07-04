@@ -46,6 +46,17 @@
     button.danger:hover { background: rgba(224,86,63,0.18); border-color: var(--danger); color: var(--danger); }
     .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
     .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+    .appfoot {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums;
+    }
+    .appfoot .ver { white-space: nowrap; }
+    .appfoot .repolink {
+      color: var(--dim); text-decoration: none; cursor: pointer; white-space: nowrap;
+      border-bottom: 1px dotted transparent; transition: color 0.12s, border-color 0.12s;
+    }
+    .appfoot .repolink:hover { color: var(--ink); border-bottom-color: var(--dim); }
   </style>
 </head>
 <body>
@@ -108,6 +119,11 @@
   <div class="actions">
     <button id="cancel" data-i18n="btn_cancel">Cancelar</button>
     <button id="save" class="primary" data-i18n="btn_save">Salvar</button>
+  </div>
+
+  <div class="appfoot">
+    <span class="ver">AI Traffic Lights v<span id="ver">…</span></span>
+    <a id="repoLink" class="repolink" href="#" title="github.com/aronpc/ai-traffic-lights">↗ GitHub</a>
   </div>
 
   <script src="i18n.js"></script>
