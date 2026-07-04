@@ -40,6 +40,7 @@ async function setup() {
       resizeStart() {}, resizeMove() {}, focus() {},
       getAliases: () => Promise.resolve({}), setAlias: (cwd, v) => calls.setAlias.push([cwd, v]),
       notify() {}, toggleVisibility() {}, setTrayLevel() {},
+      getLaunchers: () => Promise.resolve([]), launchAgent() {},
       getSettings: () => Promise.resolve(null), onSettingsChanged() {}, // settings (não usados no teste)
       saveSettings() {}, openSettings() {},
       getLang: () => Promise.resolve('pt'),                             // i18n

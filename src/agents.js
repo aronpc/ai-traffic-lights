@@ -11,21 +11,23 @@
 //             sessões vivas ainda sem state file: idle / pré-hook)
 //   adapter — caminho do integrador (informativo/documentação)
 const AGENTS = {
-  claude: { label: 'Claude', comm: ['claude', 'claude-agent-acp'], adapter: 'hooks/traffic-hook.sh' },
+  // bin: nome do executável no PATH (Quick Launcher). Detecção por PATH scan;
+  // CLIs que só existem como alias de shell vão no override settings.launchers.
+  claude: { label: 'Claude', comm: ['claude', 'claude-agent-acp'], bin: 'claude', adapter: 'hooks/traffic-hook.sh' },
   // gemini-cli é script Node (#!/usr/bin/env node) e NÃO seta process.title:
   // /proc/comm = "node" (verificado empiricamente) — comm vazio de propósito,
   // senão a sonda casaria com QUALQUER processo Node (falso positivo).
   // A sonda identifica pelo argv (basename do script em /proc/<pid>/cmdline).
   // Adapter: o MESMO traffic-hook.sh com AI_TL_AGENT=gemini (o hook traduz
   // BeforeAgent/BeforeTool/AfterTool/AfterAgent pro vocabulário canônico).
-  gemini:   { label: 'Gemini',   comm: [], argv: ['gemini'], adapter: 'hooks/traffic-hook.sh (AI_TL_AGENT=gemini)' },
+  gemini:   { label: 'Gemini',   comm: [], argv: ['gemini'], bin: 'gemini', adapter: 'hooks/traffic-hook.sh (AI_TL_AGENT=gemini)' },
   // codex-cli é Node (#!/usr/bin/env node) → comm="node" (verificado);
   // detectado pelo basename do script no argv, como o Gemini. Sem adapter
   // por enquanto — sessões aparecem como "ativo" (presença via /proc).
-  codex:    { label: 'Codex',    comm: [], argv: ['codex'], adapter: null },
+  codex:    { label: 'Codex',    comm: [], argv: ['codex'], bin: 'codex', adapter: null },
   // Adapter: plugin JS que roda dentro do OpenCode (instalado em
   // ~/.config/opencode/plugin/ pelo setup-hook).
-  opencode: { label: 'OpenCode', comm: ['opencode'], adapter: 'adapters/opencode/ai-traffic-lights.js' },
+  opencode: { label: 'OpenCode', comm: ['opencode'], bin: 'opencode', adapter: 'adapters/opencode/ai-traffic-lights.js' },
 };
 
 const DEFAULT_AGENT = 'claude';

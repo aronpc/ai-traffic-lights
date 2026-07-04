@@ -12,6 +12,7 @@ const prevLevels = new Map();              // pid -> level (detecção de transi
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 const snoozed = new Map();                 // key -> ms (silencia o ALERTA até então; a cor fica)
 let everHadSessions = false;               // onboarding: mostra "instalar hooks" só enquanto nunca teve sessão
+let launchers = [];                        // Quick Launcher: [{id,label}] dos CLIs detectados
 const SNOOZE_MS = 60 * 60 * 1000;          // 1h
 function snoozeKey(s) { return s.pid || s.session_id; }
 function isSnoozed(key) {
@@ -237,7 +238,7 @@ function render() {
   everHadSessions = everHadSessions || sessions.length > 0;
   $empty.hidden = sessions.length > 0;
   if (!everHadSessions) {
-    $empty.replaceChildren(
+    const kids = [
       Object.assign(document.createElement('strong'), { textContent: T('onboard_title') }),
       Object.assign(document.createElement('div'), { textContent: T('onboard_body'), className: 'onboard__body' }),
       Object.assign(document.createElement('button'), {
@@ -245,7 +246,20 @@ function render() {
         className: 'onboard__btn',
         onclick: () => window.trafficLight.installHooks(),
       }),
-    );
+    ];
+    // Quick Launcher: um botão por CLI detectado (abre o terminal e sobe o agente).
+    if (launchers.length) {
+      const row = Object.assign(document.createElement('div'), { className: 'onboard__launch' });
+      for (const l of launchers) {
+        row.append(Object.assign(document.createElement('button'), {
+          textContent: '+ ' + l.label,
+          className: 'onboard__agent',
+          onclick: () => window.trafficLight.launchAgent({ agent: l.id }),
+        }));
+      }
+      kids.push(row);
+    }
+    $empty.replaceChildren(...kids);
   }
   if (sessions.length > 0 && expanded) $list.hidden = false;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
@@ -289,6 +303,7 @@ window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18
 window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
 window.trafficLight.requestSessions();
 window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });
+window.trafficLight.getLaunchers().then((l) => { launchers = l || []; render(); });
 window.trafficLight.getSettings().then((c) => { settingsCfg = c; render(); });
 window.trafficLight.onSettingsChanged((c) => {
   settingsCfg = c;

@@ -123,6 +123,24 @@
     </div>
   </div>
 
+  <div class="section">
+    <div class="section-title" data-i18n="launch_label">Terminal para abrir agentes</div>
+    <div class="field">
+      <select id="terminal">
+        <option value="auto" data-i18n="launch_auto">Automático (primeiro disponível)</option>
+        <option value="tilix">Tilix</option>
+        <option value="gnome-terminal">GNOME Terminal</option>
+        <option value="ghostty">Ghostty</option>
+        <option value="custom" data-i18n="launch_custom">Comando customizado</option>
+      </select>
+      <div class="hint">Onde o Quick Launcher (botões + agente) abre o terminal. Custom usa <code>{cwd}</code> e <code>{cmd}</code>.</div>
+    </div>
+    <div class="field" id="terminalCmdField" hidden>
+      <label class="top" for="terminalCmd">Comando customizado</label>
+      <input id="terminalCmd" class="shortcut" placeholder="kitty --directory {cwd} -e {cmd}" style="width:100%">
+    </div>
+  </div>
+
   <div class="actions">
     <button id="cancel" data-i18n="btn_cancel">Cancelar</button>
     <button id="save" class="primary" data-i18n="btn_save">Salvar</button>

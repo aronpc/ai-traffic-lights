@@ -210,6 +210,16 @@ html, body {
   padding: 7px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer;
 }
 .onboard__btn:hover { filter: brightness(1.08); }
+/* Quick Launcher: um botão por agente detectado, no empty state. */
+.onboard__launch { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.onboard__agent {
+  -webkit-app-region: no-drag;
+  background: rgba(255,255,255,0.08); color: var(--ink);
+  border: 1px solid var(--border-bright);
+  border-radius: 6px; padding: 6px 10px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.onboard__agent:hover { background: rgba(255,255,255,0.16); }
 
 /* ---------- gripper de resize (canto inf. direito — largura) ---------- */
 .grip {

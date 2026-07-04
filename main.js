@@ -14,6 +14,8 @@ const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
+const launcher = require('./src/launcher');
+const { spawn } = require('child_process');
 const { desktopEscape } = require('./src/validate');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
@@ -321,6 +323,81 @@ function applyShortcut() {
   }
 }
 
+// ---- Quick Launcher: detecta CLIs instalados e sobe um agente num terminal ----
+// Detecção por PATH scan (fork-free: só fs.access nos dirs do PATH). O Electron
+// roda fora do shell interativo, então não vê aliases — acha o binário real.
+// CLIs só-alias (sem bin no PATH) entram via override settings.launchers[id].
+function scanPathBin(bin) {
+  const path = process.env.PATH || '';
+  for (const dir of path.split(':')) {
+    if (!dir) continue;
+    const p = path_join(dir, bin);
+    try { if (fs.statSync(p).isFile() && (fs.accessSync(p, fs.X_OK), true)) return p; } catch {}
+  }
+  return null;
+}
+function path_join(dir, bin) { // path.join local (sem sobrescrever o require)
+  return dir.replace(/\/+$/, '') + '/' + bin;
+}
+
+// Quais agentes têm CLI disponível? Override do settings tem precedência sobre PATH.
+let _launchers = null, _launchersAt = 0;
+function detectLaunchers() {
+  if (_launchers && Date.now() - _launchersAt < 10000) return _launchers; // cache 10s
+  const out = [];
+  for (const [id, a] of Object.entries(AGENTS)) {
+    if (!a.bin) continue;
+    const override = settingsCfg.launchers && settingsCfg.launchers[id];
+    const path = (typeof override === 'string' && override) ? override : scanPathBin(a.bin);
+    if (path) out.push({ id, path, overridden: !!override });
+  }
+  _launchers = out;
+  _launchersAt = Date.now();
+  return out;
+}
+
+// Quais terminais suportados estão no PATH? (pra 'auto' e pra validar o seletor)
+function availableTerminals() {
+  return launcher.TERMINAL_ORDER.filter((t) => !!scanPathBin(t));
+}
+
+// Cwd mais recente entre as sessões (pra onde o "+ agente" abre por padrão).
+function lastSessionCwd() {
+  let best = null, bestTs = 0;
+  try {
+    for (const f of fs.readdirSync(STATE_DIR).filter((x) => x.endsWith('.json'))) {
+      try {
+        const s = JSON.parse(fs.readFileSync(path.join(STATE_DIR, f), 'utf8'));
+        if (s && s.cwd && (s.last_event_ts || 0) >= bestTs) { bestTs = s.last_event_ts || 0; best = s.cwd; }
+      } catch {}
+    }
+  } catch {}
+  return best;
+}
+
+// Sobe o agente num terminal no cwd dado. Detached + unref: o overlay não é pai
+// do processo — a sessão entra no semáforo pelo caminho normal (hooks → state).
+function launchAgent({ agent, cwd }) {
+  const a = AGENTS[agent];
+  if (!a) return;
+  const entry = detectLaunchers().find((l) => l.id === agent);
+  if (!entry) { notifyUser(T('ntf_no_launcher', { agent: a.label })); return; }
+  const dir = (cwd && typeof cwd === 'string') ? cwd : (lastSessionCwd() || process.env.HOME || '/');
+  const term = launcher.pickTerminal(settingsCfg.terminal, availableTerminals());
+  if (settingsCfg.terminal === 'custom' && settingsCfg.terminalCmd.trim()) {
+    // Custom: template com {cwd} e {cmd}. Split simples (sem shell, sem quoting rico).
+    const cmd = settingsCfg.terminalCmd
+      .replace(/\{cwd\}/g, dir)
+      .replace(/\{cmd\}/g, entry.path);
+    const parts = cmd.split(/\s+/).filter(Boolean);
+    try { spawn(parts[0], parts.slice(1), { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+    return;
+  }
+  if (!term) { notifyUser(T('ntf_no_terminal')); return; }
+  const args = launcher.terminalArgs(term, dir, [entry.path]);
+  try { spawn(term, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+}
+
 // ---- autostart ----
 function autostartEnabled() {
   try { return fs.existsSync(AUTOSTART_FILE); } catch { return false; }
@@ -511,6 +588,14 @@ function buildTrayMenu() {
     { label: T('tray_show_hide'), accelerator: 'Ctrl+Alt+H', click: toggleWin },
     { type: 'checkbox', label: T('tray_autostart'), checked: autostartEnabled(),
       click: (it) => { setAutostart(it.checked); } },
+    // Quick Launcher: submenu com cada CLI detectado (abre o terminal e sobe).
+    ...(detectLaunchers().length ? [{
+      label: T('launch_section'),
+      submenu: detectLaunchers().map((l) => ({
+        label: '+ ' + AGENTS[l.id].label,
+        click: () => launchAgent({ agent: l.id }),
+      })),
+    }] : []),
     { type: 'separator' },
     { label: T('tray_install_hooks'), click: installHookFromApp },
     { label: T('tray_remove_hooks'), click: removeHookFromApp },
@@ -572,13 +657,13 @@ function saveSettingsBounds() {
 }
 // Mínimos que comportam TODO o conteúdo (4 seções + ações) sem rolagem —
 // o WM não deixa encolher além disso, então o layout nunca quebra.
-const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 700;
+const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 770;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
   settingsWin = new BrowserWindow({
     width: Math.max(b.width || 480, SETTINGS_MIN_W),   // bounds salvos por versões
-    height: Math.max(b.height || 730, SETTINGS_MIN_H), // antigas sobem pro mínimo
+    height: Math.max(b.height || 800, SETTINGS_MIN_H), // antigas sobem pro mínimo
     minWidth: SETTINGS_MIN_W, minHeight: SETTINGS_MIN_H, resizable: true,
     x: typeof b.x === 'number' ? b.x : undefined,
     y: typeof b.y === 'number' ? b.y : undefined,
@@ -681,6 +766,10 @@ ipcMain.on('toggle-visibility', toggleWin);
 
 // Tray dinâmico: renderer manda a pior cor + contagem a cada render.
 ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
+
+// Quick Launcher: lista de agentes detectados + sobe um agente num terminal.
+ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
+ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));
 
 app.whenReady().then(() => {
   migrateOldBase();                              // dados da era claude-traffic-light
