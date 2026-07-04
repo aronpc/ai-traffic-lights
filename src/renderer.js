@@ -113,7 +113,8 @@ function render() {
   let worst = 'done';
   const tally = { processing: 0, done: 0, awaiting: 0 };
 
-  const rows = sessions.map((s) => {
+  // 1. computa estado de cada sessão (+ tally/worst no mesmo passo).
+  const ranked = sessions.map((s) => {
     const st = computeState(s, nowSec, settingsCfg);
     tally[st.level]++;
     if (st.level === 'awaiting') worst = 'awaiting';
@@ -132,7 +133,14 @@ function render() {
       }
     }
     prevLevels.set(key, st.level);
+    return { s, st };
+  });
 
+  // 2. ordena por urgência: 🔴 no topo, depois 🟡, depois 🟢 (state-machine.js).
+  const ordered = sortByUrgency(ranked);
+
+  // 3. monta as linhas na ordem ordenada.
+  const rows = ordered.map(({ s, st }) => {
     const label = labelFor(s);
     const sub = [
       AGENTS[agentOf(s)].label,               // qual agente (claude, gemini, ...)
@@ -177,6 +185,9 @@ function render() {
   if (tally.done) parts.push(`🟢${tally.done}`);
   if (tally.awaiting) parts.push(`🔴${tally.awaiting}`);
   $counts.textContent = sessions.length === 0 ? '—' : parts.join(' ');
+
+  // Tray dinâmico: o ícone pinta com a pior cor e o tooltip leva a contagem.
+  window.trafficLight.setTrayLevel({ level: worst, awaiting: tally.awaiting, processing: tally.processing, done: tally.done });
 
   $empty.hidden = sessions.length > 0;
   if (sessions.length > 0 && expanded) $list.hidden = false;

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sessions sort by urgency**: red 🔴 sessions rise to the top, then yellow 🟡,
+  then green 🟢; within red, the longest-waiting first, within the others the
+  most recent first. Pure `sortByUrgency()` helper in `state-machine.js`
+  (tested) — the renderer applies it each render.
+- **Dynamic tray icon**: the tray icon paints with the worst active color (a
+  colored status dot — red/amber/green — composited on the base icon) and the
+  tooltip carries the per-color counts, so the state is visible at a glance
+  even with the overlay hidden. Falls back to the neutral icon when no session
+  is running.
+
+### Added
 - **UI in English & Portuguese (i18n)**: the interface follows the system
   locale (`pt*` → Portuguese, anything else → English) — overlay, tray menu,
   installer notifications and the Preferences window. The language can also be

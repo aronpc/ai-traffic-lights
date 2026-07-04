@@ -514,6 +514,32 @@ function buildTrayMenu() {
     { label: T('tray_quit'), click: () => app.quit() },
   ]);
 }
+// ---- tray dinâmico: ícone pinta com a pior cor + tooltip com a contagem ----
+// Variante por nível (bolinha colorida no canto do ícone-base). Sem sessões,
+// cai no ícone neutro (não dá "tudo verde" com nada rodando).
+const TRAY_ICON_FILE = {
+  awaiting: 'tray-icon-r.png',
+  processing: 'tray-icon-y.png',
+  done: 'tray-icon-g.png',
+};
+const trayIcons = {};
+for (const [lvl, file] of Object.entries(TRAY_ICON_FILE)) {
+  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', file));
+  trayIcons[lvl] = img.isEmpty() ? null : img;
+}
+const trayIconBase = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
+function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
+  if (!tray || tray.isDestroyed()) return;
+  const total = awaiting + processing + done;
+  const img = total > 0 ? trayIcons[level] : null;
+  tray.setImage(img || trayIconBase);
+  const parts = [];
+  if (awaiting) parts.push(`🔴${awaiting}`);
+  if (processing) parts.push(`🟡${processing}`);
+  if (done) parts.push(`🟢${done}`);
+  tray.setToolTip(total > 0 ? `AI Traffic Lights  ${parts.join(' ')}` : 'AI Traffic Lights');
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
@@ -638,6 +664,9 @@ ipcMain.on('notify', (_e, { title, body }) => {
 
 // Tray: mostrar/ocultar, autostart, sair.
 ipcMain.on('toggle-visibility', toggleWin);
+
+// Tray dinâmico: renderer manda a pior cor + contagem a cada render.
+ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
 
 app.whenReady().then(() => {
   migrateOldBase();                              // dados da era claude-traffic-light

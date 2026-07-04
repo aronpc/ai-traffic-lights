@@ -60,4 +60,20 @@ function iconFor(st) {
   return REASON_ICON[st.reason] || (st.level === 'processing' ? '🛠' : '✓');
 }
 
-if (typeof module !== 'undefined') module.exports = { computeState, iconFor };
+// ---- ordenação por urgência (vermelhos no topo) ----
+// Rank: awaiting (🔴) < processing (🟡) < done (🟢). Mesmo nível:
+//  · awaiting  → mais antiga primeiro (quem espera há mais tempo é mais urgente)
+//  · demais    → mais recente primeiro (atividade nova visível)
+const URGENCY_RANK = { awaiting: 0, processing: 1, done: 2 };
+function sortByUrgency(ranked) {
+  return [...ranked].sort((a, b) => {
+    const la = (a.st && a.st.level) || 'done';
+    const lb = (b.st && b.st.level) || 'done';
+    if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
+    const at = (a.s && a.s.last_event_ts) || 0;
+    const bt = (b.s && b.s.last_event_ts) || 0;
+    return la === 'awaiting' ? at - bt : bt - at;
+  });
+}
+
+if (typeof module !== 'undefined') module.exports = { computeState, iconFor, sortByUrgency };
