@@ -189,6 +189,7 @@ function autosize() {
 // Eventos de UI
 $expand.addEventListener('click', () => setExpanded(!expanded));
 $quit.addEventListener('click', () => window.trafficLight.toggleVisibility()); // × esconde (tray)
+document.getElementById('settingsBtn').addEventListener('click', () => window.trafficLight.openSettings());
 
 // Gripper de resize (largura).
 const $grip = document.getElementById('grip');
