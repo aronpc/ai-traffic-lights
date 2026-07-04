@@ -3,6 +3,7 @@
 // teclado e monta um accelerator do Electron.
 
 const $idle = document.getElementById('idle');
+const $lang = document.getElementById('lang');
 const $sc = document.getElementById('shortcut');
 const $save = document.getElementById('save');
 const $cancel = document.getElementById('cancel');
@@ -65,7 +66,8 @@ $save.addEventListener('click', () => {
     ? { escalateIdle: false }
     : { escalateIdle: true, idleThresholdSec: parseInt(v, 10) };
   if (captured) cfg.shortcut = captured;
-  window.trafficLight.saveSettings(cfg);   // main aplica (atalho + overlay) e fecha
+  cfg.lang = $lang.value;                  // 'auto' | 'en' | 'pt'
+  window.trafficLight.saveSettings(cfg);   // main aplica (atalho + idioma + overlay) e fecha
   window.close();
 });
 $cancel.addEventListener('click', () => window.close());
@@ -84,6 +86,7 @@ window.trafficLight.getSettings().then((c) => {
   if (!c) return;
   if (!c.escalateIdle) $idle.value = 'never';
   else $idle.value = String(c.idleThresholdSec || 300);
+  $lang.value = c.lang || 'auto';
   setShortcut(c.shortcut || null);
 });
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });

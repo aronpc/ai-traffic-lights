@@ -10,8 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **UI in English & Portuguese (i18n)**: the interface follows the system
   locale (`pt*` → Portuguese, anything else → English) — overlay, tray menu,
-  installer notifications and the Preferences window. Pure `src/i18n.js`
-  module with a key-parity test between the two languages.
+  installer notifications and the Preferences window. The language can also be
+  **switched manually in Preferences** (Automatic/English/Português, persisted
+  in `settings.json`); the overlay and the tray menu re-render live on change.
+  Pure `src/i18n.js` module with a key-parity test between the two languages.
 - **App icon in the overlay header**, next to the "AI Lights" title (also set
   as the Preferences window icon).
 

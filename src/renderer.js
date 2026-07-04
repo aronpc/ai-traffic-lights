@@ -222,7 +222,12 @@ window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
 window.trafficLight.requestSessions();
 window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });
 window.trafficLight.getSettings().then((c) => { settingsCfg = c; render(); });
-window.trafficLight.onSettingsChanged((c) => { settingsCfg = c; render(); });
+window.trafficLight.onSettingsChanged((c) => {
+  settingsCfg = c;
+  render();
+  // o idioma pode ter mudado nas Preferências — re-resolve e re-aplica estáticos
+  window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
+});
 
 // Re-renderiza a cada 2s (escalada idle + reavaliação do alerta).
 setInterval(render, 2000);

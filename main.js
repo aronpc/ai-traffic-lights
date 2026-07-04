@@ -280,11 +280,16 @@ function saveAlias(cwd, alias) {
 }
 
 // ---- idioma (i18n) ----
-// Resolvido do locale do sistema no whenReady (app.getLocale só vale lá) e
-// distribuído aos renderers via IPC get-lang. Default en até o ready — nada
-// visível é criado antes disso.
+// Prioridade: escolha manual nas Preferências (settings.lang ≠ 'auto') >
+// locale do sistema (app.getLocale, só vale após o ready). Distribuído aos
+// renderers via IPC get-lang; default en até o ready — nada visível antes.
 let LANG = 'en';
 let T = i18n.makeT(LANG);
+function applyLang() {
+  const pref = settingsCfg && settingsCfg.lang;
+  LANG = (pref === 'en' || pref === 'pt') ? pref : i18n.pickLang(app.getLocale());
+  T = i18n.makeT(LANG);
+}
 
 // ---- settings (threshold de idle + atalho global) ----
 let settingsCfg = settingsLib.mergeWithDefaults(null);   // sempre válido
@@ -494,11 +499,10 @@ function notifyUser(body) {
 }
 
 let tray = null;
-function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('AI Traffic Lights');
-  const menu = () => Menu.buildFromTemplate([
+// Menu reconstruível fora do createTray: os labels dependem do idioma, e a
+// troca nas Preferências re-renderiza o menu ao vivo (save-settings).
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
     { label: T('tray_show_hide'), accelerator: 'Ctrl+Alt+H', click: toggleWin },
     { type: 'checkbox', label: T('tray_autostart'), checked: autostartEnabled(),
       click: (it) => { setAutostart(it.checked); } },
@@ -509,7 +513,12 @@ function createTray() {
     { label: T('tray_preferences'), click: createSettingsWindow },
     { label: T('tray_quit'), click: () => app.quit() },
   ]);
-  tray.setContextMenu(menu());
+}
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  tray.setToolTip('AI Traffic Lights');
+  tray.setContextMenu(buildTrayMenu());
   tray.on('click', toggleWin);
 }
 
@@ -532,13 +541,13 @@ function saveSettingsBounds() {
 }
 // Mínimos que comportam TODO o conteúdo (4 seções + ações) sem rolagem —
 // o WM não deixa encolher além disso, então o layout nunca quebra.
-const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 600;
+const SETTINGS_MIN_W = 420, SETTINGS_MIN_H = 670;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
   settingsWin = new BrowserWindow({
     width: Math.max(b.width || 480, SETTINGS_MIN_W),   // bounds salvos por versões
-    height: Math.max(b.height || 620, SETTINGS_MIN_H), // antigas sobem pro mínimo
+    height: Math.max(b.height || 700, SETTINGS_MIN_H), // antigas sobem pro mínimo
     minWidth: SETTINGS_MIN_W, minHeight: SETTINGS_MIN_H, resizable: true,
     x: typeof b.x === 'number' ? b.x : undefined,
     y: typeof b.y === 'number' ? b.y : undefined,
@@ -609,6 +618,8 @@ ipcMain.handle('get-lang', () => LANG);
 ipcMain.on('save-settings', (_e, cfg) => {
   settingsCfg = persistSettings(cfg);
   applyShortcut();                                    // re-registra o atalho novo
+  applyLang();                                        // idioma pode ter mudado
+  if (tray) tray.setContextMenu(buildTrayMenu());     // labels do tray no idioma novo
   if (win && !win.isDestroyed()) win.webContents.send('settings-changed', settingsCfg);
 });
 ipcMain.on('open-settings', () => createSettingsWindow());
@@ -635,9 +646,8 @@ app.whenReady().then(() => {
   try { hookInstaller.syncHookCopy(path.join(__dirname, 'hooks/traffic-hook.sh'), BASE_DIR); } catch {}
   // idem pro plugin do OpenCode (só se o usuário já o instalou)
   hookInstaller.syncOpencodeIfInstalled(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
-  settingsCfg = loadSettings();                      // threshold/atalho do usuário
-  LANG = i18n.pickLang(app.getLocale());             // idioma da UI segue o sistema
-  T = i18n.makeT(LANG);
+  settingsCfg = loadSettings();                      // threshold/atalho/idioma do usuário
+  applyLang();                                       // Preferências (lang) > locale do sistema
   createWindow();
   createTray();
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
