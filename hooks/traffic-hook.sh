@@ -78,6 +78,15 @@ main() {
     model=$(tail -n 5000 "$transcript" 2>/dev/null | grep -oP '"model"\s*:\s*"\K[^"]+' | tail -1)
   fi
 
+  # notification_type (evento Notification do Claude Code): é o DISCRIMINADOR
+  # entre "precisa de você" (permission_prompt, idle_prompt, elicitation_dialog)
+  # e benigno (auth_success, elicitation_complete, elicitation_response). O
+  # renderer classifica por este campo — nunca pela message (instável, i18n).
+  local ntype=""
+  if [[ $input =~ \"notification_type\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+    ntype="${BASH_REMATCH[1]}"
+  fi
+
   # Sobe a árvore até achar o processo do agente. Zero forks.
   # claude: binário próprio (comm=claude). gemini: script Node (comm=node) —
   # o PRIMEIRO ancestral node é o gemini. codex: binário Rust (comm=codex).
@@ -135,7 +144,7 @@ main() {
     --argjson ts "$ts" \
     --arg agent "$AGENT" --arg cevt "$evt" \
     --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" \
-    --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg model "$model" --arg tpath "$transcript" '
+    --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
       (try ($exs | fromjson) catch {}) as $ex
       | ($in.session_id // "") as $sid
       | $cevt as $evt
@@ -155,6 +164,7 @@ main() {
           zellij_session: (if $zs == "" then null else $zs end),
           last_event: $evt, last_event_ts: $ts,
           last_tool: (if $tool == "" then null else $tool end),
+          notification_type: (if $ntype == "" then null else $ntype end),
           events: (($ex.events // []) + [{
             ts: $ts, event: $evt,
             tool: (if $tool == "" then null else $tool end)

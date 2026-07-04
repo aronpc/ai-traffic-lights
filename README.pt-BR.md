@@ -119,6 +119,7 @@ Sessão Claude Code ──hooks──▶ traffic-hook.sh (adapter, <25ms, fork-f
   "last_event": "Stop",          // último hook_event_name
   "last_event_ts": 1783124001,   // epoch do último evento (UTC)
   "last_tool": "Bash",           // último tool_name (null em evento sem tool)
+  "notification_type": null,     // discriminador do Notification (ver abaixo) — null salvo se last_event for Notification
   "events": [                    // log rolante (últimos 50), append-only
     { "ts": 1783124000, "event": "PostToolUse", "tool": "Bash" },
     { "ts": 1783124001, "event": "Stop",        "tool": null }
@@ -158,7 +159,7 @@ enxerga XWayland).
 | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | processing 🟡 | 🛠 |
 | `Stop` | done 🟢 (→ awaiting 🔴⏰ se idle > 5 min) | ✓ / ⏰ |
 | `PermissionRequest` | awaiting 🔴 | 🔑 |
-| `Notification` | awaiting 🔴 **só se precisa de input** | ❓ |
+| `Notification` | depende do `notification_type`: `permission_prompt` / `idle_prompt` / `elicitation_dialog` → awaiting 🔴❓; `auth_success` / `elicitation_complete` / `elicitation_response` → done 🟢✓ | ❓ / ✓ |
 | `PostToolUseFailure` | awaiting 🔴 | ⚠️ |
 
 ## Adicionando um novo agente

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Benign notifications no longer turn red.** The `Notification` hook event is
+  now classified by its `notification_type` field (per the Claude Code hooks
+  reference): `permission_prompt`, `idle_prompt` and `elicitation_dialog` stay
+  🔴 (need you), while `auth_success`, `elicitation_complete` and
+  `elicitation_response` resolve to 🟢 (done). The discriminator is the typed
+  field, not the human-readable `message` text (which is unstable and may
+  localize). The adapter captures `notification_type` into the state file;
+  an unknown type falls back to red (conservative). Closes the long-standing
+  "false red" UX risk.
+
 ### Added
 - **UI in English & Portuguese (i18n)**: the interface follows the system
   locale (`pt*` → Portuguese, anything else → English) — overlay, tray menu,

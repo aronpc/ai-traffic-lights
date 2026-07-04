@@ -17,7 +17,21 @@ test('computeState: eventos de processamento → amarelo/tool', () => {
 test('computeState: razões explícitas de "precisa de você" → vermelho', () => {
   assert.deepEqual(computeState(state('PermissionRequest'), NOW), { level: 'awaiting', reason: 'permission' });
   assert.deepEqual(computeState(state('PostToolUseFailure'), NOW), { level: 'awaiting', reason: 'error' });
-  assert.deepEqual(computeState(state('Notification'), NOW), { level: 'awaiting', reason: 'question' });
+  assert.deepEqual(computeState(state('Notification'), NOW), { level: 'awaiting', reason: 'question' }, 'sem tipo → vermelho conservador');
+});
+
+test('computeState: Notification classifica por notification_type (não por message)', () => {
+  const notif = (type) => ({ ...state('Notification'), notification_type: type });
+  // benignos → verde (auth/elicitação concluída/respondida)
+  for (const t of ['auth_success', 'elicitation_complete', 'elicitation_response']) {
+    assert.deepEqual(computeState(notif(t), NOW), { level: 'done', reason: 'ok' }, `${t} → benigno`);
+  }
+  // precisa de você → vermelho
+  for (const t of ['permission_prompt', 'idle_prompt', 'elicitation_dialog']) {
+    assert.deepEqual(computeState(notif(t), NOW), { level: 'awaiting', reason: 'question' }, `${t} → vermelho`);
+  }
+  // tipo desconhecido → conservador vermelho (não arriscar falso verde)
+  assert.deepEqual(computeState(notif('new_future_type'), NOW), { level: 'awaiting', reason: 'question' }, 'desconhecido → vermelho');
 });
 
 test('computeState: SessionStart → verde (não escala, mesmo antigo)', () => {

@@ -120,6 +120,7 @@ Claude Code session ──hooks──▶ traffic-hook.sh (adapter, <25ms, fork-f
   "last_event": "Stop",          // last hook_event_name
   "last_event_ts": 1783124001,   // epoch of the last event (UTC)
   "last_tool": "Bash",           // last tool_name (null for tool-less events)
+  "notification_type": null,     // Notification discriminator (see below) — null unless last_event is Notification
   "events": [                    // rolling log (last 50), append-only
     { "ts": 1783124000, "event": "PostToolUse", "tool": "Bash" },
     { "ts": 1783124001, "event": "Stop",        "tool": null }
@@ -160,7 +161,7 @@ is raised, then the tab is selected; on Wayland the tab channel goes first
 | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | processing 🟡 | 🛠 |
 | `Stop` | done 🟢 (→ awaiting 🔴⏰ if idle > 5 min) | ✓ / ⏰ |
 | `PermissionRequest` | awaiting 🔴 | 🔑 |
-| `Notification` | awaiting 🔴 **only if input is needed** | ❓ |
+| `Notification` | depends on `notification_type`: `permission_prompt` / `idle_prompt` / `elicitation_dialog` → awaiting 🔴❓; `auth_success` / `elicitation_complete` / `elicitation_response` → done 🟢✓ | ❓ / ✓ |
 | `PostToolUseFailure` | awaiting 🔴 | ⚠️ |
 
 ## Adding a new agent
