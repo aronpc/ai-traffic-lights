@@ -39,6 +39,8 @@ async function setup() {
       resizeStart() {}, resizeMove() {}, focus() {},
       getAliases: () => Promise.resolve({}), setAlias: (cwd, v) => calls.setAlias.push([cwd, v]),
       notify() {}, toggleVisibility() {},
+      getSettings: () => Promise.resolve(null), onSettingsChanged() {}, // settings (não usados no teste)
+      saveSettings() {}, openSettings() {},
     },
   };
   const document = { getElementById: (id) => els[id], createElement: () => mkEl(), title: '' };

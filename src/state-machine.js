@@ -7,8 +7,10 @@
 // Decisões (plano §6): 3 cores. Erro = vermelho ⚠. Idle > N min escala p/ vermelho.
 // `reason` é o sub-ícone (motivo), não uma cor nova.
 
-const IDLE_THRESHOLD_SEC = 5 * 60;          // verde→vermelho após 5 min parado
-const ESCALATE_IDLE = true;                 // toggle (plano §6, opção c)
+// Defaults da escalada idle — sobrescritos pelo cfg de computeState quando o
+// usuário configura (ver src/settings.js + janela de Preferências).
+const DEFAULT_IDLE_THRESHOLD_SEC = 5 * 60;  // verde→vermelho após 5 min parado
+const DEFAULT_ESCALATE_IDLE = true;         // toggle (plano §6, opção c)
 
 // Mapa evento → {level, reason}. Razões explícitas (awaiting) vêm primeiro.
 const REASON_FOR = {
@@ -27,10 +29,13 @@ const REASON_ICON = {
 /**
  * @param {object} state  state file parseado {last_event, last_event_ts, ...}
  * @param {number} nowSec  epoch atual (Date.now()/1000)
+ * @param {object} [cfg]   {idleThresholdSec, escalateIdle} — configurável
  * @returns {{level:'processing'|'done'|'awaiting', reason:string|null}}
  */
-function computeState(state, nowSec) {
+function computeState(state, nowSec, cfg) {
   const last = state.last_event;
+  const escalate = cfg ? cfg.escalateIdle : DEFAULT_ESCALATE_IDLE;
+  const threshold = cfg ? cfg.idleThresholdSec : DEFAULT_IDLE_THRESHOLD_SEC;
 
   // 1. Razões explícitas de "precisa de você" (vermelho).
   if (REASON_FOR[last]) return REASON_FOR[last];
@@ -41,7 +46,7 @@ function computeState(state, nowSec) {
   // 3. Terminado (verde) — com escalada idle opcional.
   if (last === 'Stop' || last === 'SessionStart' || last === 'SessionEnd') {
     const ageSec = nowSec - (state.last_event_ts || 0);
-    if (ESCALATE_IDLE && last === 'Stop' && ageSec > IDLE_THRESHOLD_SEC) {
+    if (escalate && last === 'Stop' && ageSec > threshold) {
       return { level: 'awaiting', reason: 'idle' };
     }
     return { level: 'done', reason: 'ok' };

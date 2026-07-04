@@ -1,0 +1,44 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { DEFAULTS, isValidShortcut, mergeWithDefaults } = require('../src/settings.js');
+
+test('isValidShortcut: aceita modificador + tecla', () => {
+  assert.equal(isValidShortcut('Control+Alt+H'), true);
+  assert.equal(isValidShortcut('CommandOrControl+Shift+Alt+L'), true);
+  assert.equal(isValidShortcut('Super+Space'), true);
+  assert.equal(isValidShortcut('Control+F5'), true);
+});
+
+test('isValidShortcut: rejeita sem modificador, token desconhecido, vazio', () => {
+  assert.equal(isValidShortcut('H'), false);            // sem modificador
+  assert.equal(isValidShortcut('Control'), false);      // só modificador
+  assert.equal(isValidShortcut('Control+'), false);     // tecla vazia
+  assert.equal(isValidShortcut('Control+Wibble'), false); // token inexistente
+  assert.equal(isValidShortcut(''), false);
+  assert.equal(isValidShortcut(null), false);
+  assert.equal(isValidShortcut(123), false);
+});
+
+test('mergeWithDefaults: defaults quando input vazio/podre', () => {
+  assert.deepEqual(mergeWithDefaults(null), DEFAULTS);
+  assert.deepEqual(mergeWithDefaults({}), DEFAULTS);
+  assert.deepEqual(mergeWithDefaults('lixo'), DEFAULTS);
+});
+
+test('mergeWithDefaults: aceita só valores válidos, descarta o resto', () => {
+  const m = mergeWithDefaults({ idleThresholdSec: 120, escalateIdle: false, shortcut: 'Super+Space' });
+  assert.equal(m.idleThresholdSec, 120);
+  assert.equal(m.escalateIdle, false);
+  assert.equal(m.shortcut, 'Super+Space');
+});
+
+test('mergeWithDefaults: idle inválido cai no default, não em undefined', () => {
+  assert.equal(mergeWithDefaults({ idleThresholdSec: -5 }).idleThresholdSec, DEFAULTS.idleThresholdSec);
+  assert.equal(mergeWithDefaults({ idleThresholdSec: 'x' }).idleThresholdSec, DEFAULTS.idleThresholdSec);
+  assert.equal(mergeWithDefaults({ idleThresholdSec: 90.7 }).idleThresholdSec, 90); // floor
+});
+
+test('mergeWithDefaults: atalho inválido é ignorado (mantém default)', () => {
+  assert.equal(mergeWithDefaults({ shortcut: 'H' }).shortcut, DEFAULTS.shortcut);
+  assert.equal(mergeWithDefaults({ shortcut: 'Control+Que' }).shortcut, DEFAULTS.shortcut);
+});

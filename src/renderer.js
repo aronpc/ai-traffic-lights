@@ -5,6 +5,7 @@ let sessions = [];
 let expanded = true;
 let renaming = false;                      // input de rename aberto → suspende render()
 let aliases = {};                          // cwd -> apelido
+let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} do settings.json
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 
@@ -105,7 +106,7 @@ function render() {
   const tally = { processing: 0, done: 0, awaiting: 0 };
 
   const rows = sessions.map((s) => {
-    const st = computeState(s, nowSec);
+    const st = computeState(s, nowSec, settingsCfg);
     tally[st.level]++;
     if (st.level === 'awaiting') worst = 'awaiting';
     else if (st.level === 'processing' && worst !== 'awaiting') worst = 'processing';
@@ -203,10 +204,12 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', () => { resizing = null; });
 
-// Recebe sessões; pede carga inicial; carrega apelidos.
+// Recebe sessões; pede carga inicial; carrega apelidos e settings.
 window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
 window.trafficLight.requestSessions();
 window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });
+window.trafficLight.getSettings().then((c) => { settingsCfg = c; render(); });
+window.trafficLight.onSettingsChanged((c) => { settingsCfg = c; render(); });
 
 // Re-renderiza a cada 2s (escalada idle + reavaliação do alerta).
 setInterval(render, 2000);
