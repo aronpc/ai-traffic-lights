@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const { shellQuote } = require('./validate');
 const HOOK_MARKER = 'traffic-hook.sh';       // identifica entradas nossas
 
 // Alvos de instalação — cada agente com hooks nativos vira uma entrada aqui.
@@ -30,7 +31,7 @@ const TARGETS = {
       'PostToolUseFailure', 'PermissionRequest', 'Notification',
       'Stop', 'SubagentStop', 'SessionEnd',
     ],
-    command: (dest) => `bash ${dest}`,
+    command: (dest) => `bash ${shellQuote(dest)}`,
     // schema do Claude: {type, command} — sem campo name
     entry: (cmd) => ({ type: 'command', command: cmd }),
   },
@@ -41,7 +42,7 @@ const TARGETS = {
     // BeforeModel/BeforeToolSelection ficam de fora de propósito: disparam
     // várias vezes por turno e não mudam a cor — só custariam forks.
     events: ['BeforeAgent', 'BeforeTool', 'AfterTool', 'AfterAgent'],
-    command: (dest) => `AI_TL_AGENT=gemini bash ${dest}`,
+    command: (dest) => `AI_TL_AGENT=gemini bash ${shellQuote(dest)}`,
     // schema do Gemini aceita name — aparece nos logs/CLI dele
     entry: (cmd) => ({ name: 'ai-traffic-lights', type: 'command', command: cmd }),
   },
@@ -54,7 +55,7 @@ const TARGETS = {
     settings: path.join(os.homedir(), '.codex', 'hooks.json'),
     detectDir: path.join(os.homedir(), '.codex'),
     events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'SubagentStop'],
-    command: (dest) => `AI_TL_AGENT=codex bash ${dest}`,
+    command: (dest) => `AI_TL_AGENT=codex bash ${shellQuote(dest)}`,
     entry: (cmd) => ({ type: 'command', command: cmd }),
   },
 };

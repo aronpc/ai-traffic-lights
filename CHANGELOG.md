@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Path traversal hardened**: session ids from hook payloads are validated
+  (`[A-Za-z0-9._-]`) before becoming file paths — a malicious `../` payload
+  can no longer write/delete outside the state dir. Applied to the bash hook
+  and the OpenCode plugin.
+- **Autostart `.desktop` Exec escapes** `process.execPath` and the app dir per
+  the Desktop Entry spec — a HOME/project path with spaces no longer breaks
+  the autostart command.
+- **Hook commands are shell-quoted** (e.g. `bash '/.../traffic-hook.sh'`) so a
+  `HOME`/`XDG_DATA_HOME` with spaces or shell metacharacters can't break or
+  redirect the registered hook command.
+- **No alert on startup**: a session that is already red when the app opens no
+  longer fires a beep/notification — only real green→red transitions do.
+- **`set-alias` IPC validates** its payload (string `cwd`/`alias`, sane
+  lengths) instead of persisting malformed keys.
+
 ### Added
 - **Codex support**: adapter via `~/.codex/hooks.json` (Codex shares Claude's
   hooks schema, so the same `traffic-hook.sh` runs with `AI_TL_AGENT=codex` —

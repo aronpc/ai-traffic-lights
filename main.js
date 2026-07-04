@@ -13,6 +13,7 @@ const hookInstaller = require('./src/hook-installer');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const settingsLib = require('./src/settings');
+const { desktopEscape } = require('./src/validate');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
 
@@ -308,7 +309,11 @@ function setAutostart(on) {
   try {
     try { fs.unlinkSync(OLD_AUTOSTART); } catch {} // limpa o .desktop da era pré-rename
     if (on) {
-      const desktop = `[Desktop Entry]\nType=Application\nName=AI Traffic Lights\nExec=${process.execPath} ${__dirname} --no-sandbox\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`;
+      // Escapa cada path pelo spec .desktop (backslash em espaço/$/`/"). Sem
+      // isso, um HOME com espaço quebra o Exec no login.
+      const exec = desktopEscape(process.execPath);
+      const appDir = desktopEscape(__dirname);
+      const desktop = `[Desktop Entry]\nType=Application\nName=AI Traffic Lights\nExec=${exec} ${appDir} --no-sandbox\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`;
       fs.mkdirSync(path.dirname(AUTOSTART_FILE), { recursive: true });
       fs.writeFileSync(AUTOSTART_FILE, desktop);
     } else {
@@ -566,7 +571,14 @@ ipcMain.on('focus', (_e, target) => focusSession(target));
 
 // Aliases (apelido por cwd).
 ipcMain.handle('get-aliases', () => loadAliases());
-ipcMain.on('set-alias', (_e, { cwd, alias }) => { saveAlias(cwd, alias); sendSessions(); });
+ipcMain.on('set-alias', (_e, { cwd, alias }) => {
+  // valida no limite IPC: cwd é chave do JSON de aliases (path real), alias é
+  // string curta. Ignora payload malformado em vez de gravar lixo.
+  if (typeof cwd !== 'string' || !cwd || cwd.length > 4096) return;
+  if (alias != null && (typeof alias !== 'string' || alias.length > 256)) return;
+  saveAlias(cwd, alias);
+  sendSessions();
+});
 
 // Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
 // e abertura da janela a partir do renderer (caso queira botão no overlay um dia).

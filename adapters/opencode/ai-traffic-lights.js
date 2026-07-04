@@ -40,8 +40,12 @@ export const AiTrafficLights = async ({ directory, $ }) => {
 
   // Escrita atômica (tmp + rename), merge-preserve de windowid/focus_url,
   // events rolante (últimos 50) — mesmo comportamento do traffic-hook.sh.
+  // ID seguro p/ nome de arquivo (anti-path-traversal). Rejeita "../", espaços,
+  // etc. — vem de payload externo.
+  const SAFE_ID = /^[A-Za-z0-9._-]+$/
+
   const write = (sid, evt, tool) => {
-    if (!sid) return
+    if (!sid || !SAFE_ID.test(sid)) return
     try {
       fs.mkdirSync(STATE_DIR, { recursive: true })
       const file = path.join(STATE_DIR, `${sid}.json`)
@@ -74,7 +78,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
   }
 
   const drop = (sid) => {
-    if (!sid) return
+    if (!sid || !SAFE_ID.test(sid)) return
     try { fs.unlinkSync(path.join(STATE_DIR, `${sid}.json`)) } catch {}
   }
 

@@ -6,6 +6,7 @@ let expanded = true;
 let renaming = false;                      // input de rename aberto → suspende render()
 let aliases = {};                          // cwd -> apelido
 let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} do settings.json
+let firstRender = true;                    // hidrata prevLevels sem alertar no boot
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 
@@ -111,10 +112,12 @@ function render() {
     if (st.level === 'awaiting') worst = 'awaiting';
     else if (st.level === 'processing' && worst !== 'awaiting') worst = 'processing';
 
-    // Alerta ao TRANSITAR pra vermelho (rate-limit 30s/sessão).
+    // Alerta ao TRANSITAR pra vermelho (rate-limit 30s/sessão). Na 1ª render
+    // só hidrata prevLevels — uma sessão que JÁ estava vermelha ao abrir o app
+    // não deve apitar (só transições reais disparam alerta).
     const key = s.pid || s.session_id;
     const was = prevLevels.get(key);
-    if (st.level === 'awaiting' && was !== 'awaiting') {
+    if (!firstRender && st.level === 'awaiting' && was !== 'awaiting') {
       const nowMs = Date.now();
       if (!lastAlert.has(key) || nowMs - lastAlert.get(key) > 30000) {
         lastAlert.set(key, nowMs);
@@ -172,6 +175,7 @@ function render() {
   if (sessions.length > 0 && expanded) $list.hidden = false;
   document.title = `ATL · ${sessions.length} sessões · ${parts.join(' ')}`;
   autosize();
+  firstRender = false;
 }
 
 function autosize() {
