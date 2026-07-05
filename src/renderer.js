@@ -51,7 +51,10 @@ function labelFor(s) {
 
 function setExpanded(v) {
   expanded = v;
-  $list.hidden = !v;
+  // Lista some também quando vazia: visível com 0 linhas ela flex-grow e empurra
+  // o .empty pra baixo — offsetTop deixaria de ser natural e o autosize entraria
+  // em loop de feedback (janela crescendo sozinha a cada render).
+  $list.hidden = !v || sessions.length === 0;
   $empty.hidden = !v || sessions.length > 0;
   $expand.classList.toggle('is-expanded', v);
   window.trafficLight.setExpanded(v);
@@ -252,7 +255,7 @@ function render() {
     $empty.replaceChildren(...kids);
   }
   renderLauncher();
-  if (sessions.length > 0 && expanded) $list.hidden = false;
+  $list.hidden = !expanded || sessions.length === 0;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();
   firstRender = false;
