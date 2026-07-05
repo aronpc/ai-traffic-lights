@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('trafficLight', {
   onSessions: (cb) => ipcRenderer.on('sessions', (_e, sessions) => cb(sessions)),
   requestSessions: () => ipcRenderer.send('request-sessions'),
-  setExpanded: (expanded) => ipcRenderer.send('set-expanded', expanded),
+  setExpanded: (expanded, h) => ipcRenderer.send('set-expanded', { expanded, h }),
   autoHeight: (h) => ipcRenderer.send('auto-height', h),
   resizeStart: () => ipcRenderer.send('resize-start'),
   resizeMove: (dw, dh) => ipcRenderer.send('resize-move', { dw, dh }),

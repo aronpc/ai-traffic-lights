@@ -51,13 +51,22 @@ function labelFor(s) {
 
 function setExpanded(v) {
   expanded = v;
-  // Lista some também quando vazia: visível com 0 linhas ela flex-grow e empurra
-  // o .empty pra baixo — offsetTop deixaria de ser natural e o autosize entraria
-  // em loop de feedback (janela crescendo sozinha a cada render).
+  // Lista some quando recolhido (vira só header + rodapé). Também some com 0
+  // sessões: visível com 0 linhas ela flex-grow e empurra o .empty pra baixo —
+  // offsetTop deixaria de ser natural e o autosize entraria em loop de feedback.
   $list.hidden = !v || sessions.length === 0;
   $empty.hidden = !v || sessions.length > 0;
   $expand.classList.toggle('is-expanded', v);
-  window.trafficLight.setExpanded(v);
+  // Recolhido: a janela encolhe pra cabeçalho + rodapé (a lista some). O
+  // rodapé só não conta se estiver vazio (sem launchers) — aí fica só o header.
+  if (!v) {
+    const $bar = document.getElementById('launcher');
+    const launcherH = ($bar && !$bar.hidden) ? $bar.offsetHeight : 0;
+    window.trafficLight.setExpanded(false, HEADER_H + launcherH);
+  } else {
+    window.trafficLight.setExpanded(true);
+    autosize();
+  }
 }
 
 // ---- alerta no vermelho: beep (Web Audio) + notificação nativa ----
@@ -281,6 +290,8 @@ function renderLauncher() {
     btn.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.launchAgent({ agent: l.id }); });
     $bar.append(btn);
   }
+  // Rodapé permanece visível sempre que há launchers — inclusive recolhido
+  // (estado "só header + rodapé"). A altura da janela acompanha no setExpanded.
   $bar.hidden = launchers.length === 0;
 }
 

@@ -685,13 +685,17 @@ function createSettingsWindow() {
 // ---- IPC ----
 ipcMain.on('request-sessions', sendSessions);
 
-ipcMain.on('set-expanded', (_e, expanded) => {
+ipcMain.on('set-expanded', (_e, { expanded, h } = {}) => {
   if (!win || win.isDestroyed()) return;
-  // expandido = altura auto (renderer pede); recolhido = só header.
+  // expandido = altura auto (renderer pede via auto-height); recolhido = só
+  // header, ou header + rodapé quando houver launchers (h vem do renderer).
   if (!expanded) {
     const [w] = win.getSize();
-    win.setSize(w, HEADER_H, false);
-    win.setMinimumSize(MIN_W, HEADER_H);   // recolhido: mínimo = header
+    const height = Math.round(h) || HEADER_H;
+    // mínimo ANTES do setSize: senão o WM recusa encolher abaixo do mínimo
+    // que o autosize deixou no estado expandido (janela não reduzia ao recolher).
+    win.setMinimumSize(MIN_W, height);
+    win.setSize(w, height, false);
   }
 });
 
@@ -702,8 +706,10 @@ ipcMain.on('auto-height', (_e, h) => {
   if (!win || win.isDestroyed()) return;
   const clamped = Math.max(MIN_H, Math.min(Math.round(h), MAX_H));
   const [w] = win.getSize();
-  win.setSize(w, clamped, false);
+  // mínimo ANTES do setSize: ao encolher, o WM respeita o mínimo anterior e
+  // rejeitaria o setSize abaixo dele (janela não reduzia).
   win.setMinimumSize(MIN_W, clamped);
+  win.setSize(w, clamped, false);
 });
 
 // Gripper: só largura (altura é auto). Persiste ao soltar.
