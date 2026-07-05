@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Empty state no longer grows the window on its own.** The 0.3.0 autosize fix
+  covered the session-rows path, but the onboarding/empty state still had the
+  feedback loop: `setExpanded(true)` unhid the (empty) `flex:1` list, which
+  flex-grew and pushed `.empty` down, so `$empty.offsetTop` depended on the
+  current window height (window crawled a few px every 2s render tick). The
+  list is now hidden whenever there are no sessions, making the empty-state
+  measurement natural again.
+- **Hidden launcher bar actually hides.** `.launcher-bar { display:flex }`
+  overrode the UA `[hidden] { display:none }` rule, so with zero detected CLIs
+  the "hidden" bar still rendered an empty strip (border + padding) that
+  autosize didn't account for.
+
 ## [0.3.0] - 2026-07-04
 
 ### Added

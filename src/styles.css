@@ -138,6 +138,7 @@ html, body {
 .list::-webkit-scrollbar { display: none; }
 
 /* ---------- Quick Launcher (barra persistente no rodapé do overlay) ---------- */
+.launcher-bar[hidden] { display: none; }  /* display:flex abaixo venceria o [hidden] da UA */
 .launcher-bar {
   -webkit-app-region: no-drag;
   flex: 0 0 auto;
