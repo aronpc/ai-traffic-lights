@@ -6,6 +6,7 @@ let expanded = true;
 let renaming = false;                      // input de rename aberto → suspende render()
 let aliases = {};                          // cwd -> apelido
 let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} do settings.json
+let lastLangPref = null;                    // pref de idioma aplicada ('auto'|'en'|'pt') — evita re-resolver o idioma a cada settings-changed (live-apply)
 let T = makeT('en');                       // i18n — troca pro idioma do sistema via get-lang
 let firstRender = true;                    // hidrata prevLevels sem alertar no boot
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
@@ -610,6 +611,7 @@ window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });
 window.trafficLight.getLaunchers().then((l) => { launchers = l || []; render(); });
 window.trafficLight.getSettings().then((c) => {
   settingsCfg = c;
+  lastLangPref = c && c.lang;
   // Restaura o estado de UI salvo: recolhido/expandido (default expandido).
   setExpanded(!(c && c.collapsed));
   applyAppearance();                       // transparência + modo compacto
@@ -617,12 +619,18 @@ window.trafficLight.getSettings().then((c) => {
   render();
 });
 window.trafficLight.onSettingsChanged((c) => {
+  const langChanged = !c || c.lang !== lastLangPref;  // só re-resolve idioma se a PREF mudou
+  lastLangPref = c && c.lang;
   settingsCfg = c;
   applyAppearance();                       // opacity/compact podem ter mudado
   applyFooterMode();                       // footer pode ter mudado (showUsage)
   render();
-  // o idioma pode ter mudado nas Preferências — re-resolve e re-aplica estáticos
-  window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
+  // o idioma pode ter mudado nas Preferências — re-resolve e re-aplica estáticos.
+  // Guardado: no live-apply isto dispara a cada mudança (ex.: arraste de opacity);
+  // getLang()+applyStaticI18n()+render() a cada tick causaria jank e re-render duplo.
+  if (langChanged) {
+    window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
+  }
 });
 
 // Re-renderiza a cada 2s (escalada idle + reavaliação do alerta).

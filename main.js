@@ -788,10 +788,16 @@ ipcMain.on('open-external', (_e, url) => {
 });
 ipcMain.handle('get-repo-url', () => REPO_URL);
 ipcMain.on('save-settings', (_e, cfg) => {
+  // No live-apply isto dispara a CADA mudança nas Preferências. Só refaz o
+  // trabalho caro quando o valor relevante mudou de fato (evita re-registrar o
+  // globalShortcut e reconstruir o tray a cada tick de arraste do slider).
+  const prevShortcut = settingsCfg.shortcut, prevLang = settingsCfg.lang;
   settingsCfg = persistSettings(cfg);
-  applyShortcut();                                    // re-registra o atalho novo
-  applyLang();                                        // idioma pode ter mudado
-  if (tray) tray.setContextMenu(buildTrayMenu());     // labels do tray no idioma novo
+  if (settingsCfg.shortcut !== prevShortcut) applyShortcut();   // re-registra só se o atalho mudou
+  if (settingsCfg.lang !== prevLang) {                          // idioma só se mudou
+    applyLang();
+    if (tray) tray.setContextMenu(buildTrayMenu());             // labels do tray no idioma novo
+  }
   sendToRenderer('settings-changed', settingsCfg);
 });
 ipcMain.on('open-settings', () => createSettingsWindow());
