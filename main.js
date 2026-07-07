@@ -685,7 +685,7 @@ function saveSettingsBounds() {
 // altura da aba mais alta (Geral), medido no conteúdo real a 420px de largura.
 // As abas mais curtas (Integração) ficam com espaço vazio; nenhuma rola.
 // useContentSize faz width/height valerem para a ÁREA WEB (o .prefs preenche).
-const SETTINGS_W = 420, SETTINGS_H = 845;
+const SETTINGS_W = 420, SETTINGS_H = 761;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};

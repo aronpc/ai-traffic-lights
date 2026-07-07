@@ -128,13 +128,11 @@ for (const t of $tabs) t.addEventListener('click', () => selectTab(t.dataset.tab
 document.getElementById('closeBtn').addEventListener('click', () => window.close());
 document.getElementById('closeFooter').addEventListener('click', () => window.close());
 
-// ---- espelho do tray: autostart, hooks, mostrar/ocultar, sair ----
+// ---- espelho do tray: autostart + hooks (mostrar/ocultar e sair ficam só no tray) ----
 const $autostart = document.getElementById('autostart');
 $autostart.addEventListener('change', () => window.trafficLight.setAutostart($autostart.checked));
 document.getElementById('installHooks').addEventListener('click', () => window.trafficLight.installHooks());
 document.getElementById('removeHooks').addEventListener('click', () => window.trafficLight.removeHooks());
-document.getElementById('toggleVis').addEventListener('click', () => window.trafficLight.toggleVisibility());
-document.getElementById('quit').addEventListener('click', () => window.trafficLight.quit());
 
 // Mostra o campo de comando custom só no modo 'custom' (hoisted — usado acima).
 function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
