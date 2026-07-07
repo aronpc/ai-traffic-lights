@@ -6,12 +6,17 @@
 //   ${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/state/<session>.json
 //
 // Tradução de eventos → vocabulário canônico do contrato:
-//   chat.message / message user     → UserPromptSubmit (captura janela ativa)
-//   tool.execute.before / after     → PreToolUse / PostToolUse
-//   session.idle                    → Stop
-//   permission.updated              → PermissionRequest (🔴🔑)
-//   session.error                   → PostToolUseFailure (🔴⚠)
-//   session.deleted                 → remove o state file
+//   chat.message / message user           → UserPromptSubmit (captura janela ativa)
+//   tool.execute.before / after           → PreToolUse / PostToolUse
+//   session.idle                          → Stop
+//   permission.ask (HOOK) / .asked        → PermissionRequest (🔴🔑) — pediu permissão
+//   permission.replied / .updated         → Stop (respondeu → sai do vermelho)
+//   session.error                         → PostToolUseFailure (🔴⚠)
+//   session.deleted                       → remove o state file
+//
+// IMPORTANTE: o OpenCode pede permissão pelo HOOK `permission.ask` (função) e
+// pelo evento `permission.asked` — NÃO por `permission.updated` (que o adapter
+// escutava antes e nunca disparava ao pedir). Ver @opencode-ai/plugin types.
 //
 // Regra de ouro: NUNCA quebrar o OpenCode — todo hook engole exceções.
 
@@ -110,6 +115,12 @@ export const AiTrafficLights = async ({ directory, $ }) => {
       try { write(input && input.sessionID, "PostToolUse", input && input.tool) } catch {}
     },
 
+    // OpenCode chama este HOOK quando PEDE permissão (edit/bash/etc.). É o
+    // caminho principal — dispara ANTES de o usuário responder. Marca 🔴🔑.
+    "permission.ask": async (input) => {
+      try { write(input && input.sessionID, "PermissionRequest", null) } catch {}
+    },
+
     event: async ({ event }) => {
       try {
         const t = event && event.type
@@ -124,7 +135,11 @@ export const AiTrafficLights = async ({ directory, $ }) => {
           return
         }
         if (t === "session.idle") return write(sid, "Stop", null)
-        if (t === "permission.updated") return write(sid, "PermissionRequest", null)
+        // pediu permissão → 🔴🔑 (permission.asked é o evento; o hook
+        // permission.ask acima é o caminho principal — os dois são idempotentes)
+        if (t === "permission.ask" || t === "permission.asked") return write(sid, "PermissionRequest", null)
+        // respondeu (allow/deny) → sai do vermelho; o próximo tool/idle ajusta a cor
+        if (t === "permission.replied" || t === "permission.updated") return write(sid, "Stop", null)
         if (t === "session.error") return write(sid, "PostToolUseFailure", null)
         if (t === "session.deleted") return drop(sid)
       } catch {}

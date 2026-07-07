@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **OpenCode permission prompts now turn the light red.** The plugin listened
+  for `permission.updated`, which doesn't fire when OpenCode asks — it uses the
+  `permission.ask` hook and the `permission.asked` event. The adapter now hooks
+  both (→ 🔴🔑) and clears on `permission.replied` (→ Stop). Reinstall with
+  `npm run setup-hook` (or the tray) to pick it up.
+
 ### Added
+- **OpenCode usage %.** When OpenCode is configured with the z.ai
+  (`zai-coding-plan`) provider, its API key from `~/.local/share/opencode/auth.json`
+  queries the same quota endpoint as GLM, so its plan % shows in the footer.
+  Deduped by token — the same z.ai account open in a terminal and in OpenCode
+  collapses to one row.
 - **Mark a red terminal as read.** Clicking a 🔴 session now both focuses its
   terminal and marks it read — the light goes grey (⚪) and stops nagging until
   a *new* notification arrives (a red event newer than the moment you clicked

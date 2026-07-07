@@ -925,6 +925,42 @@ function glmCredsFromProc() {
   return [...byToken.values()];
 }
 
+// OpenCode guarda as credenciais dos providers em auth.json. Se houver o
+// provider z.ai (zai-coding-plan), sua API key consulta a MESMA API de quota do
+// GLM (/api/monitor/usage/quota/limit) → reaproveita readGlmUsage. Assim o uso
+// do OpenCode-via-z.ai aparece na faixa mesmo sem sessão GLM viva no /proc.
+// Zero token exposto além do que já está no auth.json local.
+function opencodeGlmCreds() {
+  const authFile = path.join(DATA_HOME, 'opencode', 'auth.json');
+  let auth;
+  try { auth = JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch { return []; }
+  const out = [];
+  // provider zai-coding-plan (z.ai) — { type:'api', key:'...' }
+  const zai = auth['zai-coding-plan'];
+  if (zai && zai.type === 'api' && zai.key) {
+    const token = zai.key;
+    let suffix;
+    try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
+    catch { suffix = 'oc'; }
+    out.push({
+      env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: token },
+      label: 'z.ai', suffix,
+    });
+  }
+  return out;
+}
+
+// Mescla duas listas de credenciais GLM, deduplicando pelo token (uma conta
+// z.ai aberta no terminal E no OpenCode não deve virar 2 blocos iguais).
+function mergeGlmCreds(a, b) {
+  const byToken = new Map();
+  for (const c of [...(a || []), ...(b || [])]) {
+    const tok = c && c.env && c.env.ANTHROPIC_AUTH_TOKEN;
+    if (tok && !byToken.has(tok)) byToken.set(tok, c);
+  }
+  return [...byToken.values()];
+}
+
 // Codex é passivo: o uso vive no rollout da sessão, associado por cwd. As
 // sessões Codex vivas são detectadas por /proc (sem state file próprio) e o
 // cwd é lido de /proc/<pid>/cwd (symlink legível pelo dono — ao contrário do
@@ -955,6 +991,9 @@ async function collectAndSendUsage() {
     // processo com credenciais z.ai (a conta é uma só). Resolve o bug do GLM
     // "parar de atualizar" quando nenhuma sessão-monitorada tem as vars no environ.
     if (!glmCreds.length) glmCreds = glmCredsFromProc();
+    // OpenCode: se tiver o provider z.ai (zai-coding-plan) no auth.json, a
+    // credencial dele consulta a MESMA API de quota — mescla (dedup por token).
+    glmCreds = mergeGlmCreds(glmCreds, opencodeGlmCreds());
     const codexCwds = codexCwdsFromSessions();
     const entries = await usage.collectUsage({ glmCreds, codexCwds });
     // Funde com o último estado: mantém o valor bom de cada linha se a coleta
