@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Per-agent usage footer — a meter panel.** The footer shows one row per
+  usage window as an aligned meter (CSS-grid shared columns, so every track is
+  identical and the reset column keeps equal space): agent icon · name · big %
+  reading · gradient meter with a lit leading-edge cap · reset time. Rows go
+  green / amber (≥70%) / red (≥90%); the red meter's cap pulses. A repeated
+  plan name is shown once (first row `Plan · window`, later rows just the
+  window). Reset shows `HH:MM` today, `1d HH` tomorrow, `Nd` further out.
+  - **Claude** now shows **real % and reset** for the 5-hour and 7-day windows,
+    fetched from `api.anthropic.com/api/oauth/usage` with the OAuth token in
+    `~/.claude/.credentials.json` (`anthropic-beta: oauth-2025-04-20`) — the
+    same numbers as `/status`. Falls back to a plan-only row (no %) if the
+    token is missing/expired.
+  - **GLM Coding Plan** shows 5-hour token % and monthly MCP % via
+    `/api/monitor/usage/quota/limit` (real per-window `nextResetTime`).
+    Credentials are read **per terminal, per account** from the
+    `/proc/<pid>/environ` of every live GLM session, deduped by token — distinct
+    z.ai accounts each get their own labelled block with their own %, the same
+    account across terminals collapses to one. No token on disk, no global env.
+  - **Codex** (ChatGPT plan) shows real 5-hour and 7-day % + reset, read
+    **passively** from the session's rollout (`~/.codex/sessions/**/rollout-*.jsonl`,
+    last `token_count` event → `rate_limits`). No network — matched to the live
+    session by cwd (`/proc/<pid>/cwd`). Gemini stays out (no persisted usage).
+    New `src/usage.js` (pure parsers + I/O, unit tested); collectors run on a
+    60s cadence decoupled from the 5s session loop; responses cached 30s and
+    never throw.
+  - **Last value sticks — no more flicker to zero.** When a collector misses a
+    tick (network blip, session not yet ready), each row keeps its last good
+    value instead of blanking. After ~4 min without a fresh value the row dims
+    to grey (marked stale, number still shown); after ~20 min it drops. A new
+    good value resets the clock. (`usage.mergeUsage`, merged per row id.)
+  - **Usage survives restarts.** The last known values are saved to `usage.json`
+    and reloaded on launch, so the footer isn't blank for the first minute after
+    reopening. Reloaded rows come back **grey (stale)** until a fresh value
+    arrives — never shown as if current — and anything older than ~20 min is
+    dropped. No tokens are written; the file holds only plan/%/reset.
+- **Appearance preferences.** A new *Appearance* section in Preferences adds
+  two knobs, applied live (no restart) and persisted:
+  - **Window transparency** — a slider (60–100%) sets how opaque the panel is,
+    driving the overlay's background alpha (`settings.opacity`, default 0.97).
+  - **Compact list** — denser session rows: hides the model/tool sub-line,
+    tightens the padding, just name + light (`settings.compact`, default off).
+- **Footer toggle (usage ⇄ launcher).** A header button switches the footer
+  between the usage rows and the Quick Launcher icon bar — only one shows at a
+  time. The choice persists in `settings.showUsage` (default: usage).
+- **UI state persists across restarts.** The footer mode (`showUsage`) and the
+  collapsed/expanded window state (`collapsed`) are saved to `settings.json` and
+  restored on launch — no Preferences UI, just remembered. Toggling the footer
+  or collapsing the window while collapsed now also re-fits the window height so
+  no empty space is left behind.
+- **Custom animated tooltips.** The native OS `title` tooltips (slow, unstyled)
+  are replaced by a styled bubble that matches the overlay: dark gradient,
+  arrow, fade + slide + scale on show, ~380ms delay, keyboard-focus support.
+  A single delegated handler covers the header, usage rows and launcher. The
+  bubble is positioned inside the window (clamped to the viewport, flips above
+  the target when there's no room below, arrow re-aims at the target center).
+  New `src/tooltip.js` (pure `tipPosition` + event wiring, unit tested).
+- **Version + update check in the header.** Left of the gear, the header shows
+  the app version (`vX.Y.Z`). When a newer GitHub release exists it becomes a
+  green clickable "↑ vX.Y.Z" badge that opens the release page; the install
+  method (`deb` / `AppImage` / `npm` / `source`) is auto-detected and shown in
+  the tooltip. Checked against
+  `api.github.com/repos/aronpc/ai-traffic-lights/releases/latest` with a 30-min
+  cache; offline is silent (no badge).
+
+### Fixed
+- **Usage footer no longer shows redundant/duplicate tiles.** When a collector
+  briefly failed mid-tick (network blip), its fallback "summary" row
+  (plan-only Claude, or GLM without parsed limits) could coexist with the real
+  meter rows from the previous good tick — e.g. "Claude Max" beside
+  "Claude Max 5× - 5 h", or "GLM" beside "GLM Pro - MCP (mês)". A summary row
+  is now suppressed whenever a concrete meter of the same agent is present
+  (fresh or held over from the previous tick). (`usage.mergeUsage`,
+  regression-tested; surfaced by a user report.)
+
 ## [0.3.2] - 2026-07-05
 
 ### Fixed

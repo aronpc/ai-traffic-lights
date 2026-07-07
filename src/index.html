@@ -9,29 +9,36 @@
 <body>
   <div class="overlay" id="overlay">
     <header class="bar">
-      <span class="led led-summary" id="summaryLed" title="estado agregado" data-i18n-title="tooltip_summary"></span>
+      <span class="led led-summary" id="summaryLed" data-tip="estado agregado" data-i18n-tip="tooltip_summary"></span>
       <span class="title"><img class="logo" src="../assets/tray-icon.png" alt="">AI&nbsp;Lights</span>
-      <span class="bar-divider" title=""></span>
+      <span class="bar-divider"></span>
       <span class="counts" id="counts">—</span>
       <span class="spacer"></span>
-      <button class="btn" id="settingsBtn" title="preferências" data-i18n-title="tooltip_settings" aria-label="preferências">
+      <button class="btn-ver" id="verBtn" hidden></button>
+      <button class="btn" id="toggleListBtn" data-tip="lista normal/compacta" data-i18n-tip="tooltip_toggle_list" aria-label="alternar lista">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      </button>
+      <button class="btn" id="settingsBtn" data-tip="preferências" data-i18n-tip="tooltip_settings" aria-label="preferências">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
-      <button class="btn" id="expandBtn" title="expandir/recolher" data-i18n-title="tooltip_expand" aria-label="expandir/recolher">
+      <button class="btn" id="expandBtn" data-tip="expandir/recolher" data-i18n-tip="tooltip_expand" aria-label="expandir/recolher">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      <button class="btn btn-close" id="quitBtn" title="ocultar" data-i18n-title="tooltip_close" aria-label="ocultar">
+      <button class="btn btn-close" id="quitBtn" data-tip="ocultar" data-i18n-tip="tooltip_close" aria-label="ocultar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </header>
     <ul class="list" id="list" hidden></ul>
     <div class="empty" id="empty" hidden data-i18n="empty_state">Nenhuma sessão de IA ativa.</div>
+    <div class="usage-bar" id="usage" hidden></div>
     <div class="launcher-bar" id="launcher" hidden></div>
-    <div class="grip" id="grip" title="arraste para redimensionar" data-i18n-title="tooltip_grip"></div>
+    <div class="grip" id="grip" data-tip="arraste para redimensionar" data-i18n-tip="tooltip_grip"></div>
+    <div class="tt" id="tooltip" role="tooltip" aria-hidden="true"><span class="tt__label"></span><span class="tt__arrow"></span></div>
   </div>
   <script src="agents.js"></script>
   <script src="state-machine.js"></script>
   <script src="i18n.js"></script>
+  <script src="tooltip.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

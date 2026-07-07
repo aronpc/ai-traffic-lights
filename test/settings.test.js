@@ -38,6 +38,36 @@ test('mergeWithDefaults: idle inválido cai no default, não em undefined', () =
   assert.equal(mergeWithDefaults({ idleThresholdSec: 90.7 }).idleThresholdSec, 90); // floor
 });
 
+test('mergeWithDefaults: showUsage (footer uso vs launcher) default true, aceita bool', () => {
+  assert.equal(DEFAULTS.showUsage, true);
+  assert.equal(mergeWithDefaults({}).showUsage, true);
+  assert.equal(mergeWithDefaults({ showUsage: false }).showUsage, false);
+  assert.equal(mergeWithDefaults({ showUsage: 'x' }).showUsage, true); // inválido → default
+});
+
+test('mergeWithDefaults: collapsed (estado da janela) default false, aceita bool', () => {
+  assert.equal(DEFAULTS.collapsed, false);
+  assert.equal(mergeWithDefaults({}).collapsed, false);
+  assert.equal(mergeWithDefaults({ collapsed: true }).collapsed, true);
+  assert.equal(mergeWithDefaults({ collapsed: 'x' }).collapsed, false); // inválido → default
+});
+
+test('mergeWithDefaults: opacity default 0.97, clampa em [0.6, 1.0]', () => {
+  assert.equal(DEFAULTS.opacity, 0.97);
+  assert.equal(mergeWithDefaults({}).opacity, 0.97);
+  assert.equal(mergeWithDefaults({ opacity: 0.8 }).opacity, 0.8);
+  assert.equal(mergeWithDefaults({ opacity: 0.3 }).opacity, 0.6);   // abaixo → clampa
+  assert.equal(mergeWithDefaults({ opacity: 2 }).opacity, 1.0);     // acima → clampa
+  assert.equal(mergeWithDefaults({ opacity: 'x' }).opacity, 0.97);  // não-número → default
+  assert.equal(mergeWithDefaults({ opacity: NaN }).opacity, 0.97);  // NaN → default
+});
+
+test('mergeWithDefaults: compact (lista densa) default false, aceita bool', () => {
+  assert.equal(DEFAULTS.compact, false);
+  assert.equal(mergeWithDefaults({ compact: true }).compact, true);
+  assert.equal(mergeWithDefaults({ compact: 1 }).compact, false);   // não-bool → default
+});
+
 test('mergeWithDefaults: atalho inválido é ignorado (mantém default)', () => {
   assert.equal(mergeWithDefaults({ shortcut: 'H' }).shortcut, DEFAULTS.shortcut);
   assert.equal(mergeWithDefaults({ shortcut: 'Control+Que' }).shortcut, DEFAULTS.shortcut);

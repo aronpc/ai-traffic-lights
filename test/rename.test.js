@@ -14,12 +14,16 @@ const CODE = ['agents.js', 'state-machine.js', 'i18n.js', 'renderer.js']
 
 function mkEl() {
   return {
-    _l: {}, children: [], className: '', textContent: '', hidden: false, value: '',
+    _l: {}, _attr: {}, children: [], className: '', textContent: '', hidden: false, value: '',
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener(t, f) { (this._l[t] = this._l[t] || []).push(f); },
     dispatch(t, ev) { (this._l[t] || []).forEach((f) => f(ev || {})); },
     append(...e) { this.children.push(...e); },
     replaceChildren(...e) { this.children = e; },
+    setAttribute(k, v) { this._attr[k] = String(v); },
+    removeAttribute(k) { delete this._attr[k]; },
+    getAttribute(k) { return this._attr[k] != null ? this._attr[k] : null; },
+    hasAttribute(k) { return this._attr[k] != null; },
     focus() {}, select() {},
     get lastElementChild() { return this.children[this.children.length - 1] || null; },
     offsetTop: 0, offsetHeight: 24, scrollHeight: 120,
@@ -29,7 +33,7 @@ function mkEl() {
 // Monta um renderer isolado com uma sessão renomeável já na lista.
 async function setup() {
   const els = {};
-  for (const id of ['list', 'empty', 'counts', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn']) els[id] = mkEl();
+  for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'toggleFooterBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
   const calls = { setAlias: [] };
   let sessionsCb = null;
   const window = {
@@ -37,17 +41,19 @@ async function setup() {
     trafficLight: {
       onSessions: (cb) => { sessionsCb = cb; },
       requestSessions() {}, setExpanded() {}, autoHeight() {},
+      onUsage() {}, requestUsage() {},
       resizeStart() {}, resizeMove() {}, focus() {},
       getAliases: () => Promise.resolve({}), setAlias: (cwd, v) => calls.setAlias.push([cwd, v]),
       notify() {}, toggleVisibility() {}, setTrayLevel() {},
       getLaunchers: () => Promise.resolve([]), launchAgent() {},
       getSettings: () => Promise.resolve(null), onSettingsChanged() {}, // settings (não usados no teste)
+      getVersion: () => Promise.resolve('0.0.0'), getUpdate: () => Promise.resolve(null),
       saveSettings() {}, openSettings() {},
       getLang: () => Promise.resolve('pt'),                             // i18n
 
     },
   };
-  const document = { getElementById: (id) => els[id], createElement: () => mkEl(), querySelectorAll: () => [], title: '' };
+  const document = { getElementById: (id) => els[id], createElement: () => mkEl(), querySelectorAll: () => [], title: '', documentElement: { style: { setProperty() {} } } };
   const ctx = { document, window, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date, Math, console };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);

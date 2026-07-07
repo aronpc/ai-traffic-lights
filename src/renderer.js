@@ -13,6 +13,9 @@ const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 const snoozed = new Map();                 // key -> ms (silencia o ALERTA até então; a cor fica)
 let everHadSessions = false;               // onboarding: mostra "instalar hooks" só enquanto nunca teve sessão
 let launchers = [];                        // Quick Launcher: [{id,label}] dos CLIs detectados
+let usageEntries = [];                     // consumo/reset: [{agent,title,usedPct,resetAt,resetInMin,extra,source,error}]
+let appVersion = '';                       // versão do app (rodapé direito)
+let updateInfo = null;                     // {current,method,latest,hasUpdate,url,error} do GitHub
 const SNOOZE_MS = 60 * 60 * 1000;          // 1h
 function snoozeKey(s) { return s.pid || s.session_id; }
 function isSnoozed(key) {
@@ -27,6 +30,9 @@ const HEADER_H = 58; // tem que casar com --header-h do CSS
 const $list = document.getElementById('list');
 const $empty = document.getElementById('empty');
 const $counts = document.getElementById('counts');
+const $usage = document.getElementById('usage');
+const $ver = document.getElementById('verBtn');
+const $toggleList = document.getElementById('toggleListBtn');
 const $summaryLed = document.getElementById('summaryLed');
 const $expand = document.getElementById('expandBtn');
 const $quit = document.getElementById('quitBtn');
@@ -58,15 +64,25 @@ function setExpanded(v) {
   $empty.hidden = !v || sessions.length > 0;
   $expand.classList.toggle('is-expanded', v);
   // Recolhido: a janela encolhe pra cabeçalho + rodapé (a lista some). O
-  // rodapé só não conta se estiver vazio (sem launchers) — aí fica só o header.
+  // rodapé (usage + launcher) só não conta se estiver vazio — aí fica só o header.
   if (!v) {
-    const $bar = document.getElementById('launcher');
-    const launcherH = ($bar && !$bar.hidden) ? $bar.offsetHeight : 0;
-    window.trafficLight.setExpanded(false, HEADER_H + launcherH);
+    window.trafficLight.setExpanded(false, collapsedHeight());
   } else {
     window.trafficLight.setExpanded(true);
     autosize();
   }
+}
+
+// Altura do estado RECOLHIDO = header + rodapé visível (usage OU launcher). Só
+// um dos dois aparece por vez (footerShowsUsage), então some a altura de quem
+// está visível. Usado ao recolher E ao alternar o rodapé enquanto recolhido —
+// senão a janela mantinha o espaço do rodapé anterior (bug: vazio embaixo).
+function collapsedHeight() {
+  const $bar = document.getElementById('launcher');
+  const $u = document.getElementById('usage');
+  const launcherH = ($bar && !$bar.hidden) ? $bar.offsetHeight : 0;
+  const usageH = ($u && !$u.hidden) ? $u.offsetHeight : 0;
+  return HEADER_H + launcherH + usageH;
 }
 
 // ---- alerta no vermelho: beep (Web Audio) + notificação nativa ----
@@ -91,9 +107,11 @@ function alertAwaiting(s) {
 }
 
 // Textos estáticos do HTML (empty state, tooltips) no idioma do sistema.
+// Tooltips agora são customizados (data-tip); i18n preenche data-tip a partir
+// de data-i18n-tip (o setupTooltips lê data-tip no hover).
 function applyStaticI18n() {
   for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
-  for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = T(el.dataset.i18nTitle);
+  for (const el of document.querySelectorAll('[data-i18n-tip]')) el.setAttribute('data-tip', T(el.dataset.i18nTip));
 }
 
 // ---- rename in-place ----
@@ -167,16 +185,23 @@ function render() {
   // 3. monta as linhas na ordem ordenada.
   const rows = ordered.map(({ s, st }) => {
     const label = labelFor(s);
+    const agent = AGENTS[agentOf(s)];
+    // O ícone da LLM (à esquerda) já mostra QUAL agente — então o texto não
+    // repete o nome do agente. Normal: modelo · ferramenta · tempo.
     const sub = [
-      AGENTS[agentOf(s)].label,               // qual agente (claude, gemini, ...)
       s.model,
+      s.last_tool ? s.last_tool : (s.last_event || ''),
+      ageText(nowSec, s.last_event_ts),
+    ].filter(Boolean).join(' · ');
+    // Compacto: mais enxuto — só ferramenta · tempo (modelo cabe no tooltip).
+    const subCompact = [
       s.last_tool ? s.last_tool : (s.last_event || ''),
       ageText(nowSec, s.last_event_ts),
     ].filter(Boolean).join(' · ');
 
     const li = document.createElement('li');
     li.className = 'row';
-    li.title = T('row_tooltip');
+    li.setAttribute('data-tip', T('row_tooltip'));
     // Clique simples = focar terminal; mas o dblclick (rename) dispara 2 cliques
     // antes — sem debounce, cada clique levanta o terminal e rouba o foco do
     // teclado do input de rename, que abre vazio/fecha na hora. Solução: espera
@@ -190,18 +215,29 @@ function render() {
       }, 220);
     });
 
+    // Colunas fixas (alinham entre linhas): [led] [motivo] [LLM] [nome…] [texto] [sino]
     const led = document.createElement('span');
     led.className = `led led--${st.level}`;
+
+    // ícone do motivo (🔑 permissão, 🛠 tool, ✓ ok, ⚠ erro, ⏰ idle…)
+    const reason = document.createElement('span');
+    reason.className = 'row__reason';
+    reason.textContent = iconFor(st);
+
+    // ícone da LLM/CLI (SVG da marca, cor do agente) — mostra QUAL agente
+    const llm = document.createElement('span');
+    llm.className = 'row__llm';
+    if (agent && agent.mark) {
+      llm.style.setProperty('--agent-color', agent.color || 'var(--ink-dim)');
+      llm.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + agent.mark + '</svg>';
+    }
 
     const main = document.createElement('span');
     main.className = 'row__main';
 
     const labelEl = document.createElement('span');
     labelEl.className = 'row__label';
-    const icon = document.createElement('span');
-    icon.className = 'row__icon';
-    icon.textContent = iconFor(st);
-    labelEl.append(icon, label);
+    labelEl.textContent = label;
     labelEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; } // era clique simples pendente → cancela o foco
@@ -210,27 +246,35 @@ function render() {
 
     const subEl = document.createElement('span');
     subEl.className = 'row__sub';
-    subEl.textContent = sub;
+    subEl.textContent = sub;                 // normal
+    const subInline = document.createElement('span');
+    subInline.className = 'row__sub-inline'; // compacto: na mesma linha do nome
+    subInline.textContent = subCompact;
 
-    main.append(labelEl, subEl);
-    li.append(led, main);
+    main.append(labelEl, subEl, subInline);
+    li.append(led, reason, llm, main);
 
     // Snooze do alerta (só em vermelho): não apaga a cor, só cala o beep/notif.
+    // A coluna do sino é SEMPRE reservada (placeholder invisível quando não-red)
+    // para não empurrar a altura/largura da linha ao aparecer/sumir.
+    const snoozeWrap = document.createElement('span');
+    snoozeWrap.className = 'row__snooze-col';
     if (st.level === 'awaiting') {
       const sk = snoozeKey(s);
       const muted = isSnoozed(sk);
       const btn = document.createElement('button');
       btn.className = 'row__snooze' + (muted ? ' is-on' : '');
       btn.textContent = muted ? '🔕' : '🔔';
-      btn.title = T(muted ? 'snooze_off' : 'snooze_on');
+      btn.setAttribute('data-tip', T(muted ? 'snooze_off' : 'snooze_on'));
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (isSnoozed(sk)) snoozed.delete(sk);
         else snoozed.set(sk, Date.now() + SNOOZE_MS);
         render();
       });
-      li.append(btn);
+      snoozeWrap.append(btn);
     }
+    li.append(snoozeWrap);
 
     return li;
   });
@@ -263,6 +307,8 @@ function render() {
     ];
     $empty.replaceChildren(...kids);
   }
+  // Rodapé: uso OU launcher (nunca os dois) conforme settings.showUsage.
+  renderUsage();
   renderLauncher();
   $list.hidden = !expanded || sessions.length === 0;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
@@ -273,6 +319,172 @@ function render() {
 // Barra persistente de Quick Launcher (rodapé do overlay): um botão-ícone por
 // CLI detectado, com a marca/cor de cada agente. Visível sempre que houver
 // launchers — não só no empty state.
+// ---- consumo/reset dos agentes (faixa no rodapé, uma linha por limite) ----
+// Cada linha: [ícone do agente clicável] [nome/plano] .... [%] [barra fixa] [reset].
+// Ícone clicável só se o agente for um launcher detectado (Claude/Gemini/...);
+// GLM é backend, não se lança → ícone decorativo. Barra sempre presente
+// (tamanho padronizado); % vazio mostra "—". Reset em hora local (HH:MM),
+// "+Nd HH:MM" se for além de hoje, "Xmin" se <1h. Re-render a cada 2s.
+function pctLevel(pct) {
+  if (pct == null) return 'none';
+  if (pct >= 90) return 'red';
+  if (pct >= 70) return 'amber';
+  return 'green';
+}
+function resetClock(resetAt, resetInMin) {
+  if (typeof resetInMin === 'number' && resetInMin > 0 && resetInMin < 60) return `${resetInMin}min`;
+  if (!resetAt) return '';
+  const d = new Date(resetAt);
+  if (isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+  const t = new Date();
+  const dayDiff = Math.round(
+    (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+      - new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()) / 86400000);
+  // hoje → hora exata (HH:MM); amanhã → "amanhã HH"; +2 dias → só "+Nd" (curto,
+  // não trunca na coluna estreita — a hora exata de um reset distante é ruído).
+  if (dayDiff <= 0) return `${hh}:${mm}`;
+  if (dayDiff === 1) return `1d ${hh}h`;
+  return `${dayDiff}d`;
+}
+// Aparência (Preferências): transparência do painel via --bg-alpha e modo
+// compacto via classe no .overlay. Aplicado ao vivo (boot + settings-changed),
+// sem reiniciar — o CSS já deriva --bg de --bg-alpha. autosize recalcula a
+// altura (compact muda a altura das linhas).
+function applyAppearance() {
+  const op = settingsCfg && typeof settingsCfg.opacity === 'number' ? settingsCfg.opacity : 0.97;
+  document.documentElement.style.setProperty('--bg-alpha', String(Math.max(0.6, Math.min(1, op))));
+  const $ov = document.getElementById('overlay');
+  if ($ov) $ov.classList.toggle('compact', !!(settingsCfg && settingsCfg.compact));
+  autosize();
+}
+
+// Modo do rodapé: showUsage (settings) decide se aparece a barra de USO ou a
+// barra de LAUNCHER — só uma por vez. Default true (uso). O toggle no header
+// alterna e persiste via save-settings.
+function footerShowsUsage() {
+  return !settingsCfg || settingsCfg.showUsage !== false;
+}
+function applyFooterMode() {
+  const showUsage = footerShowsUsage();
+  renderUsage();
+  renderLauncher();
+  // A visibilidade real é decidida dentro de cada render (podem estar vazios),
+  // mas o modo esconde o outro de vez.
+  const $l = document.getElementById('launcher');
+  if (showUsage) { if ($l) $l.hidden = true; }
+  else { if ($usage) $usage.hidden = true; }
+  if ($toggleFooter) $toggleFooter.classList.toggle('is-usage', showUsage);
+  // Re-mede a altura: expandido → autosize; recolhido → altura do rodapé novo
+  // (autosize é no-op quando recolhido, então a janela mantinha o espaço do
+  // rodapé anterior — sobrava vazio ao trocar usage↔launcher recolhido).
+  if (expanded) autosize();
+  else window.trafficLight.setExpanded(false, collapsedHeight());
+}
+
+// Faixa de uso = painel de medidores. Cada limite é um "canal": ícone · nome ·
+// medidor (trilho + preenchimento que acende) · leitura (% grande) · reset. O
+// CSS Grid vive no CONTÊINER (.usage-bar) com colunas compartilhadas, então
+// TODAS as linhas alinham nas mesmas colunas — trilhos idênticos, reset com
+// espaço igual — independentemente do texto. Cada .urow é display:contents pra
+// seus filhos caírem direto no grid do pai.
+function renderUsage() {
+  if (!$usage) return;
+  if (!footerShowsUsage() || !usageEntries.length) { $usage.hidden = true; $usage.replaceChildren(); return; }
+  const launchable = new Set(launchers.map((l) => l.id));
+  // Nome sem repetição: se o mesmo plano aparece em mais de uma linha (ex.:
+  // "Claude Max 5×" em 5h e 7 dias), as linhas seguintes mostram só a janela
+  // (o título distintivo) — o plano fica na 1ª ocorrência. Nomes curtos, sem
+  // truncar, sem redundância.
+  const planCount = {};
+  for (const u of usageEntries) { const p = u.plan || ''; planCount[p] = (planCount[p] || 0) + 1; }
+  const planShown = {};
+  const rows = usageEntries.map((u) => {
+    const a = AGENTS[u.agent] || { label: u.title || u.agent, color: 'rgba(255,255,255,0.3)' };
+    // stale (valor antigo, coletor sem atualizar há alguns min) → cinza, sem
+    // apagar o número; o valor continua visível, só sinaliza que está velho.
+    const lvl = u.stale ? 'none' : pctLevel(u.usedPct);
+    const reset = resetClock(u.resetAt, u.resetInMin);
+    const head = u.plan || a.label;
+    // 1ª linha do plano: "Plano · Janela"; repetições: só "Janela".
+    let nameTxt;
+    if (u.title && planCount[u.plan || ''] > 1) {
+      nameTxt = planShown[u.plan || ''] ? u.title : `${head} · ${u.title}`;
+      planShown[u.plan || ''] = true;
+    } else {
+      nameTxt = u.title ? `${head} · ${u.title}` : head;
+    }
+    const hasPct = u.usedPct != null;
+
+    const row = document.createElement('div');
+    row.className = `urow urow--${lvl}` + (u.stale ? ' urow--stale' : '');
+    row.style.setProperty('--agent-color', a.color || 'rgba(255,255,255,0.3)');
+    row.style.setProperty('--pct', (hasPct ? u.usedPct : 0));
+    // tooltip completo (o .urow é display:contents/sem caixa → vai no .name).
+    const tipTxt = [nameTxt, hasPct ? u.usedPct + '%' : null,
+      reset ? 'reset ' + reset : null, u.stale ? 'sem atualizar' : null, u.extra, u.error].filter(Boolean).join(' · ');
+
+    // ícone: botão clicável (lança o agente) se for um launcher; span decorativo senão.
+    let icon;
+    if (a.mark && launchable.has(u.agent)) {
+      icon = document.createElement('button');
+      icon.className = 'urow__icon';
+      icon.setAttribute('data-tip', '+ ' + a.label);
+      icon.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.launchAgent({ agent: u.agent }); });
+    } else {
+      icon = document.createElement('span');
+      icon.className = 'urow__icon urow__icon--static';
+    }
+    if (a.mark) icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + a.mark + '</svg>';
+
+    const name = document.createElement('span'); name.className = 'urow__name'; name.textContent = nameTxt;
+    name.setAttribute('data-tip', tipTxt);
+
+    // leitura: número grande (cor da faixa) + sinal % pequeno; "—" quando sem dado.
+    const read = document.createElement('span'); read.className = 'urow__read';
+    if (hasPct) {
+      const num = document.createElement('b'); num.className = 'urow__num'; num.textContent = u.usedPct;
+      const sign = document.createElement('span'); sign.className = 'urow__sign'; sign.textContent = '%';
+      read.append(num, sign);
+    } else {
+      const dash = document.createElement('b'); dash.className = 'urow__num urow__num--empty'; dash.textContent = u.error ? '⚠' : '—';
+      read.append(dash);
+    }
+
+    // medidor: trilho (canaleta) + preenchimento (largura via --pct) com cap de brilho.
+    const meter = document.createElement('span'); meter.className = 'urow__meter';
+    const fill = document.createElement('i'); fill.className = 'urow__fill'; meter.append(fill);
+
+    // reset: coluna SEMPRE presente (mantém o espaço igual mesmo vazia).
+    const rst = document.createElement('span'); rst.className = 'urow__reset';
+    rst.textContent = reset ? reset : '';
+
+    row.append(icon, name, read, meter, rst);
+    return row;
+  });
+  $usage.replaceChildren(...rows, footerToggleBtn());
+  $usage.hidden = false;
+}
+
+// Botão que alterna o RODAPÉ (uso ⇄ launcher), fixado no canto do rodapé (não
+// mais no header — o header agora hospeda o toggle da LISTA). Posicionado
+// absoluto no canto direito da barra ativa. Persiste em settings.showUsage.
+function footerToggleBtn() {
+  const b = document.createElement('button');
+  b.className = 'footer-toggle';
+  b.setAttribute('data-tip', T('tooltip_toggle_footer'));
+  // ícone: quando mostrando uso → ícone de "launcher/grade"; senão → "barras".
+  b.innerHTML = footerShowsUsage()
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="16" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/></svg>';
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    persistUI({ showUsage: !footerShowsUsage() });
+    applyFooterMode();
+  });
+  return b;
+}
+
 function renderLauncher() {
   const $bar = document.getElementById('launcher');
   if (!$bar) return;
@@ -283,16 +495,34 @@ function renderLauncher() {
     const btn = document.createElement('button');
     btn.className = 'launcher-btn';
     btn.style.setProperty('--agent-color', a.color || 'rgba(255,255,255,0.10)');
-    btn.title = '+ ' + a.label;
+    btn.setAttribute('data-tip', '+ ' + a.label);
     // Ícone + label: o label desliza (max-width) no hover, formando uma pílula
     // "✦ Claude" animada. Sem hover, só o ícone (compacto, 26px).
     btn.innerHTML = '<span class="launcher-btn__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + a.mark + '</svg></span><span class="launcher-btn__label">' + a.label + '</span>';
     btn.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.launchAgent({ agent: l.id }); });
     $bar.append(btn);
   }
-  // Rodapé permanece visível sempre que há launchers — inclusive recolhido
-  // (estado "só header + rodapé"). A altura da janela acompanha no setExpanded.
-  $bar.hidden = launchers.length === 0;
+  $bar.append(footerToggleBtn());          // toggle uso⇄launcher no canto do rodapé
+  // Launcher só aparece quando o modo do rodapé NÃO é uso e há launchers.
+  $bar.hidden = footerShowsUsage() || launchers.length === 0;
+}
+
+// Versão + update no HEADER (à esquerda da engrenagem). Sem update: texto
+// discreto "vX.Y.Z". Com update: vira botão verde "↑ vNOVA" que abre a release.
+function renderVersion() {
+  if (!$ver) return;
+  if (!appVersion && !updateInfo) { $ver.hidden = true; return; }
+  const hasUpdate = !!(updateInfo && updateInfo.hasUpdate && updateInfo.url);
+  const method = updateInfo ? updateInfo.method : '';
+  $ver.hidden = false;
+  $ver.classList.toggle('has-update', hasUpdate);
+  if (hasUpdate) {
+    $ver.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>v' + updateInfo.latest;
+    $ver.setAttribute('data-tip', T('update_available', { v: updateInfo.latest, method }));
+  } else {
+    $ver.textContent = 'v' + (appVersion || '?');
+    if (method) $ver.setAttribute('data-tip', T('installed_via', { method })); else $ver.removeAttribute('data-tip');
+  }
 }
 
 function autosize() {
@@ -302,7 +532,9 @@ function autosize() {
   // topo do list, então essa posição é a natural — independe da altura flex
   // da janela (o que evita o loop de feedback que a fazia crescer sozinha).
   const $bar = document.getElementById('launcher');
+  const $u = document.getElementById('usage');
   const launcherH = ($bar && !$bar.hidden) ? $bar.offsetHeight : 0;
+  const usageH = ($u && !$u.hidden) ? $u.offsetHeight : 0;
   let bottom;
   if (sessions.length) {
     const last = $list.lastElementChild;
@@ -310,13 +542,36 @@ function autosize() {
   } else {
     bottom = $empty.offsetTop + $empty.offsetHeight + 8;
   }
-  window.trafficLight.autoHeight(bottom + launcherH + 4);
+  window.trafficLight.autoHeight(bottom + launcherH + usageH + 4);
+}
+
+// Persiste o estado de UI (footer + recolhido) sem exibir em Preferências —
+// grava as chaves atuais no settings.json via save-settings. Chamado quando o
+// usuário alterna o footer ou recolhe/expande a janela.
+function persistUI(patch) {
+  settingsCfg = { ...(settingsCfg || {}), ...patch };
+  window.trafficLight.saveSettings(settingsCfg); // main reemite settings-changed
 }
 
 // Eventos de UI
-$expand.addEventListener('click', () => setExpanded(!expanded));
+$expand.addEventListener('click', () => {
+  setExpanded(!expanded);
+  persistUI({ collapsed: !expanded });           // lembra recolhido/expandido
+});
 $quit.addEventListener('click', () => window.trafficLight.toggleVisibility()); // × esconde (tray)
 document.getElementById('settingsBtn').addEventListener('click', () => window.trafficLight.openSettings());
+
+// Toggle do rodapé: alterna uso/launcher e persiste em settings.showUsage.
+if ($toggleFooter) $toggleFooter.addEventListener('click', () => {
+  const next = !footerShowsUsage();
+  persistUI({ showUsage: next });
+  applyFooterMode();
+});
+
+// Botão de versão: só age quando há update (abre a release no navegador).
+if ($ver) $ver.addEventListener('click', () => {
+  if (updateInfo && updateInfo.hasUpdate && updateInfo.url) window.trafficLight.openExternal(updateInfo.url);
+});
 
 // Gripper de resize (largura).
 const $grip = document.getElementById('grip');
@@ -336,11 +591,24 @@ window.addEventListener('mouseup', () => { resizing = null; });
 window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
 window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
 window.trafficLight.requestSessions();
+window.trafficLight.onUsage((u) => { usageEntries = Array.isArray(u) ? u : []; applyFooterMode(); });
+window.trafficLight.requestUsage();
+window.trafficLight.getVersion().then((v) => { appVersion = v || ''; renderVersion(); });
+window.trafficLight.getUpdate().then((i) => { updateInfo = i || null; renderVersion(); });
 window.trafficLight.getAliases().then((a) => { aliases = a || {}; render(); });
 window.trafficLight.getLaunchers().then((l) => { launchers = l || []; render(); });
-window.trafficLight.getSettings().then((c) => { settingsCfg = c; render(); });
+window.trafficLight.getSettings().then((c) => {
+  settingsCfg = c;
+  // Restaura o estado de UI salvo: recolhido/expandido (default expandido).
+  setExpanded(!(c && c.collapsed));
+  applyAppearance();                       // transparência + modo compacto
+  applyFooterMode();
+  render();
+});
 window.trafficLight.onSettingsChanged((c) => {
   settingsCfg = c;
+  applyAppearance();                       // opacity/compact podem ter mudado
+  applyFooterMode();                       // footer pode ter mudado (showUsage)
   render();
   // o idioma pode ter mudado nas Preferências — re-resolve e re-aplica estáticos
   window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
@@ -349,5 +617,16 @@ window.trafficLight.onSettingsChanged((c) => {
 // Re-renderiza a cada 2s (escalada idle + reavaliação do alerta).
 setInterval(render, 2000);
 
+// Tooltips customizados: um só listener no overlay (delegação) cobre header,
+// linhas de uso, launcher — inclusive elementos criados depois. setupTooltips
+// é global (src/tooltip.js). Guardado por typeof pra não quebrar em teste.
+if (typeof setupTooltips === 'function') {
+  const $ov = document.getElementById('overlay');
+  const $tip = document.getElementById('tooltip');
+  if ($ov && $tip) setupTooltips($ov, $tip, { delay: 380 });
+}
+
+// Estado inicial antes do getSettings resolver: expandido (o settings salvo
+// sobrescreve assim que chega). Sem isso o 1º paint fica sem dimensão definida.
 setExpanded(true);
 render();

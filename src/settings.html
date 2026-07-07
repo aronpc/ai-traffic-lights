@@ -33,6 +33,24 @@
     .shortcut { cursor: pointer; font-variant-numeric: tabular-nums; }
     .shortcut.capturing { color: var(--dim); font-style: italic; }
     .hint { color: var(--dim); font-size: 11px; margin-top: 5px; }
+    /* slider de transparência: trilho + valor tabular à direita */
+    .range-row { display: flex; align-items: center; gap: 12px; }
+    .range-val {
+      color: var(--ink); font-size: 12.5px; font-variant-numeric: tabular-nums;
+      min-width: 38px; text-align: right;
+    }
+    input[type=range] {
+      flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+      background: var(--panel2); border-radius: 3px; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--accent); border: 2px solid var(--bg); cursor: pointer;
+      transition: transform 0.1s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+    input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63,185,107,0.3); }
     .row { display: flex; align-items: center; gap: 10px; }
     .row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
     .row label { cursor: pointer; }
@@ -96,6 +114,23 @@
         <option value="pt" data-i18n="lang_pt">Português</option>
       </select>
     </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title" data-i18n="sec_appearance">Aparência</div>
+    <div class="field">
+      <label class="top" for="opacity" data-i18n="opacity_label">Transparência da janela</label>
+      <div class="range-row">
+        <input type="range" id="opacity" min="60" max="100" step="1">
+        <span class="range-val" id="opacityVal">97%</span>
+      </div>
+      <div class="hint" data-i18n="opacity_hint">Quão opaco é o painel. Mais baixo = mais transparente.</div>
+    </div>
+    <div class="row">
+      <input type="checkbox" id="compact">
+      <label for="compact" data-i18n="compact_label">Lista compacta</label>
+    </div>
+    <div class="hint" data-i18n="compact_hint">Linhas mais densas: esconde o modelo/ferramenta, só nome + luz.</div>
   </div>
 
   <div class="section">

@@ -6,7 +6,8 @@
   --red:   #e0563f;
   --ink:   #f4f6f9;
   --ink-dim: #a8b2be;
-  --bg: rgba(18, 21, 28, 0.97);
+  --bg-alpha: 0.97;                       /* opacidade do painel (Preferências) */
+  --bg: rgba(18, 21, 28, var(--bg-alpha));
   --border: rgba(255, 255, 255, 0.10);
   --border-bright: rgba(255, 255, 255, 0.18);
   --row-hover: rgba(255, 255, 255, 0.07);
@@ -110,6 +111,132 @@ html, body {
 #expandBtn svg { transition: transform 0.15s ease; }
 #expandBtn.is-expanded svg { transform: rotate(180deg); }
 
+/* ---------- consumo/reset: painel de medidores no rodapé ----------
+   O grid vive no CONTÊINER com colunas compartilhadas; cada .urow é
+   display:contents, então TODAS as linhas alinham nas MESMAS colunas —
+   medidores idênticos e coluna de reset com espaço igual, independente do
+   texto. Colunas: [ícone] [nome flex] [leitura %] [medidor fixo] [reset fixo]. */
+.usage-bar[hidden] { display: none; }
+.usage-bar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 38px 64px 46px;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 3px;
+  padding: 7px 13px 8px;
+  border-top: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 40%),
+    rgba(0, 0, 0, 0.22);
+  font-size: 11.5px;
+  line-height: 1;
+  --meter-h: 6px;
+}
+.urow { display: contents; }
+
+/* ícone do agente: clicável (lança) quando há launcher, decorativo senão. */
+.urow__icon {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  border-radius: 6px;
+  border: none; background: transparent;
+  color: var(--agent-color, var(--ink-dim));
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
+}
+.urow__icon:hover { background: color-mix(in srgb, var(--agent-color) 22%, transparent); transform: translateY(-1px); }
+.urow__icon--static { cursor: default; }
+.urow__icon--static:hover { background: transparent; transform: none; }
+.urow__icon svg { width: 15px; height: 15px; display: block; }
+
+.urow__name {
+  min-width: 0;
+  color: var(--ink); font-weight: 600; letter-spacing: 0.1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* leitura: número grande na cor da faixa + sinal % pequeno e apagado */
+.urow__read {
+  display: inline-flex; align-items: baseline; justify-content: flex-end;
+  gap: 1px; white-space: nowrap;
+}
+.urow__num {
+  font-variant-numeric: tabular-nums; font-weight: 700;
+  font-size: 13px; color: var(--ink);
+}
+.urow__num--empty { color: var(--ink-dim); font-weight: 600; }
+.urow__sign { font-size: 9px; font-weight: 700; color: var(--ink-dim); }
+
+/* medidor: canaleta (inset) + preenchimento com gradiente e cap de brilho na
+   ponta. Largura via --pct (0..100). Cor herda da faixa (var --band). */
+.urow__meter {
+  position: relative;
+  height: var(--meter-h);
+  border-radius: calc(var(--meter-h) / 2);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 1.5px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.03);
+  overflow: hidden;
+}
+.urow__fill {
+  position: absolute; inset: 0 auto 0 0;
+  width: calc(var(--pct, 0) * 1%);
+  min-width: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--band, var(--ink-dim)) 55%, transparent),
+      var(--band, var(--ink-dim)));
+  box-shadow:
+    0 0 6px color-mix(in srgb, var(--band, var(--ink-dim)) 60%, transparent),
+    inset 0 1px 0 rgba(255,255,255,0.25);
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s;
+}
+/* cap de brilho na ponta do preenchimento (efeito "medidor aceso") */
+.urow__fill::after {
+  content: ''; position: absolute; top: 0; bottom: 0; right: 0;
+  width: 3px; border-radius: inherit;
+  background: color-mix(in srgb, var(--band, #fff) 85%, #fff);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--band, #fff) 90%, transparent);
+}
+.urow--none .urow__fill::after { display: none; } /* sem dado: sem cap */
+
+/* reset: coluna sempre presente (espaço igual). ↻ some quando vazio. */
+.urow__reset {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim); font-size: 10px; letter-spacing: 0.2px;
+  text-align: right; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.urow__reset:not(:empty)::before { content: '↻ '; opacity: 0.7; }
+
+/* faixa de % → define --band (cor do medidor) + tinge o número */
+.urow--none { --band: var(--ink-dim); }
+.urow--green { --band: var(--green); }
+.urow--amber { --band: var(--amber); }
+.urow--red   { --band: var(--red); }
+.urow--green .urow__num { color: color-mix(in srgb, var(--green) 88%, var(--ink)); }
+.urow--amber .urow__num { color: color-mix(in srgb, var(--amber) 92%, var(--ink)); }
+.urow--red   .urow__num { color: color-mix(in srgb, var(--red)   92%, var(--ink)); }
+/* stale: valor antigo (coletor sem atualizar). Cinza + esmaecido — o número
+   continua legível, só sinaliza "isto pode estar velho". Sem pulso. */
+.urow--stale { --band: var(--ink-dim); }
+.urow--stale .urow__icon,
+.urow--stale .urow__name,
+.urow--stale .urow__num,
+.urow--stale .urow__reset { opacity: 0.5; }
+.urow--stale .urow__num { color: var(--ink-dim); }
+.urow--stale .urow__fill { filter: saturate(0.3); opacity: 0.6; }
+.urow--stale .urow__fill::after { animation: none; }
+/* red em uso crítico: cap pulsa de leve (respeitando reduced-motion) */
+.urow--red .urow__fill::after { animation: meterPulse 1.6s ease-in-out infinite; }
+@keyframes meterPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .urow__fill { transition: none; }
+  .urow--red .urow__fill::after { animation: none; }
+}
+
 /* ---------- LEDs ---------- */
 .led {
   width: 12px; height: 12px; border-radius: 50%;
@@ -174,10 +301,38 @@ html, body {
 .launcher-btn:hover .launcher-btn__label { max-width: 80px; opacity: 1; margin-left: 5px; }
 .launcher-btn:active { transform: translateY(0); }
 
+/* versão / update no header (à esquerda da engrenagem) */
+.btn-ver[hidden] { display: none; }
+.btn-ver {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 22px; padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; cursor: default;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.btn-ver svg { width: 11px; height: 11px; }
+/* com atualização: vira botão verde clicável */
+.btn-ver.has-update {
+  color: var(--green);
+  border-color: rgba(63,185,107,0.5);
+  background: rgba(63,185,107,0.14);
+  font-weight: 700; cursor: pointer;
+}
+.btn-ver.has-update:hover { background: rgba(63,185,107,0.26); }
+/* estado do toggle de rodapé: leve destaque quando mostrando USO */
+#toggleFooterBtn.is-usage { color: var(--ink); }
+
+/* Colunas fixas p/ alinhar entre linhas: [led] [motivo] [LLM] [nome…] [sino].
+   O nome (main) é a única coluna elástica; as demais têm largura fixa. */
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   padding: 11px 12px;
   border-radius: 9px;
   cursor: pointer;
@@ -185,7 +340,14 @@ html, body {
 }
 .row + .row { margin-top: 3px; } /* respiro entre linhas */
 .row:hover { background: var(--row-hover); }
-.row .led { width: 11px; height: 11px; }
+.row .led { width: 11px; height: 11px; flex: none; }
+
+/* coluna do motivo (🔑 🛠 ✓ ⚠ ⏰) — largura fixa p/ alinhar */
+.row__reason { flex: none; width: 16px; text-align: center; font-size: 12px; }
+/* coluna do ícone da LLM/CLI — SVG na cor do agente */
+.row__llm { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--agent-color, var(--ink-dim)); }
+.row__llm svg { width: 15px; height: 15px; display: block; }
+.row__llm:empty { display: none; }
 
 .row__main { min-width: 0; flex: 1; }
 .row__label {
@@ -206,7 +368,28 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
-.row__icon { font-size: 11.5px; margin-right: 6px; }
+.row__sub-inline { display: none; } /* só no compacto */
+
+/* coluna do sino: SEMPRE reservada (largura fixa) — aparecer/sumir o sino não
+   muda mais a largura/altura da linha. */
+.row__snooze-col { flex: none; width: 24px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ---------- modo compacto (Preferências) ----------
+   Uma linha só por sessão: [led] [motivo] [LLM] [nome] — [ferramenta · tempo].
+   Padding apertado, o texto (sub) migra pra MESMA linha do nome, alinhado à
+   direita. Mais sessões visíveis no mesmo espaço. */
+.overlay.compact .row { padding: 6px 12px; gap: 8px; }
+.overlay.compact .row + .row { margin-top: 1px; }
+.overlay.compact .row__main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.overlay.compact .row__label { font-size: 12.5px; flex: none; max-width: 55%; }
+.overlay.compact .row__sub { display: none; }              /* a de 2 linhas some */
+.overlay.compact .row__sub-inline {
+  display: block; flex: 1; min-width: 0; text-align: right;
+  font-size: 11px; line-height: 1.3; color: var(--ink-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.overlay.compact .list { padding: 5px 10px 6px; }
 
 /* rename in-place */
 .row-input {
@@ -281,3 +464,61 @@ html, body {
   opacity: 0.4;
 }
 .grip:hover::after { opacity: 0.9; }
+
+/* ---------- tooltips customizados (bolha animada) ----------
+   Substituem os `title` nativos. Um só #tooltip, posicionado por JS dentro da
+   janela (overflow:hidden do overlay). Fade + slide + scale ao surgir. */
+.tt {
+  position: absolute;
+  left: 0; top: 0;
+  z-index: 999;
+  width: max-content;                 /* justo ao texto… */
+  max-width: 200px;                   /* …até o teto, aí quebra em 2 linhas */
+  padding: 5px 9px;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(38, 43, 54, 0.98), rgba(24, 28, 36, 0.98));
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+  color: var(--ink);
+  font-size: 11px; font-weight: 600; line-height: 1.35;
+  letter-spacing: 0.2px;
+  white-space: normal;                /* quebra em vez de cortar na borda */
+  text-align: center;
+  pointer-events: none;               /* nunca rouba o hover do alvo */
+  opacity: 0;
+  transform: translateY(-2px) scale(0.96);
+  transform-origin: top center;
+  transition: opacity 0.14s ease, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+/* medindo: renderiza (pra pegar offsetWidth/Height) mas invisível */
+.tt.is-measuring { opacity: 0; transform: none; transition: none; }
+/* visível */
+.tt.is-shown { opacity: 1; transform: translateY(0) scale(1); }
+/* posicionado ACIMA do alvo: origem embaixo + slide invertido */
+.tt[data-place='top'] { transform-origin: bottom center; transform: translateY(2px) scale(0.96); }
+.tt[data-place='top'].is-shown { transform: translateY(0) scale(1); }
+
+/* seta: quadradinho rotacionado, posição horizontal via --arrow (JS seta left) */
+.tt__arrow {
+  position: absolute;
+  width: 8px; height: 8px;
+  margin-left: -4px;
+  background: linear-gradient(135deg, rgba(38,43,54,0.98), rgba(24,28,36,0.98));
+  transform: rotate(45deg);
+}
+.tt[data-place='bottom'] .tt__arrow {
+  top: -4px;
+  border-left: 1px solid var(--border-bright);
+  border-top: 1px solid var(--border-bright);
+}
+.tt[data-place='top'] .tt__arrow {
+  bottom: -4px;
+  border-right: 1px solid var(--border-bright);
+  border-bottom: 1px solid var(--border-bright);
+}
+.tt__label { position: relative; }    /* acima da seta */
+
+@media (prefers-reduced-motion: reduce) {
+  .tt { transition: opacity 0.1s linear; transform: none !important; }
+}

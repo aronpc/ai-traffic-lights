@@ -15,6 +15,7 @@ const sessions = require('./src/sessions');
 const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
+const usage = require('./src/usage');
 const { spawn } = require('child_process');
 const { desktopEscape } = require('./src/validate');
 
@@ -46,6 +47,7 @@ const STATE_DIR = path.join(BASE_DIR, 'state');
 const BOUNDS_FILE = path.join(BASE_DIR, 'window.json'); // {x, y, width}
 const ALIASES_FILE = path.join(BASE_DIR, 'aliases.json'); // {cwd: apelido}
 const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec, escalateIdle, shortcut}
+const USAGE_FILE = path.join(BASE_DIR, 'usage.json'); // último uso conhecido (sobrevive a reinício; mostrado stale até refrescar)
 const SETTINGS_BOUNDS_FILE = path.join(BASE_DIR, 'settings-window.json'); // {x, y, width, height}
 const AUTOSTART_FILE = path.join(process.env.HOME, '.config/autostart/ai-traffic-lights.desktop');
 
@@ -419,9 +421,21 @@ function setAutostart(on) {
   } catch {}
 }
 
+// Envio seguro pro renderer. A janela pode existir mas o RENDER FRAME já ter
+// sido descartado (crash do renderer, reload, devtools) — aí webContents.send
+// lança "Render frame was disposed before WebFrameMain could be accessed" a
+// CADA tick dos timers (5s/60s), spammando o stderr sem parar. Este guard checa
+// webContents vivo/não-crashed e engole qualquer erro residual de corrida.
+function sendToRenderer(channel, payload) {
+  if (!win || win.isDestroyed()) return false;
+  const wc = win.webContents;
+  if (!wc || wc.isDestroyed() || wc.isCrashed()) return false;
+  try { wc.send(channel, payload); return true; }
+  catch { return false; }
+}
+
 function sendSessions() {
-  if (!win || win.isDestroyed()) return;
-  win.webContents.send('sessions', readSessions());
+  sendToRenderer('sessions', readSessions());
 }
 
 // Limpeza: remove state files cujo PID morreu (sem SessionEnd — ex.: crash/kill
@@ -758,7 +772,7 @@ ipcMain.on('save-settings', (_e, cfg) => {
   applyShortcut();                                    // re-registra o atalho novo
   applyLang();                                        // idioma pode ter mudado
   if (tray) tray.setContextMenu(buildTrayMenu());     // labels do tray no idioma novo
-  if (win && !win.isDestroyed()) win.webContents.send('settings-changed', settingsCfg);
+  sendToRenderer('settings-changed', settingsCfg);
 });
 ipcMain.on('open-settings', () => createSettingsWindow());
 
@@ -802,7 +816,163 @@ app.whenReady().then(() => {
     .on('all', () => sendSessions());
   reapDead();
   setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
+  // Consumo/reset dos agentes: GLM (rede, cache 30s) + Claude (arquivo local).
+  // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
+  collectAndSendUsage();
+  setInterval(collectAndSendUsage, 60 * 1000);
 });
 
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => globalShortcut.unregisterAll());
+
+// ---- consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API) ----
+// Coletor async (GLM faz rede → nunca bloqueia o ciclo de 5s das sessões).
+// Em caso de erro, mantém o último usage válido (não pisca a UI a cada falha).
+//
+// Persistência: o último uso conhecido é gravado em usage.json e recarregado no
+// boot — sobrevive a reinício. As linhas voltam com o fetchedAt antigo, então o
+// mergeUsage já as marca stale (cinza) na hora; ou refrescam (viram cor viva) ou
+// somem após USAGE_DROP_MS. Nunca mostra número velho como se fosse atual.
+// Seguro em disco: o objeto de uso é só {plan,%,reset,...} — NÃO contém tokens.
+function loadUsage() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8'));
+    if (!Array.isArray(arr)) return [];
+    // descarta o que já passou do teto de drop (não ressuscita lixo antigo).
+    const now = Date.now();
+    return arr.filter((e) => e && e.id && (now - (e.fetchedAt || 0)) < usage.USAGE_DROP_MS)
+      .map((e) => ({ ...e, stale: true })); // entra sempre como stale até refrescar
+  } catch { return []; }
+}
+let usageSaveTimer = null;
+function saveUsage() {
+  clearTimeout(usageSaveTimer);
+  usageSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(USAGE_FILE, JSON.stringify(lastUsage)); } catch { /* ignore */ }
+  }, 300);
+}
+let lastUsage = loadUsage();
+
+// Credenciais do GLM vivem no AMBIENTE DE CADA TERMINAL (o usuário tem terminais
+// Claude/Anthropic e terminais Claude/GLM — z.ai), possivelmente com CONTAS
+// z.ai DIFERENTES em terminais diferentes. Não estão em dotfile nem globais.
+// Estratégia: varrer TODAS as sessões vivas cujo modelo é GLM e ler
+// ANTHROPIC_BASE_URL/AUTH_TOKEN do /proc/<pid>/environ de cada uma. Dedup por
+// token (mesma conta em N terminais → 1 bloco). Cada credencial distinta vira
+// uma entrada; collectUsage busca o consumo de cada uma com a credencial dela.
+// Zero token em disco. Nenhuma sessão GLM → lista vazia → faixa só com Claude.
+function crypto_() { return require('crypto'); }
+function glmCredsFromSessions() {
+  let sessions = [];
+  try { sessions = readSessions(); } catch { return []; }
+  const byToken = new Map(); // token → { env, label, suffix }
+  for (const s of sessions) {
+    if (!s.pid || !/^glm/i.test(s.model || '')) continue;
+    let env;
+    try {
+      const raw = fs.readFileSync(`/proc/${s.pid}/environ`, 'utf8');
+      env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+    } catch { continue; } // processo morreu entre readSessions e a leitura
+    if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
+    const token = env.ANTHROPIC_AUTH_TOKEN;
+    if (byToken.has(token)) continue;      // mesma conta já coletada
+    let suffix;
+    try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
+    catch { suffix = String(byToken.size + 1); }
+    // rótulo da conta = host do endpoint (z.ai / bigmodel) — distingue provedores
+    let label = '';
+    try { label = new URL(env.ANTHROPIC_BASE_URL).host.replace(/^api\./, ''); } catch { /* base inválida */ }
+    byToken.set(token, { env, label, suffix });
+  }
+  return [...byToken.values()];
+}
+
+// Codex é passivo: o uso vive no rollout da sessão, associado por cwd. As
+// sessões Codex vivas são detectadas por /proc (sem state file próprio) e o
+// cwd é lido de /proc/<pid>/cwd (symlink legível pelo dono — ao contrário do
+// cwd do hook, que o ptrace_scope bloqueia). Dedup por cwd.
+function codexCwdsFromSessions() {
+  let sessions = [];
+  try { sessions = readSessions(); } catch { return []; }
+  const cwds = new Set();
+  for (const s of sessions) {
+    if (!s.pid || agentOf(s) !== 'codex') continue;
+    try {
+      const cwd = fs.readlinkSync(`/proc/${s.pid}/cwd`);
+      if (cwd) cwds.add(cwd);
+    } catch { /* processo morreu ou sem permissão */ }
+  }
+  return [...cwds];
+}
+
+async function collectAndSendUsage() {
+  try {
+    let glmCreds = glmCredsFromSessions();
+    // Fallback: o próprio app foi lançado de um terminal GLM (vars já no env).
+    if (!glmCreds.length && process.env.ANTHROPIC_BASE_URL && process.env.ANTHROPIC_AUTH_TOKEN) {
+      glmCreds = [{ env: process.env }];
+    }
+    const codexCwds = codexCwdsFromSessions();
+    const entries = await usage.collectUsage({ glmCreds, codexCwds });
+    // Funde com o último estado: mantém o valor bom de cada linha se a coleta
+    // atual falhou pra ela (evita zerar/sumir); esmaece pra cinza (stale) após
+    // alguns min sem atualização em vez de piscar. Ver usage.mergeUsage.
+    if (Array.isArray(entries)) { lastUsage = usage.mergeUsage(lastUsage, entries); saveUsage(); }
+  } catch { /* collectUsage já engole erros internamente; defeção dupla */ }
+  sendToRenderer('usage', lastUsage);
+}
+ipcMain.on('request-usage', () => {
+  sendToRenderer('usage', lastUsage);
+});
+
+// ---- update checker (versão + release mais nova do GitHub) ----
+// Detecta COMO o app foi instalado pra oferecer o caminho de atualização certo.
+//   appimage → APPIMAGE env (Electron seta quando rodado de .AppImage)
+//   deb      → instalado em /opt (electronic-builder deb vira /opt/AI Traffic Lights)
+//   npm      → rodando de node_modules (npm install / dev)
+//   source   → clone do repo (dev direto)
+function detectInstallMethod() {
+  if (process.env.APPIMAGE) return 'appimage';
+  const exe = process.execPath || '';
+  const appPath = app.getAppPath();
+  if (/\/opt\/AI Traffic Lights/.test(exe) || appPath.includes('/opt/')) return 'deb';
+  if (appPath.includes('node_modules')) return 'npm';
+  return 'source';
+}
+// Compara versões semver ('0.3.2' vs '0.4.0'); >0 se a>b, 0 se iguais, <0 se a<b.
+function semverCmp(a, b) {
+  const pa = String(a || '').replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || '').replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  return 0;
+}
+let _updateCache = null; // { checkedAt, info } — evita spammar a API do GitHub
+async function checkUpdate() {
+  const now = Date.now();
+  if (_updateCache && now - _updateCache.checkedAt < 30 * 60 * 1000) return _updateCache.info; // 30min
+  const info = { current: APP_VERSION, method: detectInstallMethod(), latest: null, hasUpdate: false, url: null, error: null };
+  try {
+    const https = require('https');
+    const body = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'api.github.com',
+        path: '/repos/aronpc/ai-traffic-lights/releases/latest',
+        method: 'GET',
+        headers: { 'User-Agent': 'ai-traffic-lights', Accept: 'application/vnd.github+json' },
+        timeout: 5000,
+      }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(d)); });
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.end();
+    });
+    const j = JSON.parse(body);
+    info.latest = (j.tag_name || '').replace(/^v/, '');
+    info.url = j.html_url || (REPO_URL + '/releases/latest');
+    info.hasUpdate = info.latest ? semverCmp(info.latest, APP_VERSION) > 0 : false;
+  } catch (e) {
+    info.error = String(e.message || e); // offline/timeout → sem update, sem quebrar
+  }
+  _updateCache = { checkedAt: now, info };
+  return info;
+}
+ipcMain.handle('get-update', () => checkUpdate());

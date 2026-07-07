@@ -10,6 +10,10 @@ const DEFAULTS = Object.freeze({
   terminal: 'auto',             // Quick Launcher: 'auto' (1º presente) | 'tilix' | 'gnome-terminal' | 'ghostty' | 'custom'
   terminalCmd: '',              // comando customizado p/ 'custom' (ex.: 'kitty --directory {cwd} -e {cmd}')
   launchers: {},                // override de path por agente: { claude: '/usr/local/bin/claude' }
+  showUsage: true,              // footer: true = barras de uso | false = ícones do launcher
+  collapsed: false,             // estado da janela: recolhido (só header+rodapé) | expandido
+  opacity: 0.97,               // transparência do painel (0.6–1.0; alpha do fundo do overlay)
+  compact: false,              // lista de sessões densa (esconde a sub-linha, aperta o padding)
 });
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).
@@ -40,6 +44,14 @@ function mergeWithDefaults(raw) {
       out.idleThresholdSec = Math.floor(raw.idleThresholdSec);
     }
     if (typeof raw.escalateIdle === 'boolean') out.escalateIdle = raw.escalateIdle;
+    if (typeof raw.showUsage === 'boolean') out.showUsage = raw.showUsage;
+    if (typeof raw.collapsed === 'boolean') out.collapsed = raw.collapsed;
+    // opacity: número em [0.6, 1.0] (abaixo de 0.6 fica ilegível). Fora da faixa
+    // ou não-número → clampa/ignora, nunca vira undefined.
+    if (typeof raw.opacity === 'number' && Number.isFinite(raw.opacity)) {
+      out.opacity = Math.max(0.6, Math.min(1.0, raw.opacity));
+    }
+    if (typeof raw.compact === 'boolean') out.compact = raw.compact;
     if (isValidShortcut(raw.shortcut)) out.shortcut = raw.shortcut;
     if (raw.lang === 'auto' || raw.lang === 'en' || raw.lang === 'pt') out.lang = raw.lang;
     const TERMINAL_OK = new Set(['auto', 'tilix', 'gnome-terminal', 'ghostty', 'custom']);

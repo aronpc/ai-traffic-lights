@@ -36,6 +36,10 @@ const AGENTS = {
   opencode: { label: 'OpenCode', comm: ['opencode'], bin: 'opencode', color: '#7C3AED',
               mark: '<polyline points="10 7 5 12 10 17"/><polyline points="14 7 19 12 14 17"/>',
               adapter: 'adapters/opencode/ai-traffic-lights.js' },
+  // GLM não é um CLI monitorado (é o BACKEND do Claude Code via ANTHROPIC_BASE_URL),
+  // mas aparece na faixa de uso. Entrada só pra UI (label/cor/ícone) — sem comm/bin.
+  glm:      { label: 'GLM', comm: [], bin: null, color: '#6E56CF',
+              mark: '<path d="M13 2 L4 14 L11 14 L9 22 L20 9 L13 9 Z"/>' },
 };
 
 const DEFAULT_AGENT = 'claude';

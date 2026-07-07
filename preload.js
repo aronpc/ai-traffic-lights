@@ -4,6 +4,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('trafficLight', {
   onSessions: (cb) => ipcRenderer.on('sessions', (_e, sessions) => cb(sessions)),
   requestSessions: () => ipcRenderer.send('request-sessions'),
+  // Consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API). Push do
+  // main a cada 60s + carga sob demanda. entries: [{agent,title,usedPct,resetAt,...}]
+  onUsage: (cb) => ipcRenderer.on('usage', (_e, entries) => cb(entries)),
+  requestUsage: () => ipcRenderer.send('request-usage'),
   setExpanded: (expanded, h) => ipcRenderer.send('set-expanded', { expanded, h }),
   autoHeight: (h) => ipcRenderer.send('auto-height', h),
   resizeStart: () => ipcRenderer.send('resize-start'),
@@ -22,6 +26,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   getLang: () => ipcRenderer.invoke('get-lang'),              // idioma da UI (en|pt)
   getVersion: () => ipcRenderer.invoke('get-version'),        // rodapé das Preferências
   getRepoUrl: () => ipcRenderer.invoke('get-repo-url'),       // link do repo no rodapé
+  getUpdate: () => ipcRenderer.invoke('get-update'),           // versão + release mais nova (GitHub)
   openExternal: (url) => ipcRenderer.send('open-external', url), // abre no navegador (http/s só)
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),

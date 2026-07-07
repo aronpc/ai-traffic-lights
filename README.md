@@ -45,6 +45,11 @@ terminal — **window _and_ tab**.
   OpenCode) from the overlay empty-state or the tray — opens the terminal in
   the last project and the session lights up automatically
 - ✏️ Double-click to rename a session (aliases persist per project)
+- 📊 **Usage & reset strip**: a pill per agent under the header shows plan
+  usage and next reset — Claude (tier + reset date + free passes) and GLM
+  Coding Plan (5h token % + monthly %). Pills go amber ≥70%, red ≥90%.
+  Codex/Gemini don't expose usage locally yet (only via runtime headers), so
+  they're omitted rather than guessed
 - ⚙️ **Preferences window** (gear icon): idle threshold, global shortcut,
   autostart, install/remove hooks, show/hide, quit — with the app version and a
   link to the repo in the footer

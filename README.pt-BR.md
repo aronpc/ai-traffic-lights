@@ -44,6 +44,11 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
   OpenCode) pelo empty state do overlay ou pelo tray — abre o terminal no
   último projeto e a sessão acende sozinha
 - ✏️ Duplo-clique renomeia a sessão (apelidos persistem por projeto)
+- 📊 **Faixa de consumo/reset**: uma pílula por agente sob o cabeçalho mostra
+  o uso do plano e o próximo reset — Claude (tier + data de reset + passes) e
+  GLM Coding Plan (% de tokens em 5h + % mensal). Pílulas ficam âmbar ≥70%,
+  vermelhas ≥90%. Codex/Gemini ainda não expõem uso localmente (só via headers
+  em runtime), então são omitidos em vez de chutados
 - ⚙️ **Janela de Preferências** (ícone de engrenagem): threshold de idle,
   atalho global, autostart, instalar/remover hooks, mostrar/ocultar, sair —
   com a versão do app e um link do repo no rodapé

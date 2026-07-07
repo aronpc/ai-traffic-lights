@@ -11,3 +11,4 @@ dist/
 *.tmp
 .DS_Store
 .omo/
+.env.mp.prod
