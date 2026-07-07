@@ -625,3 +625,29 @@ test('readAntigravityUsage: com quota (nenhum QUOTA_EXHAUSTED futuro) → só r�
   assert.equal(r[0].id, 'antigravity-plan');
   assert.equal(r[0].usedPct, null);
 });
+
+// =========================== mergeUsage — dedup por conteúdo (mesma conta) ===========================
+
+test('mergeUsage: linhas idênticas com ids diferentes → colapsa em 1 (mesma conta z.ai)', () => {
+  // mesma conta chega por 2 credenciais (proc + opencode): ids distintos, resto igual.
+  const a = { id: 'glm-tokens:proc', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (z.ai)', usedPct: 12, resetAt: '2026-07-08T02:00:00Z', error: null };
+  const b = { id: 'glm-tokens:oc', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (z.ai)', usedPct: 12, resetAt: '2026-07-08T02:00:00Z', error: null };
+  const out = mergeUsage([], [a, b], NOW);
+  assert.equal(out.length, 1, 'colapsou as 2 idênticas em 1');
+  assert.equal(out[0].usedPct, 12);
+});
+
+test('mergeUsage: conteúdo diferente (reset distinto) → NÃO colapsa (contas reais distintas)', () => {
+  const a = { id: 'glm-tokens:x', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (z.ai)', usedPct: 12, resetAt: '2026-07-08T02:00:00Z', error: null };
+  const b = { id: 'glm-tokens:y', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (bigmodel.cn)', usedPct: 40, resetAt: '2026-07-08T05:00:00Z', error: null };
+  const out = mergeUsage([], [a, b], NOW);
+  assert.equal(out.length, 2, 'contas com dados diferentes ficam separadas');
+});
+
+test('mergeUsage: token inválido (summary sem %) some quando há concreto do mesmo agente', () => {
+  const bad = { id: 'glm', agent: 'glm', title: 'GLM', plan: 'GLM', usedPct: null, error: 'no limits parsed' };
+  const good = { id: 'glm-tokens', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro', usedPct: 7, resetAt: '2026-07-08T02:00:00Z', error: null };
+  const out = mergeUsage([], [bad, good], NOW);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'glm-tokens'); // o summary fantasma sumiu
+});

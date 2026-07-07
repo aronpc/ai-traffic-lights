@@ -710,9 +710,28 @@ function mergeUsage(prev, fresh, now) {
   // falha entre ticks — sem isto, resumo e concreto coexistem na mesma tela.
   const concreteAgents = new Set();
   for (const e of out) if (e && !isSummaryEntry(e) && e.agent) concreteAgents.add(e.agent);
-  return concreteAgents.size
+  let deduped = concreteAgents.size
     ? out.filter((e) => !isSummaryEntry(e) || !concreteAgents.has(e.agent))
     : out;
+
+  // Dedup por CONTEÚDO (mesma conta, tokens diferentes): a mesma conta z.ai pode
+  // chegar por N credenciais (subprocesso no /proc, OpenCode auth.json, terminal)
+  // com ids/sufixos distintos, mas as linhas são IDÊNTICAS (mesmo agente, mesma
+  // janela, mesmo reset). Colapsa por chave semântica — fica com a de valor bom
+  // e fetchedAt mais recente. Resolve o "GLM aparecendo muitas vezes".
+  const byContent = new Map();
+  for (const e of deduped) {
+    if (!e) continue;
+    const key = [e.agent, e.title || '', e.plan || '', e.resetAt || ''].join('|');
+    const prev = byContent.get(key);
+    if (!prev) { byContent.set(key, e); continue; }
+    // escolhe a melhor: valor bom > stale menor > fetchedAt maior.
+    const better = (isGood(e) && !isGood(prev)) ? e
+      : (isGood(prev) && !isGood(e)) ? prev
+      : ((e.fetchedAt || 0) >= (prev.fetchedAt || 0) ? e : prev);
+    byContent.set(key, better);
+  }
+  return [...byContent.values()];
 }
 
 // Parseia o conteúdo de /proc/<pid>/environ (pares KEY=val separados por NUL)
