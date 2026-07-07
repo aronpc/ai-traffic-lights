@@ -13,8 +13,8 @@ test('pickLang: pt* vira pt, resto vira en', () => {
 });
 
 test('translate: resolve nos dois idiomas', () => {
-  assert.equal(translate('pt', 'btn_save'), 'Salvar');
-  assert.equal(translate('en', 'btn_save'), 'Save');
+  assert.equal(translate('pt', 'btn_close'), 'Fechar');
+  assert.equal(translate('en', 'btn_close'), 'Close');
 });
 
 test('translate: interpola placeholders', () => {
@@ -23,13 +23,13 @@ test('translate: interpola placeholders', () => {
 });
 
 test('translate: chave ausente cai no en; ausente no en devolve a chave', () => {
-  assert.equal(translate('xx', 'btn_save'), 'Save');      // idioma desconhecido → en
+  assert.equal(translate('xx', 'btn_close'), 'Close');      // idioma desconhecido → en
   assert.equal(translate('pt', 'nao_existe'), 'nao_existe'); // fail-soft
 });
 
 test('makeT: parcial por idioma', () => {
   const T = makeT('pt');
-  assert.equal(T('sec_window'), 'Janela');
+  assert.equal(T('tab_general'), 'Geral');
 });
 
 test('paridade de chaves: en e pt têm exatamente o mesmo conjunto', () => {
