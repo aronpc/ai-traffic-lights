@@ -689,8 +689,18 @@ const SETTINGS_W = 420, SETTINGS_H = 761;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
+  // Clampa à altura da área útil do display: em telas baixas (ex.: 1366×768,
+  // work area ~728px) a altura ideal (761) não cabe e, com resizable:false, o
+  // rodapé/Fechar + o fim da aba Geral ficariam abaixo da tela, inalcançáveis.
+  // O .tab-body (overflow-y:auto) rola; header/abas/.actions (flex:0 0 auto)
+  // ficam fixos — o "Fechar" nunca some. Display mais próximo da posição salva
+  // cobre multi-monitor; sem posição, cai no primário.
+  const disp = (typeof b.x === 'number' && typeof b.y === 'number')
+    ? screen.getDisplayNearestPoint({ x: b.x, y: b.y })
+    : screen.getPrimaryDisplay();
+  const winH = Math.min(SETTINGS_H, disp.workAreaSize.height - 24); // 24 = respiro
   settingsWin = new BrowserWindow({
-    width: SETTINGS_W, height: SETTINGS_H,
+    width: SETTINGS_W, height: winH,
     useContentSize: true,               // width/height = área web (o .prefs preenche)
     resizable: false,                   // tamanho travado na maior aba (pedido do usuário)
     maximizable: false, fullscreenable: false,
