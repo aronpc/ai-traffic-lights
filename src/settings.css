@@ -137,7 +137,7 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63, 1
 /* ---------- footer fixo: Cancelar / Salvar ---------- */
 .actions {
   flex: 0 0 auto;
-  display: flex; gap: 8px; justify-content: flex-end;
+  display: flex; gap: 12px; align-items: center; justify-content: space-between;
   padding: 12px 20px 16px;
   border-top: 1px solid var(--border);
 }
@@ -158,15 +158,14 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63, 1
 .actions button.primary { background: var(--green); border-color: var(--green); color: #0d1f14; }
 .actions button.primary:hover { filter: brightness(1.08); }
 
-/* ---------- rodapé "Sobre" (versão + link do repo) ---------- */
-.appfoot {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+/* ---------- meta no rodapé (versão + link do repo, ao lado do Fechar) ---------- */
+.appmeta {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
   font-size: 11px; color: var(--ink-dim); font-variant-numeric: tabular-nums;
 }
-.appfoot .ver { white-space: nowrap; }
-.appfoot .repolink {
+.appmeta .ver { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.appmeta .repolink {
   color: var(--ink-dim); text-decoration: none; cursor: pointer; white-space: nowrap;
   border-bottom: 1px dotted transparent; transition: color 0.12s, border-color 0.12s;
 }
-.appfoot .repolink:hover { color: var(--ink); border-bottom-color: var(--ink-dim); }
+.appmeta .repolink:hover { color: var(--ink); border-bottom-color: var(--ink-dim); }

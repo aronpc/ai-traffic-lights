@@ -92,6 +92,7 @@ const STRINGS = {
     win_quit_btn: 'Quit',
     btn_cancel: 'Cancel',
     btn_save: 'Save',
+    btn_close: 'Close',
   },
   pt: {
     // overlay
@@ -176,6 +177,7 @@ const STRINGS = {
     win_quit_btn: 'Sair',
     btn_cancel: 'Cancelar',
     btn_save: 'Salvar',
+    btn_close: 'Fechar',
   },
 };
 

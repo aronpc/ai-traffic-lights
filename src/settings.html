@@ -21,7 +21,6 @@
     <nav class="tabs">
       <button class="tab is-active" data-tab="general" data-i18n="tab_general">Geral</button>
       <button class="tab" data-tab="integration" data-i18n="tab_integration">Integração</button>
-      <button class="tab" data-tab="about" data-i18n="tab_about">Sobre</button>
     </nav>
 
     <div class="tab-body">
@@ -71,11 +70,6 @@
             </div>
             <div class="hint" data-i18n="opacity_hint">Quão opaco é o painel. Mais baixo = mais transparente.</div>
           </div>
-          <div class="row">
-            <input type="checkbox" id="compact">
-            <label for="compact" data-i18n="compact_label">Lista compacta</label>
-          </div>
-          <div class="hint" data-i18n="compact_hint">Linhas mais densas: esconde o modelo/ferramenta, só nome + luz.</div>
         </div>
 
         <div class="section">
@@ -83,6 +77,14 @@
           <div class="row">
             <input type="checkbox" id="autostart">
             <label for="autostart" data-i18n="autostart_label">Iniciar com o sistema</label>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title" data-i18n="sec_window">Janela</div>
+          <div class="btn-row">
+            <button id="toggleVis" data-i18n="win_toggle_btn">Mostrar/Ocultar overlay</button>
+            <button id="quit" class="danger" data-i18n="win_quit_btn">Sair</button>
           </div>
         </div>
       </section>
@@ -116,28 +118,15 @@
           </div>
         </div>
       </section>
-
-      <!-- ===================== ABA: SOBRE ===================== -->
-      <section class="tab-panel" data-panel="about" hidden>
-        <div class="section">
-          <div class="section-title" data-i18n="sec_window">Janela</div>
-          <div class="btn-row">
-            <button id="toggleVis" data-i18n="win_toggle_btn">Mostrar/Ocultar overlay</button>
-            <button id="quit" class="danger" data-i18n="win_quit_btn">Sair</button>
-          </div>
-        </div>
-
-        <div class="appfoot">
-          <span class="ver">AI Traffic Lights v<span id="ver">…</span></span>
-          <a id="repoLink" class="repolink" href="#" title="github.com/aronpc/ai-traffic-lights">↗ GitHub</a>
-        </div>
-      </section>
     </div>
 
-    <!-- footer fixo -->
+    <!-- footer fixo: versão + repo à esquerda, Fechar à direita (nada fica pendente) -->
     <div class="actions">
-      <button id="cancel" data-i18n="btn_cancel">Cancelar</button>
-      <button id="save" class="primary" data-i18n="btn_save">Salvar</button>
+      <span class="appmeta">
+        <span class="ver">AI Traffic Lights v<span id="ver">…</span></span>
+        <a id="repoLink" class="repolink" href="#" title="github.com/aronpc/ai-traffic-lights">↗ GitHub</a>
+      </span>
+      <button id="closeFooter" data-i18n="btn_close">Fechar</button>
     </div>
   </div>
 

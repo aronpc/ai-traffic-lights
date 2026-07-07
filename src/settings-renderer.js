@@ -1,22 +1,26 @@
 // settings-renderer.js — UI da janela de Preferências.
-// Reusa o preload (window.trafficLight) do overlay. Captura o atalho do
-// teclado e monta um accelerator do Electron.
+// Reusa o preload (window.trafficLight) do overlay. As mudanças aplicam AO VIVO:
+// cada controle chama saveSettings() na hora → o main persiste e reemite
+// 'settings-changed', e o overlay reflete imediatamente. Não há Salvar/Cancelar,
+// só Fechar (o × do header também fecha). Captura o atalho do teclado e monta
+// um accelerator do Electron.
 
 const $idle = document.getElementById('idle');
 const $lang = document.getElementById('lang');
 const $sc = document.getElementById('shortcut');
 const $opacity = document.getElementById('opacity');
 const $opacityVal = document.getElementById('opacityVal');
-const $compact = document.getElementById('compact');
 const $markRead = document.getElementById('markRead');
-const $save = document.getElementById('save');
-const $cancel = document.getElementById('cancel');
+const $terminal = document.getElementById('terminal');
+const $terminalCmd = document.getElementById('terminalCmd');
+const $terminalCmdField = document.getElementById('terminalCmdField');
 
 let captured = null;        // accelerator capturado (string) ou null
 let capturing = false;
+let ready = false;          // trava o push durante a carga inicial (getSettings)
 let T = makeT('en');        // i18n — troca pro idioma do sistema via get-lang
 
-// Textos estáticos do HTML (labels, botões, hints) + título da janela.
+// Textos estáticos do HTML (labels, botões, hints, abas) + título da janela.
 // document.title manda no título da janela (sobrepõe a option do main).
 function applyI18n() {
   for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
@@ -51,6 +55,29 @@ function setShortcut(acc) {
   capturing = false;
 }
 
+// Monta o cfg a partir dos campos atuais. O main mescla sobre o estado salvo,
+// então mandar só os campos das Preferências é seguro (não zera showUsage etc.).
+function buildCfg() {
+  const v = $idle.value;
+  const cfg = (v === 'never')
+    ? { escalateIdle: false }
+    : { escalateIdle: true, idleThresholdSec: parseInt(v, 10) };
+  if (captured) cfg.shortcut = captured;
+  cfg.lang = $lang.value;                    // 'auto' | 'en' | 'pt'
+  cfg.terminal = $terminal.value;            // Quick Launcher: terminal de spawn
+  if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
+  cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100;  // slider 60–100 → 0.6–1.0
+  cfg.markReadOnClick = $markRead.checked;   // clique marca como lido
+  return cfg;
+}
+
+// Aplica AO VIVO: grava + reemite settings-changed (o overlay reflete na hora).
+function pushLive() {
+  if (!ready) return;                        // ignora enquanto os campos são populados no load
+  window.trafficLight.saveSettings(buildCfg());
+}
+
+// ---- captura do atalho ----
 $sc.addEventListener('click', () => {
   capturing = true;
   $sc.classList.add('capturing');
@@ -61,29 +88,34 @@ $sc.addEventListener('keydown', (e) => {
   e.stopPropagation();
   if (e.key === 'Escape') { setShortcut(captured); return; }   // sai sem mudar
   const acc = accelFromEvent(e);
-  if (acc) setShortcut(acc);
+  if (acc) { setShortcut(acc); pushLive(); }                   // novo atalho aplica na hora
 });
 
-$save.addEventListener('click', () => {
-  const v = $idle.value;
-  const cfg = (v === 'never')
-    ? { escalateIdle: false }
-    : { escalateIdle: true, idleThresholdSec: parseInt(v, 10) };
-  if (captured) cfg.shortcut = captured;
-  cfg.lang = $lang.value;                  // 'auto' | 'en' | 'pt'
-  cfg.terminal = $terminal.value;          // Quick Launcher: terminal de spawn
-  if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
-  cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100; // slider 60–100 → 0.6–1.0
-  cfg.compact = $compact.checked;          // lista densa
-  cfg.markReadOnClick = $markRead.checked; // clique marca como lido
-  window.trafficLight.saveSettings(cfg);   // main aplica (atalho + idioma + overlay) e fecha
-  window.close();
+// ---- cada controle aplica na hora ----
+$idle.addEventListener('change', pushLive);
+$lang.addEventListener('change', pushLive);
+$markRead.addEventListener('change', pushLive);
+// Reflete a transparência na PRÓPRIA janela de Preferências: o painel .prefs usa
+// var(--bg) → --bg-alpha (igual ao overlay). Só setar o CSS var local (barato).
+function applyPrefsOpacity() {
+  const op = (parseInt($opacity.value, 10) || 97) / 100;
+  document.documentElement.style.setProperty('--bg-alpha', String(Math.max(0.6, Math.min(1, op))));
+}
+// slider: atualiza rótulo + transparência das Prefs a cada pixel, mas DEBOUNCE o
+// save no overlay — senão vira tempestade de resize/render/write no overlay
+// durante o arraste. O 'change' (soltar) garante o valor final gravado na hora.
+let opTimer = null;
+$opacity.addEventListener('input', () => {
+  $opacityVal.textContent = $opacity.value + '%';
+  applyPrefsOpacity();
+  clearTimeout(opTimer);
+  opTimer = setTimeout(pushLive, 120);
 });
-// Preview ao vivo do valor enquanto arrasta (o overlay só aplica no Salvar).
-$opacity.addEventListener('input', () => { $opacityVal.textContent = $opacity.value + '%'; });
-$cancel.addEventListener('click', () => window.close());
+$opacity.addEventListener('change', () => { clearTimeout(opTimer); pushLive(); });
+$terminal.addEventListener('change', () => { syncTerminalCmdField(); pushLive(); });
+$terminalCmd.addEventListener('change', pushLive);
 
-// ---- abas: troca de painel (client-side puro; Salvar aplica tudo de uma vez) ----
+// ---- abas: troca de painel (client-side) ----
 const $tabs = document.querySelectorAll('.tab');
 const $panels = document.querySelectorAll('.tab-panel');
 function selectTab(name) {
@@ -92,8 +124,9 @@ function selectTab(name) {
 }
 for (const t of $tabs) t.addEventListener('click', () => selectTab(t.dataset.tab));
 
-// ---- × do header: fecha a janela sem salvar (mesmo efeito de Cancelar) ----
+// ---- fechar (× do header e botão do rodapé; nada fica pendente) ----
 document.getElementById('closeBtn').addEventListener('click', () => window.close());
+document.getElementById('closeFooter').addEventListener('click', () => window.close());
 
 // ---- espelho do tray: autostart, hooks, mostrar/ocultar, sair ----
 const $autostart = document.getElementById('autostart');
@@ -103,7 +136,10 @@ document.getElementById('removeHooks').addEventListener('click', () => window.tr
 document.getElementById('toggleVis').addEventListener('click', () => window.trafficLight.toggleVisibility());
 document.getElementById('quit').addEventListener('click', () => window.trafficLight.quit());
 
-// Carga inicial
+// Mostra o campo de comando custom só no modo 'custom' (hoisted — usado acima).
+function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
+
+// ---- carga inicial ----
 window.trafficLight.getVersion().then((v) => { if (v) document.getElementById('ver').textContent = v; });
 window.trafficLight.getRepoUrl().then((url) => {
   const $repo = document.getElementById('repoLink');
@@ -119,24 +155,20 @@ document.getElementById('repoLink').addEventListener('click', (e) => {
 });
 window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyI18n(); });
 window.trafficLight.getSettings().then((c) => {
-  if (!c) return;
-  if (!c.escalateIdle) $idle.value = 'never';
-  else $idle.value = String(c.idleThresholdSec || 300);
-  $lang.value = c.lang || 'auto';
-  setShortcut(c.shortcut || null);
-  $terminal.value = c.terminal || 'auto';
-  $terminalCmd.value = c.terminalCmd || '';
-  const opct = Math.round((typeof c.opacity === 'number' ? c.opacity : 0.97) * 100);
-  $opacity.value = String(opct);
-  $opacityVal.textContent = opct + '%';
-  $compact.checked = !!c.compact;
-  $markRead.checked = c.markReadOnClick !== false; // default ligado
+  if (c) {
+    if (!c.escalateIdle) $idle.value = 'never';
+    else $idle.value = String(c.idleThresholdSec || 300);
+    $lang.value = c.lang || 'auto';
+    setShortcut(c.shortcut || null);
+    $terminal.value = c.terminal || 'auto';
+    $terminalCmd.value = c.terminalCmd || '';
+    const opct = Math.round((typeof c.opacity === 'number' ? c.opacity : 0.97) * 100);
+    $opacity.value = String(opct);
+    $opacityVal.textContent = opct + '%';
+    $markRead.checked = c.markReadOnClick !== false; // default ligado
+  }
+  applyPrefsOpacity();                               // aplica a transparência salva na janela de Prefs
   syncTerminalCmdField();
+  ready = true;                                      // libera o live-apply só após popular tudo
 });
-// ---- Quick Launcher: mostra o campo de comando custom só no modo 'custom' ----
-const $terminal = document.getElementById('terminal');
-const $terminalCmd = document.getElementById('terminalCmd');
-const $terminalCmdField = document.getElementById('terminalCmdField');
-function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
-$terminal.addEventListener('change', syncTerminalCmdField);
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });
