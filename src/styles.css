@@ -462,10 +462,11 @@ html, body {
   content: '';
   position: absolute;
   right: 4px; bottom: 4px;
-  width: 9px; height: 9px;
+  width: 12px; height: 12px;
   border-right: 2px solid var(--ink-dim);
   border-bottom: 2px solid var(--ink-dim);
-  opacity: 0.4;
+  border-bottom-right-radius: 8px;   /* arco que ecoa o raio 14px do canto do overlay */
+  opacity: 0.45;
 }
 .grip:hover::after { opacity: 0.9; }
 
