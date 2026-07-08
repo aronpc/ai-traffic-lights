@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+### Changed
+### Deprecated
+### Removed
+### Fixed
+### Security
+
+
+## [0.4.0] - 2026-07-07
+
 ### Changed
 - **Preferences redesigned** to match the overlay's custom chrome and apply
   live. The window is now frameless/transparent with the same rounded panel,
