@@ -15,6 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 
+## [0.4.1] - 2026-07-08
+
+### Fixed
+- **App now launches on Ubuntu 24.04+ when packaged (`.deb` / AppImage).** The
+  bundled Chromium sandbox couldn't create a user namespace under Ubuntu's
+  `apparmor_restrict_unprivileged_userns=1`, so every shared-memory allocation
+  aborted with `platform_shared_memory_region_posix … No such process` and the
+  overlay never opened. Both Linux targets now pass `--no-sandbox` via
+  `linux.executableArgs`, so the `.desktop` / AppRun `Exec` carries the flag —
+  matching what `npm start` and the generated autostart entry already do.
+  (`app.commandLine.appendSwitch('no-sandbox')` in `main.js` is not enough: the
+  sandbox initializes before the main script runs, so the switch must be on the
+  command line.)
+
+
 ## [0.4.0] - 2026-07-07
 
 ### Changed
