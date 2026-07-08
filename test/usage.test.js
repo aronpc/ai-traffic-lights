@@ -9,7 +9,7 @@ const {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits,
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
-  collectUsage, parseEnviron, mergeUsage, _clearGlmCache, _clearClaudeCache, _clearCodexCache,
+  collectUsage, parseEnviron, mergeUsage, detectReset, _clearGlmCache, _clearClaudeCache, _clearCodexCache,
 } = require('../src/usage');
 
 // now fixo = 2026-07-07T12:00:00Z → testes determinísticos (mês é 0-indexed em JS: 6=Jul).
@@ -658,5 +658,62 @@ test('mergeUsage: antigravity-plan limpa antigravity-quota do cache anterior', (
   const out = mergeUsage(prev, fresh, NOW);
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 'antigravity-plan');
+});
+
+// =========================== detectReset (aviso de "cota resetou") ===========================
+// PURA: `now` injetado (NOW = 2026-07-07T12:00:00Z, definido no topo). Estes casos
+// são a ESPECIFICAÇÃO da regra de transição estava-esgotado → resetou.
+const RESET_ENTRY = (id, usedPct, resetAt) => ({ id, agent: 'glm', plan: 'GLM Pro', title: 'Tokens (5h)', usedPct, resetAt });
+const H = 3600 * 1000;
+
+test('detectReset: 1ª coleta (sem estado prévio) nunca notifica, só registra', () => {
+  const r = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90);
+  assert.equal(r.toNotify.length, 0);
+  assert.ok(r.nextState['glm-tokens'], 'registrou o estado do limite p/ o próximo tick');
+});
+
+test('detectReset: armado (>= threshold) e o reset chegou → notifica 1x', () => {
+  const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
+  // +6h: passou das 17:00Z; a API avançou a janela (novo reset) e o % caiu.
+  const later = NOW + 6 * H;
+  const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 4, '2026-07-07T22:00:00Z')], later, 90);
+  assert.equal(toNotify.length, 1);
+  assert.equal(toNotify[0].id, 'glm-tokens');
+});
+
+test('detectReset: NÃO estava esgotado (abaixo do threshold) → não notifica no reset', () => {
+  const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 40, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
+  const later = NOW + 6 * H;
+  const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 2, '2026-07-07T22:00:00Z')], later, 90);
+  assert.equal(toNotify.length, 0);
+});
+
+test('detectReset: armado mas o reset ainda não chegou → não notifica', () => {
+  const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
+  const soon = NOW + 60 * 1000; // +1min, ainda antes das 17:00Z
+  const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], soon, 90);
+  assert.equal(toNotify.length, 0);
+});
+
+test('detectReset: não redispara no tick seguinte à mesma janela nova (dedupe)', () => {
+  const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
+  const later = NOW + 6 * H;
+  const r2 = detectReset(s1, [RESET_ENTRY('glm-tokens', 5, '2026-07-07T22:00:00Z')], later, 90);
+  assert.equal(r2.toNotify.length, 1);                 // resetou → avisa
+  const r3 = detectReset(r2.nextState, [RESET_ENTRY('glm-tokens', 6, '2026-07-07T22:00:00Z')], later + 60 * 1000, 90);
+  assert.equal(r3.toNotify.length, 0, 'mesma janela nova não pode redisparar');
+});
+
+test('detectReset: entry sem resetAt é ignorada (não quebra, não notifica)', () => {
+  const r = detectReset(null, [RESET_ENTRY('claude-plan', null, null)], NOW, 90);
+  assert.equal(r.toNotify.length, 0);
+  assert.equal(r.nextState['claude-plan'], undefined);
+});
+
+test('detectReset: threshold configurável — em 100 só esgotamento total arma (95% não)', () => {
+  const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 95, '2026-07-07T17:00:00Z')], NOW, 100).nextState;
+  const later = NOW + 6 * H;
+  const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 5, '2026-07-07T22:00:00Z')], later, 100);
+  assert.equal(toNotify.length, 0, '95 < 100 → não armou, logo não notifica');
 });
 

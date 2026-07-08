@@ -11,6 +11,9 @@ const $sc = document.getElementById('shortcut');
 const $opacity = document.getElementById('opacity');
 const $opacityVal = document.getElementById('opacityVal');
 const $markRead = document.getElementById('markRead');
+const $notifyReset = document.getElementById('notifyReset');
+const $resetThreshold = document.getElementById('resetThreshold');
+const $resetThresholdVal = document.getElementById('resetThresholdVal');
 const $terminal = document.getElementById('terminal');
 const $terminalCmd = document.getElementById('terminalCmd');
 const $terminalCmdField = document.getElementById('terminalCmdField');
@@ -68,6 +71,8 @@ function buildCfg() {
   if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
   cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100;  // slider 60–100 → 0.6–1.0
   cfg.markReadOnClick = $markRead.checked;   // clique marca como lido
+  cfg.notifyOnReset = $notifyReset.checked;  // avisar quando a cota resetar
+  cfg.resetNotifyThresholdPct = parseInt($resetThreshold.value, 10) || 90; // limiar de "esgotado"
   return cfg;
 }
 
@@ -95,6 +100,11 @@ $sc.addEventListener('keydown', (e) => {
 $idle.addEventListener('change', pushLive);
 $lang.addEventListener('change', pushLive);
 $markRead.addEventListener('change', pushLive);
+$notifyReset.addEventListener('change', pushLive);
+// slider do limiar: atualiza o rótulo a cada pixel (barato/local); salva só ao
+// soltar (change). Não afeta o overlay ao vivo, então dispensa o debounce do opacity.
+$resetThreshold.addEventListener('input', () => { $resetThresholdVal.textContent = $resetThreshold.value + '%'; });
+$resetThreshold.addEventListener('change', pushLive);
 // Reflete a transparência na PRÓPRIA janela de Preferências: o painel .prefs usa
 // var(--bg) → --bg-alpha (igual ao overlay). Só setar o CSS var local (barato).
 function applyPrefsOpacity() {
@@ -164,6 +174,10 @@ window.trafficLight.getSettings().then((c) => {
     $opacity.value = String(opct);
     $opacityVal.textContent = opct + '%';
     $markRead.checked = c.markReadOnClick !== false; // default ligado
+    $notifyReset.checked = c.notifyOnReset !== false; // default ligado
+    const thr = typeof c.resetNotifyThresholdPct === 'number' ? c.resetNotifyThresholdPct : 90;
+    $resetThreshold.value = String(thr);
+    $resetThresholdVal.textContent = thr + '%';
   }
   applyPrefsOpacity();                               // aplica a transparência salva na janela de Prefs
   syncTerminalCmdField();

@@ -1046,9 +1046,31 @@ async function collectAndSendUsage() {
     // Funde com o último estado: mantém o valor bom de cada linha se a coleta
     // atual falhou pra ela (evita zerar/sumir); esmaece pra cinza (stale) após
     // alguns min sem atualização em vez de piscar. Ver usage.mergeUsage.
-    if (Array.isArray(entries)) { lastUsage = usage.mergeUsage(lastUsage, entries); saveUsage(); }
+    if (Array.isArray(entries)) { lastUsage = usage.mergeUsage(lastUsage, entries); saveUsage(); maybeNotifyReset(); }
   } catch { /* collectUsage já engole erros internamente; defeção dupla */ }
   sendToRenderer('usage', lastUsage);
+}
+
+// Estado (por id) que detectReset usa entre coletas p/ achar a transição
+// "estava esgotado → resetou". Vive só na memória do processo: se o app estava
+// fechado no horário do reset, não há estado prévio → não notifica retroativo
+// (proposital — o usuário já vê a barra liberada ao reabrir).
+let resetNotifyState = {};
+// Após cada coleta, vê se algum limite ESGOTADO acabou de resetar e — se o
+// usuário deixou ligado (settings.notifyOnReset) — dispara uma notificação
+// nativa COM som (silent:false; é um evento que o usuário estava esperando).
+// Nunca lança: a detecção de reset não pode derrubar o loop de uso.
+function maybeNotifyReset() {
+  try {
+    if (settingsCfg.notifyOnReset === false) { resetNotifyState = {}; return; }
+    const threshold = typeof settingsCfg.resetNotifyThresholdPct === 'number' ? settingsCfg.resetNotifyThresholdPct : 90;
+    const { toNotify, nextState } = usage.detectReset(resetNotifyState, lastUsage, Date.now(), threshold);
+    resetNotifyState = nextState;
+    for (const e of toNotify) {
+      const name = [e.plan, e.title].filter(Boolean).join(' · ') || e.id;
+      try { new Notification({ title: 'AI Traffic Lights', body: T('ntf_tokens_reset', { name }), silent: false }).show(); } catch {}
+    }
+  } catch { /* detecção de reset nunca derruba a coleta */ }
 }
 ipcMain.on('request-usage', () => {
   sendToRenderer('usage', lastUsage);

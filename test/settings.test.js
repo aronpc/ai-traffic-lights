@@ -75,6 +75,24 @@ test('mergeWithDefaults: markReadOnClick default true, aceita bool', () => {
   assert.equal(mergeWithDefaults({ markReadOnClick: 'x' }).markReadOnClick, true); // inválido → default
 });
 
+test('mergeWithDefaults: notifyOnReset default true, aceita bool', () => {
+  assert.equal(DEFAULTS.notifyOnReset, true);
+  assert.equal(mergeWithDefaults({}).notifyOnReset, true);
+  assert.equal(mergeWithDefaults({ notifyOnReset: false }).notifyOnReset, false);
+  assert.equal(mergeWithDefaults({ notifyOnReset: 'x' }).notifyOnReset, true); // inválido → default
+});
+
+test('mergeWithDefaults: resetNotifyThresholdPct default 90, clampa [1,100], arredonda', () => {
+  assert.equal(DEFAULTS.resetNotifyThresholdPct, 90);
+  assert.equal(mergeWithDefaults({}).resetNotifyThresholdPct, 90);
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 50 }).resetNotifyThresholdPct, 50);
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 0 }).resetNotifyThresholdPct, 1);     // abaixo → clampa
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 150 }).resetNotifyThresholdPct, 100); // acima → clampa
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 88.6 }).resetNotifyThresholdPct, 89); // arredonda
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 'x' }).resetNotifyThresholdPct, 90);  // não-número → default
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: NaN }).resetNotifyThresholdPct, 90);  // NaN → default
+});
+
 test('mergeWithDefaults: atalho inválido é ignorado (mantém default)', () => {
   assert.equal(mergeWithDefaults({ shortcut: 'H' }).shortcut, DEFAULTS.shortcut);
   assert.equal(mergeWithDefaults({ shortcut: 'Control+Que' }).shortcut, DEFAULTS.shortcut);

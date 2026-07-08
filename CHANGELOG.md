@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Notification when your token quota resets.** If a usage limit was exhausted
+  (usage ≥ a configurable threshold, default 90%) and its reset time arrives, the
+  app fires a native notification (with sound) so you know the cap has lifted.
+  Adds Preferences → Notifications: a toggle (`Notify when quota resets`) and a
+  threshold slider. Detection is state-based — it compares consecutive 60s usage
+  polls — so it survives the app sleeping or missed polls, and never fires
+  retroactively if the app was closed at reset time.
 ### Changed
 ### Fixed
 

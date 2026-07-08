@@ -15,6 +15,8 @@ const DEFAULTS = Object.freeze({
   opacity: 0.97,               // transparência do painel (0.6–1.0; alpha do fundo do overlay)
   compact: false,              // lista de sessões densa (esconde a sub-linha, aperta o padding)
   markReadOnClick: true,       // clicar num terminal vermelho marca como lido (cinza) até a próxima notificação
+  notifyOnReset: true,         // notifica quando um limite ESGOTADO reseta a cota (voltou a liberar)
+  resetNotifyThresholdPct: 90, // % de uso que "arma" o aviso de reset — só avisa se passou disto antes de resetar
 });
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).
@@ -54,6 +56,11 @@ function mergeWithDefaults(raw) {
     }
     if (typeof raw.compact === 'boolean') out.compact = raw.compact;
     if (typeof raw.markReadOnClick === 'boolean') out.markReadOnClick = raw.markReadOnClick;
+    if (typeof raw.notifyOnReset === 'boolean') out.notifyOnReset = raw.notifyOnReset;
+    // resetNotifyThresholdPct: inteiro em [1, 100]; fora da faixa/não-número → default (90).
+    if (typeof raw.resetNotifyThresholdPct === 'number' && Number.isFinite(raw.resetNotifyThresholdPct)) {
+      out.resetNotifyThresholdPct = Math.max(1, Math.min(100, Math.round(raw.resetNotifyThresholdPct)));
+    }
     if (isValidShortcut(raw.shortcut)) out.shortcut = raw.shortcut;
     if (raw.lang === 'auto' || raw.lang === 'en' || raw.lang === 'pt') out.lang = raw.lang;
     const TERMINAL_OK = new Set(['auto', 'tilix', 'gnome-terminal', 'ghostty', 'custom']);

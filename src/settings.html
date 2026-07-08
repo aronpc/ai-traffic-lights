@@ -20,6 +20,7 @@
     <!-- abas horizontais -->
     <nav class="tabs">
       <button class="tab is-active" data-tab="general" data-i18n="tab_general">Geral</button>
+      <button class="tab" data-tab="notifications" data-i18n="tab_notifications">Notificações</button>
       <button class="tab" data-tab="integration" data-i18n="tab_integration">Integração</button>
     </nav>
 
@@ -77,6 +78,26 @@
           <div class="row">
             <input type="checkbox" id="autostart">
             <label for="autostart" data-i18n="autostart_label">Iniciar com o sistema</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== ABA: NOTIFICAÇÕES ===================== -->
+      <section class="tab-panel" data-panel="notifications" hidden>
+        <div class="section">
+          <div class="section-title" data-i18n="sec_quota_reset">Reset de cota</div>
+          <div class="row">
+            <input type="checkbox" id="notifyReset">
+            <label for="notifyReset" data-i18n="notify_reset_label">Avisar quando a cota resetar</label>
+          </div>
+          <div class="hint" data-i18n="notify_reset_hint">Quando um limite esgotado libera de novo, mostra uma notificação com som.</div>
+          <div class="field">
+            <label class="top" for="resetThreshold" data-i18n="reset_threshold_label">Considerar esgotado a partir de</label>
+            <div class="range-row">
+              <input type="range" id="resetThreshold" min="1" max="100" step="1">
+              <span class="range-val" id="resetThresholdVal">90%</span>
+            </div>
+            <div class="hint" data-i18n="reset_threshold_hint">Só avisa se o uso tinha passado deste % antes de resetar.</div>
           </div>
         </div>
       </section>

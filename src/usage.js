@@ -755,10 +755,56 @@ function parseEnviron(raw, keys) {
   return out;
 }
 
+// ======================= detectReset (aviso de "cota resetou") =======================
+// Decide QUANDO avisar que um limite que estava ESGOTADO acabou de resetar (a
+// cota liberou de novo). Reconcilia por TRANSIÇÃO de estado entre coletas — não
+// agenda timer no resetAt — então sobrevive a app dormir/hibernar e coletas
+// perdidas: o loop de 60s do main.js compara o antes/depois a cada tick.
+//
+// FUNÇÃO PURA: não usa Date.now() nem dispara Notification. O main.js injeta o
+// relógio (`now`) e faz o efeito colateral. Testável com `now` fixo — os casos
+// em test/usage.test.js são a especificação.
+//
+// Parâmetros:
+//   prevState — estado da chamada anterior por id: { [id]: { resetAtMs, armed } }
+//               (ou null/undefined na 1ª coleta).
+//   entries   — entradas atuais de uso: [{ id, usedPct, resetAt, plan, title, ... }].
+//   now       — epoch em ms (injetado).
+//   threshold — % de uso que "arma" o aviso (0–100). armado = usedPct >= threshold.
+// Retorna:
+//   { toNotify, nextState } — toNotify = entradas que resetaram estando armadas;
+//                             nextState = estado a passar para a próxima chamada.
+function detectReset(prevState, entries, now, threshold) {
+  const prev = prevState || {};
+  const nextState = {};
+  const toNotify = [];
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || !e.resetAt) continue;                    // sem horário de reset → não dá pra detectar
+    const resetAtMs = Date.parse(e.resetAt);
+    if (Number.isNaN(resetAtMs)) continue;             // resetAt malformado → ignora
+    const armed = typeof e.usedPct === 'number' && e.usedPct >= threshold;
+    const p = prev[e.id];                              // estado anterior deste limite (ou undefined)
+
+    // Resetou estando armado? A janela virou (o relógio passou do reset anterior
+    // OU o resetAt saltou pra frente) E o limite estava esgotado na leitura
+    // ANTERIOR — no instante do reset o % já caiu, então "estava esgotado" só
+    // existe em `p`. É por isso que a função carrega estado entre coletas.
+    const windowTurned = !!p && (now >= p.resetAtMs || resetAtMs > p.resetAtMs);
+    const resetou = windowTurned && p.armed;
+    if (resetou) toNotify.push(e);
+    // Re-arma pelo % atual, mas "gruda" o armado enquanto a MESMA janela segue:
+    // uma oscilação do % pra baixo antes do reset não pode desarmar o aviso.
+    // Numa janela nova (após reset) NÃO regruda → dedupe no tick seguinte.
+    const sameWindow = !!p && resetAtMs === p.resetAtMs;
+    nextState[e.id] = { resetAtMs, armed: armed || (!resetou && sameWindow && p.armed) };
+  }
+  return { toNotify, nextState };
+}
+
 if (typeof module !== 'undefined') module.exports = {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits, parseAntigravityTier, parseAntigravityQuota,
   readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, collectUsage, parseEnviron,
-  findCodexRollout, lastCodexRateLimits, mergeUsage, isSummaryEntry,
+  findCodexRollout, lastCodexRateLimits, mergeUsage, isSummaryEntry, detectReset,
   USAGE_STALE_MS, USAGE_DROP_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _httpsGetJson, CLAUDE_TIER_LABEL,
 };
