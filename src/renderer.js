@@ -361,16 +361,23 @@ function resetClock(resetAt, resetInMin) {
   if (!resetAt) return '';
   const d = new Date(resetAt);
   if (isNaN(d.getTime())) return '';
-  const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
-  const t = new Date();
-  const dayDiff = Math.round(
-    (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-      - new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()) / 86400000);
-  // hoje → hora exata (HH:MM); amanhã → "amanhã HH"; +2 dias → só "+Nd" (curto,
-  // não trunca na coluna estreita — a hora exata de um reset distante é ruído).
-  if (dayDiff <= 0) return `${hh}:${mm}`;
-  if (dayDiff === 1) return `1d ${hh}h`;
-  return `${dayDiff}d`;
+
+  const now = Date.now();
+  const diffMs = d.getTime() - now;
+  if (diffMs <= 0) return '';
+
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 60) return `${diffMin}min`;
+
+  const diffHours = Math.round(diffMs / 3600000);
+  if (diffHours < 24) {
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`; // Mostra a hora do reset se for nas próximas 24h
+  }
+
+  const diffDays = Math.round(diffMs / 86400000);
+  return `${diffDays}d`;
 }
 // Aparência (Preferências): transparência do painel via --bg-alpha e modo
 // compacto via classe no .overlay. Aplicado ao vivo (boot + settings-changed),

@@ -583,14 +583,14 @@ test('readAntigravityUsage: readFile lança (sem arquivo) → null', () => {
 // =========================== Antigravity — quota esgotada (DBs de conversa) ===========================
 
 test('parseAntigravityQuota: pega o MAIOR quotaResetTimeStamp futuro', () => {
-  const txt = 'lixo\0QUOTA_EXHAUSTED",...,"quotaResetTimeStamp":"2026-07-10T00:00:00Z"...'
-    + '\0mais\0QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-14T19:56:12Z"...';
+  const txt = 'lixo\0"reason":"QUOTA_EXHAUSTED",...,"quotaResetTimeStamp":"2026-07-10T00:00:00Z"...'
+    + '\0mais\0"reason":"QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-14T19:56:12Z"...';
   const q = parseAntigravityQuota(txt, NOW);
   assert.deepEqual(q, { resetAt: '2026-07-14T19:56:12Z' }); // o mais distante
 });
 
 test('parseAntigravityQuota: reset no passado → null (não está esgotada agora)', () => {
-  const txt = 'QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-01T00:00:00Z"';
+  const txt = '"reason":"QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-01T00:00:00Z"';
   assert.equal(parseAntigravityQuota(txt, NOW), null);
   assert.equal(parseAntigravityQuota('sem quota aqui', NOW), null);
   assert.equal(parseAntigravityQuota(null, NOW), null);
@@ -601,9 +601,9 @@ test('readAntigravityUsage: quota esgotada → usedPct 100 + reset (DB injetado)
     home: '/x', now: NOW,
     readFile: () => JSON.stringify({ model: 'gpt-oss-120b-medium' }),
     listDbs: () => ['/db/a.db', '/db/b.db'],
-    mtime: (f) => (f === '/db/b.db' ? 200 : 100), // b é mais novo
+    mtime: (f) => (f === '/db/b.db' ? NOW - 5*60*1000 : NOW - 10*60*1000), // b é mais novo, ambos recentes
     readDb: (f) => (f === '/db/b.db'
-      ? 'QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-14T19:56:12Z"'
+      ? '"reason":"QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-14T19:56:12Z"'
       : 'sem quota'),
   });
   assert.equal(r.length, 1);
@@ -651,3 +651,12 @@ test('mergeUsage: token inválido (summary sem %) some quando há concreto do me
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 'glm-tokens'); // o summary fantasma sumiu
 });
+
+test('mergeUsage: antigravity-plan limpa antigravity-quota do cache anterior', () => {
+  const prev = [{ id: 'antigravity-quota', agent: 'antigravity', plan: 'Antigravity (m)', usedPct: 100, resetAt: '2026-07-14T19:56:12Z', fetchedAt: NOW }];
+  const fresh = [{ id: 'antigravity-plan', agent: 'antigravity', plan: 'Antigravity (m)', usedPct: null }];
+  const out = mergeUsage(prev, fresh, NOW);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'antigravity-plan');
+});
+

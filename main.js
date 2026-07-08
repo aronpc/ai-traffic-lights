@@ -20,6 +20,10 @@ const { spawn } = require('child_process');
 const { desktopEscape } = require('./src/validate');
 
 app.commandLine.appendSwitch('no-sandbox'); // sandbox SUID sem root no host
+// Necessário neste host: o renderer do Chromium crasha ao alocar shared memory
+// em /dev/shm (errno 3/ESRCH neste kernel). Sem isto, só o tray sobe e nenhuma
+// janela desenha. Faz o Chromium usar /tmp em vez de /dev/shm.
+app.commandLine.appendSwitch('disable-dev-shm-usage');
 
 // Versão do app (do package.json — app.getVersion lê direto, funciona no asar)
 // e URL pública do repo (rodapé das Preferências + tooltip do tray).
@@ -514,8 +518,18 @@ function createWindow() {
   const scrW = display.workAreaSize.width;
   const bounds = loadBounds();
   const width = (bounds && bounds.width) || DEFAULT_W;
-  const x = (bounds && typeof bounds.x === 'number') ? bounds.x : scrW - DEFAULT_W - 12;
-  const y = (bounds && typeof bounds.y === 'number') ? bounds.y : 12;
+  let x = (bounds && typeof bounds.x === 'number') ? bounds.x : scrW - DEFAULT_W - 12;
+  let y = (bounds && typeof bounds.y === 'number') ? bounds.y : 12;
+  // Clamp: se a posição salva caiu fora das telas ativas (ex.: monitor externo
+  // foi desconectado e o layout encolheu), traz de volta ao canto do primário.
+  // Sem isto o WM pode relocar a janela pra um lugar inesperado ou ela some.
+  const onScreen = screen.getAllDisplays().some((d) =>
+    x >= d.bounds.x && x + width <= d.bounds.x + d.bounds.width &&
+    y >= d.bounds.y && y + 40 <= d.bounds.y + d.bounds.height);
+  if (!onScreen) {
+    x = display.workArea.x + display.workAreaSize.width - width - 12;
+    y = display.workArea.y + 12;
+  }
 
   win = new BrowserWindow({
     width, height: HEADER_H + 120, // placeholder; renderer corrige via auto-height
@@ -1026,7 +1040,7 @@ async function collectAndSendUsage() {
     // credencial dele consulta a MESMA API de quota — mescla (dedup por token).
     glmCreds = mergeGlmCreds(glmCreds, opencodeGlmCreds());
     const codexCwds = codexCwdsFromSessions();
-    const entries = await usage.collectUsage({ glmCreds, codexCwds });
+    const entries = await usage.collectUsage({ glmCreds, codexCwds, home: app.getPath('home') });
     // Funde com o último estado: mantém o valor bom de cada linha se a coleta
     // atual falhou pra ela (evita zerar/sumir); esmaece pra cinza (stale) após
     // alguns min sem atualização em vez de piscar. Ver usage.mergeUsage.

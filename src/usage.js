@@ -25,6 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const os = require('os');
 
 // ---- tradução de tier Claude Max → label humano ----
 const CLAUDE_TIER_LABEL = {
@@ -192,7 +193,7 @@ function windowTitle(min) {
 // síncrono. Devolve 'Claude Max 5×' / 'Claude Max' / 'Claude'.
 function claudePlanLabel({ home } = {}) {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(home || process.env.HOME, '.claude.json'), 'utf8'));
+    const cfg = JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.claude.json'), 'utf8'));
     const p = parseClaudeConfig(cfg, 0);
     return p.plan || 'Claude';
   } catch { return 'Claude'; }
@@ -204,7 +205,7 @@ function claudePlanLabel({ home } = {}) {
 // fallback plano-só (o Claude Code renova sozinho no uso normal). Nunca lança.
 function readClaudeOAuthToken({ home } = {}) {
   try {
-    const creds = JSON.parse(fs.readFileSync(path.join(home || process.env.HOME, '.claude/.credentials.json'), 'utf8'));
+    const creds = JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.claude/.credentials.json'), 'utf8'));
     const t = creds && creds.claudeAiOauth && creds.claudeAiOauth.accessToken;
     return typeof t === 'string' && t ? t : null;
   } catch { return null; }
@@ -258,31 +259,6 @@ async function readClaudeUsage({ home, now, fetcher } = {}) {
 }
 function _clearClaudeCache() { _claudeCacheByToken.clear(); }
 
-// ---- Antigravity CLI — PASSIVO, sem rede ----
-// Lê o modelo/plano atual de ~/.gemini/antigravity-cli/settings.json
-function readAntigravityUsage({ home } = {}) {
-  try {
-    const os = require('os');
-    const settingsPath = path.join(home || os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
-    if (!fs.existsSync(settingsPath)) return null;
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    const model = settings.model || 'Gemini 2.5 Flash';
-    return [{
-      id: 'antigravity-plan',
-      agent: 'antigravity',
-      plan: 'Antigravity (' + model + ')',
-      title: null,
-      usedPct: null,
-      resetAt: null,
-      resetInMin: null,
-      extra: null,
-      source: 'antigravity.settings',
-      error: null,
-    }];
-  } catch {
-    return null;
-  }
-}
 
 // ---- Codex (OpenAI, plano ChatGPT) — PASSIVO, sem rede ----
 // O uso vive no rollout da sessão: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl.
@@ -369,7 +345,7 @@ function _clearCodexCache() { _codexCacheByCwd.clear(); }
 
 // I/O default do Codex (usados em produção; testes injetam os próprios).
 function defaultListRollouts(dir) {
-  const base = dir || path.join(process.env.HOME, '.codex', 'sessions');
+  const base = dir || path.join(os.homedir(), '.codex', 'sessions');
   const out = [];
   const walk = (d, depth) => {
     if (depth > 4) return;
@@ -431,14 +407,28 @@ function parseAntigravityTier(settings) {
 // Regex-based (o .db é binário/protobuf; os JSONs de erro ficam legíveis dentro).
 function parseAntigravityQuota(dbText, now) {
   if (typeof dbText !== 'string') return null;
+  // Ignora conversas de suporte técnico do próprio semáforo de IA que contêm
+  // discussões do código de cota e geram falsos positivos de teste.
+  if (dbText.includes('debug_usage.js') || dbText.includes('traffic-hook.sh')) {
+    return null;
+  }
   const nowMs = now || Date.now();
   let bestTs = 0, bestAt = null;
-  const re = /QUOTA_EXHAUSTED[^]*?"quotaResetTimeStamp":"([^"]+)"/g;
+  const re = /"quotaResetTimeStamp"\s*:\s*"([^"]+)"/g;
   let m;
   while ((m = re.exec(dbText))) {
-    const ms = Date.parse(m[1]);
+    const tsStr = m[1];
+    const ms = Date.parse(tsStr);
     if (Number.isNaN(ms)) continue;
-    if (ms > bestTs) { bestTs = ms; bestAt = m[1]; }
+
+    // Confirma se QUOTA_EXHAUSTED está próximo (limita a janela a 250 caracteres antes/depois)
+    const idx = m.index;
+    const start = Math.max(0, idx - 250);
+    const end = Math.min(dbText.length, idx + 250);
+    const context = dbText.slice(start, end);
+    if (/"reason"\s*:\s*"QUOTA_EXHAUSTED"/.test(context)) {
+      if (ms > bestTs) { bestTs = ms; bestAt = tsStr; }
+    }
   }
   // só conta se o reset é no FUTURO (quota realmente esgotada agora).
   if (bestAt && bestTs > nowMs) return { resetAt: bestAt };
@@ -449,7 +439,7 @@ function parseAntigravityQuota(dbText, now) {
 // conversa (o mais recente por mtime). Sem settings → null. Nunca lança.
 // I/O injetável (readFile, listDbs, readDb, mtime) pra teste.
 function readAntigravityUsage({ home, now, readFile, listDbs, readDb, mtime } = {}) {
-  const base = path.join(home || process.env.HOME, '.gemini', 'antigravity-cli');
+  const base = path.join(home || os.homedir(), '.gemini', 'antigravity-cli');
   let settings;
   try {
     const raw = (readFile || ((f) => fs.readFileSync(f, 'utf8')))(path.join(base, 'settings.json'));
@@ -458,15 +448,23 @@ function readAntigravityUsage({ home, now, readFile, listDbs, readDb, mtime } = 
   const t = parseAntigravityTier(settings);
   if (!t) return null;
 
-  // quota esgotada: varre os DBs de conversa, o mais recente primeiro; para no 1º
-  // QUOTA_EXHAUSTED com reset futuro. Limita a leitura pra não custar caro.
+  // quota esgotada: checa DBs de conversa RECENTES (modificados nas últimas 2h).
+  // DBs antigos podem conter erros de quota de um plano anterior que já foi
+  // atualizado — não devem afetar o status atual.
+  const QUOTA_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 horas
   let quota = null;
   try {
     const list = (listDbs || defaultListAntigravityDbs)(base);
     const stat = mtime || ((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } });
-    const read = readDb || ((f) => fs.readFileSync(f, 'latin1')); // latin1: extrai os JSONs sem quebrar em bytes binários
-    const sorted = list.map((f) => ({ f, m: stat(f) })).sort((a, b) => b.m - a.m).slice(0, 8); // só os 8 mais novos
-    for (const { f } of sorted) {
+    const read = readDb || ((f) => fs.readFileSync(f, 'latin1'));
+    const nowMs = now || Date.now();
+    // Filtra apenas por modificados nas últimas 2h, ordenando pelos mais recentes.
+    const candidates = list
+      .map((f) => ({ f, m: stat(f) }))
+      .filter(({ m }) => (nowMs - m) < QUOTA_MAX_AGE_MS)
+      .sort((a, b) => b.m - a.m)
+      .slice(0, 3);
+    for (const { f } of candidates) {
       let txt;
       try { txt = read(f); } catch { continue; }
       const q = parseAntigravityQuota(txt, now);
@@ -479,14 +477,14 @@ function readAntigravityUsage({ home, now, readFile, listDbs, readDb, mtime } = 
   if (quota) {
     const resetInMin = Math.max(0, Math.round((Date.parse(quota.resetAt) - nowMs) / 60000));
     return [{
-      id: 'antigravity-quota', agent: 'antigravity', title: null, plan,
+      id: 'antigravity-quota', agent: 'antigravity', title: 'Cota', plan,
       usedPct: 100,                        // esgotado → barra cheia (vermelha)
       resetAt: quota.resetAt, resetInMin, extra: null,
       source: 'antigravity.quota', error: null,
     }];
   }
   return [{
-    id: 'antigravity-plan', agent: 'antigravity', title: null, plan,
+    id: 'antigravity-plan', agent: 'antigravity', title: 'Cota', plan,
     usedPct: null,                         // com quota → sem número (só rótulo)
     resetAt: null, resetInMin: null, extra: null,
     source: 'antigravity.settings', error: null,
@@ -673,6 +671,13 @@ function mergeUsage(prev, fresh, now) {
   const nowMs = now || Date.now();
   const prevById = new Map();
   for (const p of (Array.isArray(prev) ? prev : [])) if (p && p.id) prevById.set(p.id, p);
+
+  // Se a nova coleta traz o plano do Antigravity, limpa a cota esgotada do cache anterior.
+  const freshIds = new Set((fresh || []).map((f) => f && f.id).filter(Boolean));
+  if (freshIds.has('antigravity-plan')) {
+    prevById.delete('antigravity-quota');
+  }
+
   const seen = new Set();
   const out = [];
 
