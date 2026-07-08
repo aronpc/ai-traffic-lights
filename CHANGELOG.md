@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+### Changed
+### Fixed
+
+## [0.5.0] - 2026-07-08
+
+### Added
 - **Self-update from the UI (AppImage).** The overlay now checks for new
   releases periodically (on launch + every 1h) and, for AppImage installs,
   downloads and applies the update in place — a `↓ vX` button downloads with a
