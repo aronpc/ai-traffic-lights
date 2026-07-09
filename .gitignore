@@ -5,6 +5,7 @@ dist/
 # estado local de ferramentas de desenvolvimento
 .omc/
 .claude/
+graphify-out/
 
 # temporários
 *.log

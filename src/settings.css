@@ -87,6 +87,31 @@ select, .shortcut {
 select:focus, .shortcut.capturing { border-color: var(--green); }
 .shortcut { cursor: pointer; font-variant-numeric: tabular-nums; }
 .shortcut.capturing { color: var(--ink-dim); font-style: italic; }
+
+/* select customizado — dropdown estilizado no tema dark (o <select> nativo,
+   cujo popup não é estilizável, fica escondido e serve de fonte de verdade). */
+.sel { position: relative; }
+.sel select { display: none; }
+.sel__btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  background: rgba(255, 255, 255, 0.05); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+  font: inherit; font-size: 13px; cursor: pointer; text-align: left; outline: none;
+}
+.sel__btn::after {
+  content: '▾'; color: var(--ink-dim); margin-left: 8px; font-size: 11px;
+  transition: transform 0.15s, color 0.15s;
+}
+.sel__btn:focus, .sel.is-open .sel__btn { border-color: var(--green); }
+.sel.is-open .sel__btn::after { color: var(--green); transform: rotate(180deg); }
+.sel__list {
+  margin-top: 6px; padding: 4px;
+  border: 1px solid var(--border-bright); border-radius: 8px; background: var(--bg);
+}
+.sel__opt { padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--ink); cursor: pointer; }
+.sel__opt:hover { background: var(--row-hover); }
+.sel__opt.is-sel { color: var(--green); font-weight: 600; background: rgba(63, 185, 107, 0.10); }
+
 .hint { color: var(--ink-dim); font-size: 11px; margin-top: 5px; }
 
 /* slider de transparência: trilho + valor tabular à direita */

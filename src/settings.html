@@ -20,6 +20,7 @@
     <!-- abas horizontais -->
     <nav class="tabs">
       <button class="tab is-active" data-tab="general" data-i18n="tab_general">Geral</button>
+      <button class="tab" data-tab="notifications" data-i18n="tab_notifications">Notificações</button>
       <button class="tab" data-tab="integration" data-i18n="tab_integration">Integração</button>
     </nav>
 
@@ -81,6 +82,61 @@
         </div>
       </section>
 
+      <!-- ===================== ABA: NOTIFICAÇÕES ===================== -->
+      <section class="tab-panel" data-panel="notifications" hidden>
+        <div class="section">
+          <div class="section-title" data-i18n="sec_quota_reset">Reset de cota</div>
+          <div class="row">
+            <input type="checkbox" id="notifyReset">
+            <label for="notifyReset" data-i18n="notify_reset_label">Avisar quando a cota resetar</label>
+          </div>
+          <div class="hint" data-i18n="notify_reset_hint">Quando um limite esgotado libera de novo, mostra uma notificação com som.</div>
+          <div class="field">
+            <label class="top" for="resetThreshold" data-i18n="reset_threshold_label">Considerar esgotado a partir de</label>
+            <div class="range-row">
+              <input type="range" id="resetThreshold" min="1" max="100" step="1">
+              <span class="range-val" id="resetThresholdVal">90%</span>
+            </div>
+            <div class="hint" data-i18n="reset_threshold_hint">Só avisa se o uso tinha passado deste % antes de resetar.</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title" data-i18n="sec_alert_sound">Som do alerta</div>
+          <div class="row">
+            <input type="checkbox" id="soundEnabled">
+            <label for="soundEnabled" data-i18n="sound_enabled_label">Tocar som quando algo fica vermelho</label>
+          </div>
+          <div class="field">
+            <label class="top" for="soundType" data-i18n="sound_type_label">Som</label>
+            <select id="soundType">
+              <option value="beep" data-i18n="sound_beep">Bip</option>
+              <option value="double" data-i18n="sound_double">Toque duplo</option>
+              <option value="chime" data-i18n="sound_chime">Sino</option>
+              <option value="low" data-i18n="sound_low">Grave</option>
+              <option value="custom" data-i18n="sound_custom">Arquivo próprio…</option>
+            </select>
+          </div>
+          <div class="field" id="soundFileField" hidden>
+            <label class="top" data-i18n="sound_file_label">Arquivo de áudio</label>
+            <div class="btn-row">
+              <button id="soundPick" data-i18n="sound_pick">Escolher arquivo…</button>
+            </div>
+            <div class="hint"><span id="soundFileName">—</span></div>
+          </div>
+          <div class="field">
+            <label class="top" for="soundVolume" data-i18n="sound_volume_label">Volume</label>
+            <div class="range-row">
+              <input type="range" id="soundVolume" min="0" max="100" step="1">
+              <span class="range-val" id="soundVolumeVal">18%</span>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="soundTest" data-i18n="sound_test">▶ Testar som</button>
+          </div>
+        </div>
+      </section>
+
       <!-- ===================== ABA: INTEGRAÇÃO ===================== -->
       <section class="tab-panel" data-panel="integration" hidden>
         <div class="section">
@@ -123,6 +179,8 @@
   </div>
 
   <script src="i18n.js"></script>
+  <script src="sound.js"></script>
+  <script src="ui-select.js"></script>
   <script src="settings-renderer.js"></script>
 </body>
 </html>

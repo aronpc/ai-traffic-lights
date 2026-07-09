@@ -75,6 +75,52 @@ test('mergeWithDefaults: markReadOnClick default true, aceita bool', () => {
   assert.equal(mergeWithDefaults({ markReadOnClick: 'x' }).markReadOnClick, true); // inválido → default
 });
 
+test('mergeWithDefaults: notifyOnReset default true, aceita bool', () => {
+  assert.equal(DEFAULTS.notifyOnReset, true);
+  assert.equal(mergeWithDefaults({}).notifyOnReset, true);
+  assert.equal(mergeWithDefaults({ notifyOnReset: false }).notifyOnReset, false);
+  assert.equal(mergeWithDefaults({ notifyOnReset: 'x' }).notifyOnReset, true); // inválido → default
+});
+
+test('mergeWithDefaults: resetNotifyThresholdPct default 90, clampa [1,100], arredonda', () => {
+  assert.equal(DEFAULTS.resetNotifyThresholdPct, 90);
+  assert.equal(mergeWithDefaults({}).resetNotifyThresholdPct, 90);
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 50 }).resetNotifyThresholdPct, 50);
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 0 }).resetNotifyThresholdPct, 1);     // abaixo → clampa
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 150 }).resetNotifyThresholdPct, 100); // acima → clampa
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 88.6 }).resetNotifyThresholdPct, 89); // arredonda
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: 'x' }).resetNotifyThresholdPct, 90);  // não-número → default
+  assert.equal(mergeWithDefaults({ resetNotifyThresholdPct: NaN }).resetNotifyThresholdPct, 90);  // NaN → default
+});
+
+test('mergeWithDefaults: soundEnabled default true, aceita bool', () => {
+  assert.equal(DEFAULTS.soundEnabled, true);
+  assert.equal(mergeWithDefaults({ soundEnabled: false }).soundEnabled, false);
+  assert.equal(mergeWithDefaults({ soundEnabled: 'x' }).soundEnabled, true); // inválido → default
+});
+
+test('mergeWithDefaults: soundVolume default 0.18, clampa [0,1]', () => {
+  assert.equal(DEFAULTS.soundVolume, 0.18);
+  assert.equal(mergeWithDefaults({ soundVolume: 0.5 }).soundVolume, 0.5);
+  assert.equal(mergeWithDefaults({ soundVolume: -1 }).soundVolume, 0);      // abaixo → clampa
+  assert.equal(mergeWithDefaults({ soundVolume: 5 }).soundVolume, 1);       // acima → clampa
+  assert.equal(mergeWithDefaults({ soundVolume: 'x' }).soundVolume, 0.18);  // não-número → default
+});
+
+test('mergeWithDefaults: soundType aceita presets + custom; inválido → default (beep)', () => {
+  assert.equal(DEFAULTS.soundType, 'beep');
+  assert.equal(mergeWithDefaults({ soundType: 'chime' }).soundType, 'chime');
+  assert.equal(mergeWithDefaults({ soundType: 'custom' }).soundType, 'custom');
+  assert.equal(mergeWithDefaults({ soundType: 'nope' }).soundType, 'beep'); // não suportado
+  assert.equal(mergeWithDefaults({ soundType: 42 }).soundType, 'beep');
+});
+
+test('mergeWithDefaults: soundFile só aceita string curta', () => {
+  assert.equal(mergeWithDefaults({ soundFile: '/x/alert.mp3' }).soundFile, '/x/alert.mp3');
+  assert.equal(mergeWithDefaults({ soundFile: 9 }).soundFile, '');
+  assert.equal(mergeWithDefaults({ soundFile: 'x'.repeat(4097) }).soundFile, '');
+});
+
 test('mergeWithDefaults: atalho inválido é ignorado (mantém default)', () => {
   assert.equal(mergeWithDefaults({ shortcut: 'H' }).shortcut, DEFAULTS.shortcut);
   assert.equal(mergeWithDefaults({ shortcut: 'Control+Que' }).shortcut, DEFAULTS.shortcut);

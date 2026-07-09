@@ -11,6 +11,17 @@ const $sc = document.getElementById('shortcut');
 const $opacity = document.getElementById('opacity');
 const $opacityVal = document.getElementById('opacityVal');
 const $markRead = document.getElementById('markRead');
+const $notifyReset = document.getElementById('notifyReset');
+const $resetThreshold = document.getElementById('resetThreshold');
+const $resetThresholdVal = document.getElementById('resetThresholdVal');
+const $soundEnabled = document.getElementById('soundEnabled');
+const $soundType = document.getElementById('soundType');
+const $soundVolume = document.getElementById('soundVolume');
+const $soundVolumeVal = document.getElementById('soundVolumeVal');
+const $soundFileField = document.getElementById('soundFileField');
+const $soundPick = document.getElementById('soundPick');
+const $soundFileName = document.getElementById('soundFileName');
+const $soundTest = document.getElementById('soundTest');
 const $terminal = document.getElementById('terminal');
 const $terminalCmd = document.getElementById('terminalCmd');
 const $terminalCmdField = document.getElementById('terminalCmdField');
@@ -19,12 +30,16 @@ let captured = null;        // accelerator capturado (string) ou null
 let capturing = false;
 let ready = false;          // trava o push durante a carga inicial (getSettings)
 let T = makeT('en');        // i18n — troca pro idioma do sistema via get-lang
+let soundFile = '';         // caminho do arquivo de som custom (setado no load / ao escolher)
+// Web Audio próprio das Preferências, só para o botão "Testar som".
+let prefsAudioCtx = null, prefsCustomBuffer = null, prefsCustomFor = null;
 
 // Textos estáticos do HTML (labels, botões, hints, abas) + título da janela.
 // document.title manda no título da janela (sobrepõe a option do main).
 function applyI18n() {
   for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
   document.title = T('prefs_title');
+  if (typeof relabelAllSelects === 'function') relabelAllSelects(); // dropdowns custom seguem o idioma
 }
 
 const KEYNAME = { ' ': 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' };
@@ -68,6 +83,12 @@ function buildCfg() {
   if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
   cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100;  // slider 60–100 → 0.6–1.0
   cfg.markReadOnClick = $markRead.checked;   // clique marca como lido
+  cfg.notifyOnReset = $notifyReset.checked;  // avisar quando a cota resetar
+  cfg.resetNotifyThresholdPct = parseInt($resetThreshold.value, 10) || 90; // limiar de "esgotado"
+  cfg.soundEnabled = $soundEnabled.checked;
+  cfg.soundVolume = (parseInt($soundVolume.value, 10) || 0) / 100;  // slider 0–100 → 0–1
+  cfg.soundType = $soundType.value;
+  cfg.soundFile = soundFile;
   return cfg;
 }
 
@@ -95,6 +116,51 @@ $sc.addEventListener('keydown', (e) => {
 $idle.addEventListener('change', pushLive);
 $lang.addEventListener('change', pushLive);
 $markRead.addEventListener('change', pushLive);
+$notifyReset.addEventListener('change', pushLive);
+// slider do limiar: atualiza o rótulo a cada pixel (barato/local); salva só ao
+// soltar (change). Não afeta o overlay ao vivo, então dispensa o debounce do opacity.
+$resetThreshold.addEventListener('input', () => { $resetThresholdVal.textContent = $resetThreshold.value + '%'; });
+$resetThreshold.addEventListener('change', pushLive);
+// ---- som do alerta ----
+$soundEnabled.addEventListener('change', pushLive);
+$soundType.addEventListener('change', () => { syncSoundFileField(); pushLive(); });
+$soundVolume.addEventListener('input', () => { $soundVolumeVal.textContent = $soundVolume.value + '%'; });
+$soundVolume.addEventListener('change', pushLive);
+$soundTest.addEventListener('click', testSound);
+$soundPick.addEventListener('click', async () => {
+  const p = await window.trafficLight.pickSoundFile();
+  if (!p) return;
+  soundFile = p;
+  $soundFileName.textContent = p.split('/').pop();
+  prefsCustomBuffer = null; prefsCustomFor = null;   // força redecodificar no próximo teste
+  pushLive();
+});
+// Mostra o campo de arquivo só no modo 'custom' (hoisted — usado no load e acima).
+function syncSoundFileField() { $soundFileField.hidden = $soundType.value !== 'custom'; }
+// AudioContext próprio das Prefs (o overlay tem o seu). Preview do botão "Testar".
+function prefsCtx() {
+  prefsAudioCtx = prefsAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  if (prefsAudioCtx.state === 'suspended') prefsAudioCtx.resume();
+  return prefsAudioCtx;
+}
+async function testSound() {
+  try {
+    const vol = (parseInt($soundVolume.value, 10) || 0) / 100;
+    const type = $soundType.value;
+    const ctx = prefsCtx();
+    if (type === 'custom') {
+      if (soundFile && (prefsCustomFor !== soundFile || !prefsCustomBuffer)) {
+        const bytes = await window.trafficLight.getSoundBytes(soundFile);
+        if (bytes && bytes.byteLength) {
+          const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          prefsCustomBuffer = await ctx.decodeAudioData(ab); prefsCustomFor = soundFile;
+        }
+      }
+      if (prefsCustomBuffer) { playBuffer(ctx, prefsCustomBuffer, vol); return; }
+    }
+    playPreset(ctx, type, vol);
+  } catch { /* preview nunca quebra a UI */ }
+}
 // Reflete a transparência na PRÓPRIA janela de Preferências: o painel .prefs usa
 // var(--bg) → --bg-alpha (igual ao overlay). Só setar o CSS var local (barato).
 function applyPrefsOpacity() {
@@ -137,6 +203,10 @@ document.getElementById('removeHooks').addEventListener('click', () => window.tr
 // Mostra o campo de comando custom só no modo 'custom' (hoisted — usado acima).
 function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
 
+// Troca os <select> nativos por dropdowns custom ANTES do load (evita o flash do
+// select nativo enquanto o getSettings resolve); o load re-sincroniza os rótulos.
+enhanceAllSelects();
+
 // ---- carga inicial ----
 window.trafficLight.getVersion().then((v) => { if (v) document.getElementById('ver').textContent = v; });
 window.trafficLight.getRepoUrl().then((url) => {
@@ -164,9 +234,22 @@ window.trafficLight.getSettings().then((c) => {
     $opacity.value = String(opct);
     $opacityVal.textContent = opct + '%';
     $markRead.checked = c.markReadOnClick !== false; // default ligado
+    $notifyReset.checked = c.notifyOnReset !== false; // default ligado
+    const thr = typeof c.resetNotifyThresholdPct === 'number' ? c.resetNotifyThresholdPct : 90;
+    $resetThreshold.value = String(thr);
+    $resetThresholdVal.textContent = thr + '%';
+    $soundEnabled.checked = c.soundEnabled !== false; // default ligado
+    $soundType.value = c.soundType || 'beep';
+    const sv = Math.round((typeof c.soundVolume === 'number' ? c.soundVolume : 0.18) * 100);
+    $soundVolume.value = String(sv);
+    $soundVolumeVal.textContent = sv + '%';
+    soundFile = c.soundFile || '';
+    $soundFileName.textContent = soundFile ? soundFile.split('/').pop() : '—';
   }
   applyPrefsOpacity();                               // aplica a transparência salva na janela de Prefs
   syncTerminalCmdField();
+  syncSoundFileField();
+  refreshAllSelects();                               // re-sincroniza os dropdowns custom com os values carregados
   ready = true;                                      // libera o live-apply só após popular tudo
 });
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });

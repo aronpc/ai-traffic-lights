@@ -3,7 +3,7 @@
 // envia sessões ao renderer, auto-redimensiona a altura pelo nº de linhas,
 // e persiste largura + posição entre reinícios.
 
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
@@ -841,6 +841,45 @@ ipcMain.on('notify', (_e, { title, body }) => {
   try { new Notification({ title, body, silent: true }).show(); } catch {}
 });
 
+// ---- som de alerta customizado ----
+// Escolher um arquivo de áudio: abre o diálogo nativo e COPIA o arquivo pra
+// BASE_DIR/sounds/alert.<ext> (sobrevive a mover/apagar o original). Devolve o
+// caminho da cópia (o que fica salvo em settings.soundFile) ou null se cancelou.
+ipcMain.handle('pick-sound-file', async () => {
+  try {
+    const r = await dialog.showOpenDialog({
+      title: 'Escolher som de alerta',
+      properties: ['openFile'],
+      filters: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus'] }],
+    });
+    if (r.canceled || !r.filePaths || !r.filePaths[0]) return null;
+    const src = r.filePaths[0];
+    const dir = path.join(BASE_DIR, 'sounds');
+    fs.mkdirSync(dir, { recursive: true });
+    const ext = (path.extname(src).toLowerCase().match(/^\.[a-z0-9]{1,8}$/) || ['.snd'])[0];
+    const dest = path.join(dir, 'alert' + ext);
+    // limpa cópias antigas (alert.*) pra não acumular formatos
+    for (const f of fs.readdirSync(dir)) {
+      const p = path.join(dir, f);
+      if (/^alert\./.test(f) && p !== dest) { try { fs.unlinkSync(p); } catch { /* ignore */ } }
+    }
+    fs.copyFileSync(src, dest);
+    return dest;
+  } catch { return null; }
+});
+// Ler os bytes do som custom pro renderer decodificar (Web Audio). TRAVA DE
+// SEGURANÇA: só lê de dentro de BASE_DIR/sounds (nunca um caminho arbitrário),
+// pra que uma config podre não vire leitura de arquivo qualquer do disco.
+ipcMain.handle('get-sound-bytes', (_e, file) => {
+  try {
+    if (typeof file !== 'string') return null;
+    const soundsDir = path.join(BASE_DIR, 'sounds');
+    const resolved = path.resolve(file);
+    if (resolved !== soundsDir && !resolved.startsWith(soundsDir + path.sep)) return null;
+    return new Uint8Array(fs.readFileSync(resolved));
+  } catch { return null; }
+});
+
 // Tray: mostrar/ocultar, autostart, sair.
 ipcMain.on('toggle-visibility', toggleWin);
 
@@ -1046,9 +1085,31 @@ async function collectAndSendUsage() {
     // Funde com o último estado: mantém o valor bom de cada linha se a coleta
     // atual falhou pra ela (evita zerar/sumir); esmaece pra cinza (stale) após
     // alguns min sem atualização em vez de piscar. Ver usage.mergeUsage.
-    if (Array.isArray(entries)) { lastUsage = usage.mergeUsage(lastUsage, entries); saveUsage(); }
+    if (Array.isArray(entries)) { lastUsage = usage.mergeUsage(lastUsage, entries); saveUsage(); maybeNotifyReset(); }
   } catch { /* collectUsage já engole erros internamente; defeção dupla */ }
   sendToRenderer('usage', lastUsage);
+}
+
+// Estado (por id) que detectReset usa entre coletas p/ achar a transição
+// "estava esgotado → resetou". Vive só na memória do processo: se o app estava
+// fechado no horário do reset, não há estado prévio → não notifica retroativo
+// (proposital — o usuário já vê a barra liberada ao reabrir).
+let resetNotifyState = {};
+// Após cada coleta, vê se algum limite ESGOTADO acabou de resetar e — se o
+// usuário deixou ligado (settings.notifyOnReset) — dispara uma notificação
+// nativa COM som (silent:false; é um evento que o usuário estava esperando).
+// Nunca lança: a detecção de reset não pode derrubar o loop de uso.
+function maybeNotifyReset() {
+  try {
+    if (settingsCfg.notifyOnReset === false) { resetNotifyState = {}; return; }
+    const threshold = typeof settingsCfg.resetNotifyThresholdPct === 'number' ? settingsCfg.resetNotifyThresholdPct : 90;
+    const { toNotify, nextState } = usage.detectReset(resetNotifyState, lastUsage, Date.now(), threshold);
+    resetNotifyState = nextState;
+    for (const e of toNotify) {
+      const name = [e.plan, e.title].filter(Boolean).join(' · ') || e.id;
+      try { new Notification({ title: 'AI Traffic Lights', body: T('ntf_tokens_reset', { name }), silent: false }).show(); } catch {}
+    }
+  } catch { /* detecção de reset nunca derruba a coleta */ }
 }
 ipcMain.on('request-usage', () => {
   sendToRenderer('usage', lastUsage);

@@ -8,7 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Custom alert sound.** The red-alert sound is now configurable in
+  Preferences → Notifications → "Alert sound": turn it on/off, set the volume,
+  pick a built-in tone (beep, double tap, chime, low) or load your own audio file
+  (mp3/wav/ogg…). A "Test sound" button previews it. Custom files are copied into
+  the app's data dir and decoded via Web Audio; playback falls back to the beep if
+  the file can't be read.
+- **Notification when your token quota resets.** If a usage limit was exhausted
+  (usage ≥ a configurable threshold, default 90%) and its reset time arrives, the
+  app fires a native notification (with sound) so you know the cap has lifted.
+  Adds Preferences → Notifications: a toggle (`Notify when quota resets`) and a
+  threshold slider. Detection is state-based — it compares consecutive 60s usage
+  polls — so it survives the app sleeping or missed polls, and never fires
+  retroactively if the app was closed at reset time.
 ### Changed
+- **Themed dropdowns in Preferences.** The native OS `<select>` popups (which
+  ignore the app's dark theme) are replaced by a custom dropdown across all four
+  Preferences selects — consistent dark styling, keyboard-navigable, closes on
+  outside click. The native `<select>` stays underneath as the source of truth,
+  so behavior is unchanged; the swap happens before load to avoid a flash of the
+  native control.
 ### Fixed
 
 ## [0.5.0] - 2026-07-08

@@ -88,20 +88,40 @@ function collapsedHeight() {
   return HEADER_H + launcherH + usageH;
 }
 
-// ---- alerta no vermelho: beep (Web Audio) + notificação nativa ----
+// ---- alerta no vermelho: som (Web Audio) + notificação nativa ----
+// O som segue as Preferências (settings.soundEnabled/soundVolume/soundType/
+// soundFile): um preset sintético (sound.js) ou um arquivo do usuário decodificado
+// via Web Audio. O arquivo é carregado sob demanda quando a config muda.
 let audioCtx = null;
+let customBuffer = null;      // AudioBuffer do arquivo custom decodificado
+let customBufferFor = null;   // soundFile que o buffer representa (evita redecodificar)
+function ensureAudioCtx() {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+// Busca os bytes do arquivo custom (via IPC) e decodifica num AudioBuffer.
+// Idempotente: só redecodifica se o caminho mudou. Falha → sem buffer (o beep cai
+// no preset). Chamado quando settingsCfg é aplicado/muda.
+async function loadCustomSound(file) {
+  if (!file) { customBuffer = null; customBufferFor = null; return; }
+  if (file === customBufferFor && customBuffer) return;
+  try {
+    const bytes = await window.trafficLight.getSoundBytes(file);   // Uint8Array | null
+    if (!bytes || !bytes.byteLength) throw new Error('sem bytes');
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    customBuffer = await ensureAudioCtx().decodeAudioData(ab);
+    customBufferFor = file;
+  } catch { customBuffer = null; customBufferFor = null; }
+}
 function beep() {
   try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    const t = audioCtx.currentTime;
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.type = 'sine'; o.frequency.value = 880;
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-    o.start(t); o.stop(t + 0.35);
+    const cfg = settingsCfg || {};
+    if (cfg.soundEnabled === false) return;                        // som desligado
+    const ctx = ensureAudioCtx();
+    const vol = typeof cfg.soundVolume === 'number' ? cfg.soundVolume : 0.18;
+    if (cfg.soundType === 'custom' && customBuffer) { playBuffer(ctx, customBuffer, vol); return; }
+    playPreset(ctx, cfg.soundType || 'beep', vol);                 // custom sem buffer pronto → preset
   } catch {}
 }
 function alertAwaiting(s) {
@@ -643,6 +663,7 @@ window.trafficLight.getLaunchers().then((l) => { launchers = l || []; render(); 
 window.trafficLight.getSettings().then((c) => {
   settingsCfg = c;
   lastLangPref = c && c.lang;
+  if (c && c.soundType === 'custom') loadCustomSound(c.soundFile);  // pré-carrega o áudio custom
   // Restaura o estado de UI salvo: recolhido/expandido (default expandido).
   setExpanded(!(c && c.collapsed));
   applyAppearance();                       // transparência + modo compacto
@@ -653,6 +674,7 @@ window.trafficLight.onSettingsChanged((c) => {
   const langChanged = !c || c.lang !== lastLangPref;  // só re-resolve idioma se a PREF mudou
   lastLangPref = c && c.lang;
   settingsCfg = c;
+  loadCustomSound(c && c.soundType === 'custom' ? c.soundFile : null); // recarrega/limpa o áudio custom
   applyAppearance();                       // opacity/compact podem ter mudado
   applyFooterMode();                       // footer pode ter mudado (showUsage)
   render();
