@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 ### Fixed
 
+## [0.6.4] - 2026-07-09
+
+### Added
+- **Ícone do app.** O overlay e a janela de Preferências agora definem `icon`
+  (`build/icon.png`, semáforo 512px), e o ícone passou a ser empacotado na
+  AppImage/deb (`build.files`). Juntas com o `.desktop` (`Icon=` +
+  `StartupWMClass=ai-traffic-lights` casando o WM_CLASS real), o app finalmente
+  mostra o ícone correto no dock/menu/alt-tab em vez de um ícone genérico.
+
+### Changed
+### Fixed
+- **GLM/z.ai aparecia duplicado.** A mesma conta z.ai podia chegar canônica
+  (1 conta → id `glm-month`, plan `GLM Pro`) e sufixada (multi-conta → id
+  `glm-month:hash`, plan `GLM Pro (z.ai)`) conforme o número de contas oscilava
+  entre ticks, ou como resquício legado no `usage.json`. Como o **plan** diferia,
+  a chave de dedup por conteúdo não colapsava as duas → coexistiam → "z.ai 2×"
+  (chegava a 4 linhas: 2× Mês + 2× 5h). Agora o rótulo de provedor do GLM é
+  normalizado na chave de dedup, então a mesma conta sempre vira uma linha por
+  janela (`z.ai(Pro) Mês` + `z.ai(Pro) 5h`).
+
 ## [0.6.3] - 2026-07-09
 
 ### Added
