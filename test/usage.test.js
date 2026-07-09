@@ -644,6 +644,26 @@ test('mergeUsage: conteúdo diferente (reset distinto) → NÃO colapsa (contas 
   assert.equal(out.length, 2, 'contas com dados diferentes ficam separadas');
 });
 
+test('mergeUsage: GLM canônico (plan "GLM Pro") vs sufixado (plan "GLM Pro (z.ai)") da MESMA conta → colapsa (bug z.ai 2×)', () => {
+  // Cenário real: a coleta oscila entre single-conta (id canônico 'glm-month',
+  // plan 'GLM Pro') e multi-conta (id 'glm-month:6baca3', plan 'GLM Pro (z.ai)'),
+  // ou um é resquício legado do usage.json. Sem normalizar o label na chave, as
+  // duas linhas têm plans diferentes e coexistem → "z.ai" aparece duplicado.
+  const canon = { id: 'glm-month', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro', usedPct: 100, resetAt: '2026-08-01T00:00:00Z', fetchedAt: NOW - 2000, error: null };
+  const suffixed = { id: 'glm-month:6baca3', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro (z.ai)', usedPct: 100, resetAt: '2026-08-01T00:00:00Z', fetchedAt: NOW - 1000, error: null };
+  // boot carregou AMBOS do usage.json; sem GLM ativo agora (fresh vazio) → órfãos.
+  const out = mergeUsage([canon, suffixed], [], NOW);
+  assert.equal(out.length, 1, 'a mesma conta não aparece 2× mesmo com id/plan oscilando');
+  assert.equal(out[0].usedPct, 100);
+});
+
+test('mergeUsage: GLM tokens 5h canônico vs sufixado → colapsa', () => {
+  const canon = { id: 'glm-tokens', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro', usedPct: 46, resetAt: '2026-07-07T17:00:00Z', fetchedAt: NOW - 2000, error: null };
+  const suffixed = { id: 'glm-tokens:6baca3', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (z.ai)', usedPct: 48, resetAt: '2026-07-07T17:00:00Z', fetchedAt: NOW - 1000, error: null };
+  const out = mergeUsage([canon, suffixed], [], NOW);
+  assert.equal(out.length, 1, 'tokens 5h da mesma conta colapsam em 1 linha');
+});
+
 test('mergeUsage: token inválido (summary sem %) some quando há concreto do mesmo agente', () => {
   const bad = { id: 'glm', agent: 'glm', title: 'GLM', plan: 'GLM', usedPct: null, error: 'no limits parsed' };
   const good = { id: 'glm-tokens', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro', usedPct: 7, resetAt: '2026-07-08T02:00:00Z', error: null };

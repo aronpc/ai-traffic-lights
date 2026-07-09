@@ -727,7 +727,14 @@ function mergeUsage(prev, fresh, now) {
   const byContent = new Map();
   for (const e of deduped) {
     if (!e) continue;
-    const key = [e.agent, e.title || '', e.plan || '', e.resetAt || ''].join('|');
+    // Normaliza o rótulo de provedor do GLM (" (z.ai)"/" (bigmodel.cn)") antes de
+    // gerar a chave: a MESMA conta pode chegar canônica (1 conta → plan 'GLM Pro',
+    // id 'glm-month') ou sufixada (multi-conta → plan 'GLM Pro (z.ai)', id
+    // 'glm-month:hash') conforme o número de contas oscila entre ticks, ou ficar
+    // como resquício legado no usage.json. Sem isto as duas versões têm chaves
+    // diferentes e não colapsam → o GLM aparece duplicado ("z.ai 2×").
+    const planNorm = String(e.plan || '').replace(/\s*\((z\.ai|bigmodel\.cn)\)\s*$/, '').trim();
+    const key = [e.agent, e.title || '', planNorm, e.resetAt || ''].join('|');
     const prev = byContent.get(key);
     if (!prev) { byContent.set(key, e); continue; }
     // escolhe a melhor: valor bom > stale menor > fetchedAt maior.
