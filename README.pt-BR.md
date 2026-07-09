@@ -86,29 +86,41 @@ menu do tray (ou no botão de onboarding do overlay).
 
 ### A — AppImage (recomendado, auto-atualizável)
 
-Pegue o `.AppImage` mais recente na [página de releases](https://github.com/aronpc/ai-traffic-lights/releases/latest), coloque numa pasta
-**gravável pelo usuário** (o auto-updater reescreve esse arquivo no lugar — então
-não `/opt` nem `/usr`), dê permissão de execução e rode:
+**Uma linha** — baixa a versão mais recente, dá permissão de execução, instala o
+ícone no tema do sistema e cria o atalho no menu de aplicativos (com
+`StartupWMClass` casando o WM_CLASS real do app):
 
 ```bash
-mkdir -p ~/Applications
-curl -L -o ~/Applications/AI-Traffic-Lights.AppImage \
-  https://github.com/aronpc/ai-traffic-lights/releases/download/v0.6.0/AI-Traffic-Lights-0.6.0.AppImage
-chmod +x ~/Applications/AI-Traffic-Lights.AppImage
-~/Applications/AI-Traffic-Lights.AppImage
+curl -fsSL https://raw.githubusercontent.com/aronpc/ai-traffic-lights/main/install.sh | bash
 ```
 
-Troque `0.6.0` pela tag de release mais recente. É o único build que
-**se atualiza sozinho**: no boot e a cada hora ele checa por uma release nova, o
-badge de versão vira `↓ vX` (baixar) → `↻` (reiniciar na versão nova), e o tray
-tem um item "Verificar atualizações".
+Depois abra pelo **menu de aplicativos** (busque "AI Traffic Lights") ou rode
+`~/Applications/AI-Traffic-Lights.AppImage`. Para remover:
+`curl -fsSL .../install.sh | bash -s -- --uninstall`.
+
+É o único build que **se atualiza sozinho**: no boot e a cada hora ele checa por
+uma release nova, o badge de versão vira `↓ vX` (baixar) → `↻` (reiniciar na
+versão nova), e o tray tem um item "Verificar atualizações".
+
+<details><summary>Sem o <code>install.sh</code> (manual)</summary>
+
+Baixe o `.AppImage` da [última release](https://github.com/aronpc/ai-traffic-lights/releases/latest)
+numa pasta **gravável pelo usuário** (o auto-updater reescreve esse arquivo no
+lugar — então não `/opt` nem `/usr`), e rode:
+
+```bash
+chmod +x AI-Traffic-Lights-*.AppImage
+./AI-Traffic-Lights-*.AppImage
+```
+
+</details>
 
 ### B — .deb
 
+Baixe o `.deb` da [última release](https://github.com/aronpc/ai-traffic-lights/releases/latest) e:
+
 ```bash
-curl -L -o ai-traffic-lights.deb \
-  https://github.com/aronpc/ai-traffic-lights/releases/download/v0.6.0/ai-traffic-lights_0.6.0_amd64.deb
-sudo dpkg -i ai-traffic-lights.deb
+sudo dpkg -i ai-traffic-lights_*.deb
 ```
 
 Instala em `/opt` e registra um `.desktop`. **Sem auto-update** nesse caminho (o
