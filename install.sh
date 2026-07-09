@@ -18,8 +18,7 @@ BIN_NAME="ai-traffic-lights"          # base p/ Icon=, StartupWMClass e ícone h
 APPIMAGE_NAME="AI-Traffic-Lights.AppImage"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/Applications}"
 APPS_DIR="$HOME/.local/share/applications"
-ICON_SIZE="512"
-ICON_DIR="$HOME/.local/share/icons/hicolor/${ICON_SIZE}x${ICON_SIZE}/apps"
+ICON_SIZES="256 512"   # tamanhos hicolor instalados (alguns DEs querem 256, não só 512)
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 
@@ -45,12 +44,12 @@ need curl
 
 APPIMAGE_PATH="$INSTALL_DIR/$APPIMAGE_NAME"
 DESKTOP_PATH="$APPS_DIR/$BIN_NAME.desktop"
-ICON_PATH="$ICON_DIR/$BIN_NAME.png"
 
 # ----------------------------- uninstall -----------------------------
 if [ "$ACTION" = "uninstall" ]; then
   info "removendo $APP_TITLE..."
-  rm -f "$APPIMAGE_PATH" "$DESKTOP_PATH" "$ICON_PATH"
+  rm -f "$APPIMAGE_PATH" "$DESKTOP_PATH"
+  for sz in $ICON_SIZES; do rm -f "$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps/$BIN_NAME.png"; done
   command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
   command -v gtk-update-icon-cache  >/dev/null 2>&1 && gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" >/dev/null 2>&1 || true
   ok "removido. (autostart manual, se ativado, fica em ~/.config/autostart/$BIN_NAME.desktop)"
@@ -80,13 +79,13 @@ mv -f "$APPIMAGE_PATH.new" "$APPIMAGE_PATH"
 chmod +x "$APPIMAGE_PATH"
 ok "AppImage instalada"
 
-info "ícone -> $ICON_PATH"
-if curl -fSL --retry 3 -o "$ICON_PATH" "$RAW_BASE/build/icon.png" 2>/dev/null; then
-  ok "ícone instalado"
-else
-  rm -f "$ICON_PATH"
-  info "ícone não baixado (o app funciona; pode aparecer genérico no dock)"
-fi
+info "ícone hicolor (${ICON_SIZES})"
+icon_ok=0
+for sz in $ICON_SIZES; do
+  idir="$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps"; mkdir -p "$idir"
+  curl -fSL --retry 3 -o "$idir/$BIN_NAME.png" "$RAW_BASE/build/icon.png" 2>/dev/null && icon_ok=1 || rm -f "$idir/$BIN_NAME.png"
+done
+[ "$icon_ok" = 1 ] && ok "ícone instalado" || info "ícone não baixado (pode aparecer genérico no dock)"
 
 info ".desktop -> $DESKTOP_PATH"
 cat > "$DESKTOP_PATH" <<EOF
