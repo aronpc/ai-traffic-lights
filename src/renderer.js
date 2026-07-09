@@ -370,6 +370,36 @@ function render() {
 // GLM é backend, não se lança → ícone decorativo. Barra sempre presente
 // (tamanho padronizado); % vazio mostra "—". Reset em hora local (HH:MM),
 // "+Nd HH:MM" se for além de hoje, "Xmin" se <1h. Re-render a cada 2s.
+// ---- label de uma linha de uso: sempre "Provider(Plano) janela" ----
+// Cada linha é autônoma (repete o provedor); antes a 2ª linha de um mesmo
+// plano ficava sem provedor, parecendo outro agente (bug do "2 GLM sem z.ai").
+const USAGE_PROVIDER = { claude: 'Claude', glm: 'z.ai', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode' };
+function usagePlanName(u) {
+  const plan = u.plan || '';
+  if (!plan) return '';
+  if (u.agent === 'claude') return plan.replace(/^Claude\s+/, '');
+  if (u.agent === 'codex') return plan.replace(/^Codex\s+/, '');
+  if (u.agent === 'glm') return plan.replace(/^GLM\s+/, '').replace(/\s*\(z\.ai\)\s*$/, '');
+  if (u.agent === 'antigravity') return plan.replace(/^Antigravity\s*\(/, '').replace(/\)\s*$/, '');
+  return plan;
+}
+function usageWindow(u) {
+  if (u.agent === 'antigravity') return '';                  // rótulo só, sem janela
+  const t = u.title || '';
+  if (!t) return '';
+  if (/5\s*h/i.test(t)) return '5h';
+  if (/7\s*d/i.test(t)) return '7d';
+  if (/mês|mes|mcp/i.test(t)) return 'Mês';
+  return t;
+}
+function usageLabel(u) {
+  const provider = USAGE_PROVIDER[u.agent] || (u.plan ? u.plan.split(/[\s(]/)[0] : (u.agent || '?'));
+  const plan = usagePlanName(u);
+  const win = usageWindow(u);
+  const head = plan ? `${provider}(${plan})` : provider;
+  return win ? `${head} ${win}` : head;
+}
+
 function pctLevel(pct) {
   if (pct == null) return 'none';
   if (pct >= 90) return 'red';
@@ -446,28 +476,16 @@ function renderUsage() {
   if (!$usage) return;
   if (!footerShowsUsage() || !usageEntries.length) { $usage.hidden = true; $usage.replaceChildren(); return; }
   const launchable = new Set(launchers.map((l) => l.id));
-  // Nome sem repetição: se o mesmo plano aparece em mais de uma linha (ex.:
-  // "Claude Max 5×" em 5h e 7 dias), as linhas seguintes mostram só a janela
-  // (o título distintivo) — o plano fica na 1ª ocorrência. Nomes curtos, sem
-  // truncar, sem redundância.
-  const planCount = {};
-  for (const u of usageEntries) { const p = u.plan || ''; planCount[p] = (planCount[p] || 0) + 1; }
-  const planShown = {};
+  // Cada linha é autônoma: "Provider(Plano) janela" — sempre mostra o provedor
+  // (antes a 2ª linha de um mesmo plano ficava sem provedor, parecendo outro
+  // agente). Provider/Plano/Janela derivados dos campos do coletor (usageLabel).
   const rows = usageEntries.map((u) => {
     const a = AGENTS[u.agent] || { label: u.title || u.agent, color: 'rgba(255,255,255,0.3)' };
     // stale (valor antigo, coletor sem atualizar há alguns min) → cinza, sem
     // apagar o número; o valor continua visível, só sinaliza que está velho.
     const lvl = u.stale ? 'none' : pctLevel(u.usedPct);
     const reset = resetClock(u.resetAt, u.resetInMin);
-    const head = u.plan || a.label;
-    // 1ª linha do plano: "Plano · Janela"; repetições: só "Janela".
-    let nameTxt;
-    if (u.title && planCount[u.plan || ''] > 1) {
-      nameTxt = planShown[u.plan || ''] ? u.title : `${head} · ${u.title}`;
-      planShown[u.plan || ''] = true;
-    } else {
-      nameTxt = u.title ? `${head} · ${u.title}` : head;
-    }
+    const nameTxt = usageLabel(u);
     const hasPct = u.usedPct != null;
 
     const row = document.createElement('div');
