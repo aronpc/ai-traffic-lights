@@ -202,6 +202,10 @@ document.getElementById('removeHooks').addEventListener('click', () => window.tr
 // Mostra o campo de comando custom só no modo 'custom' (hoisted — usado acima).
 function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
 
+// Troca os <select> nativos por dropdowns custom ANTES do load (evita o flash do
+// select nativo enquanto o getSettings resolve); o load re-sincroniza os rótulos.
+enhanceAllSelects();
+
 // ---- carga inicial ----
 window.trafficLight.getVersion().then((v) => { if (v) document.getElementById('ver').textContent = v; });
 window.trafficLight.getRepoUrl().then((url) => {
@@ -244,6 +248,7 @@ window.trafficLight.getSettings().then((c) => {
   applyPrefsOpacity();                               // aplica a transparência salva na janela de Prefs
   syncTerminalCmdField();
   syncSoundFileField();
+  refreshAllSelects();                               // re-sincroniza os dropdowns custom com os values carregados
   ready = true;                                      // libera o live-apply só após popular tudo
 });
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });
