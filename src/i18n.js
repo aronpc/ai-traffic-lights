@@ -92,6 +92,11 @@ const STRINGS = {
     // som do alerta
     sec_alert_sound: 'Alert sound',
     sound_enabled_label: 'Play a sound when something turns red',
+    sec_reveal: 'Bring to front when hidden',
+    reveal_hint: 'Shows the overlay back (without focus) if you had hidden it.',
+    reveal_red_label: 'Agent red',
+    reveal_reset_label: 'Quota reset',
+    reveal_update_label: 'New version',
     sound_type_label: 'Sound',
     sound_beep: 'Beep',
     sound_double: 'Double tap',
@@ -198,6 +203,11 @@ const STRINGS = {
     // som do alerta
     sec_alert_sound: 'Som do alerta',
     sound_enabled_label: 'Tocar som quando algo fica vermelho',
+    sec_reveal: 'Trazer à frente quando oculto',
+    reveal_hint: 'Reaparece na tela (sem foco) se você o havia ocultado.',
+    reveal_red_label: 'Agente vermelho',
+    reveal_reset_label: 'Cota resetou',
+    reveal_update_label: 'Nova versão',
     sound_type_label: 'Som',
     sound_beep: 'Bip',
     sound_double: 'Toque duplo',

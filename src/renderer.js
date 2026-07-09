@@ -201,6 +201,7 @@ function render() {
       if (!lastAlert.has(key) || nowMs - lastAlert.get(key) > 30000) {
         lastAlert.set(key, nowMs);
         alertAwaiting(s);
+        if (settingsCfg.revealOnRed) window.trafficLight.revealOverlay(); // traz à frente se oculto
       }
     }
     prevLevels.set(key, st.level);

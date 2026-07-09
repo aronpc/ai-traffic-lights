@@ -585,6 +585,20 @@ function toggleWin() {
   else { win.show(); try { win.setSkipTaskbar(true); } catch {} }
 }
 
+// Traz o overlay de volta à tela se ele estiver OCULTO (hide). Não rouba o foco
+// do teclado — só reaplica show() + skipTaskbar (continua alwaysOnTop, fora da
+// barra de tarefas). Usado pela feature "revelar quando oculto" (config em
+// Notificações): dispara quando um agente fica vermelho, a cota reseta ou há
+// update — cada um só se a opção correspondente estiver marcada.
+function revealIfHidden() {
+  try {
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      win.show();
+      try { win.setSkipTaskbar(true); } catch {}
+    }
+  } catch { /* nunca derruba o fluxo que disparou o reveal */ }
+}
+
 // ---- tray (bandeja) ----
 // Cópia estável do hook + registro no settings.json — caminho único que
 // funciona do fonte E empacotado (AppImage monta em path efêmero).
@@ -702,7 +716,11 @@ function saveSettingsBounds() {
 // altura da aba mais alta (Geral), medido no conteúdo real a 420px de largura.
 // As abas mais curtas (Integração) ficam com espaço vazio; nenhuma rola.
 // useContentSize faz width/height valerem para a ÁREA WEB (o .prefs preenche).
-const SETTINGS_W = 420, SETTINGS_H = 761;
+// 770px acomoda a maior aba (Notificações: 3 seções ≈ 555px de conteúdo) com
+// folga — header(abas)+rodapé consomem ~170px. As abas curtas (Integração) ficam
+// com espaço vazio; nenhuma rola. Em telas baixas (768px) o winH clampa à work
+// area e a aba rola (header/rodapé ficam fixos).
+const SETTINGS_W = 420, SETTINGS_H = 770;
 function createSettingsWindow() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
   const b = loadSettingsBounds() || {};
@@ -883,6 +901,8 @@ ipcMain.handle('get-sound-bytes', (_e, file) => {
 
 // Tray: mostrar/ocultar, autostart, sair.
 ipcMain.on('toggle-visibility', toggleWin);
+// Overlay pede pra voltar à frente (renderer detectou transição p/ vermelho).
+ipcMain.on('reveal-overlay', () => { if (settingsCfg.revealOnRed) revealIfHidden(); });
 
 // Tray dinâmico: renderer manda a pior cor + contagem a cada render.
 ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
@@ -1110,6 +1130,7 @@ function maybeNotifyReset() {
       const name = [e.plan, e.title].filter(Boolean).join(' · ') || e.id;
       try { new Notification({ title: 'AI Traffic Lights', body: T('ntf_tokens_reset', { name }), silent: false }).show(); } catch {}
     }
+    if (toNotify.length && settingsCfg.revealOnReset) revealIfHidden(); // traz à frente se oculto
   } catch { /* detecção de reset nunca derruba a coleta */ }
 }
 ipcMain.on('request-usage', () => {
@@ -1212,6 +1233,7 @@ function setupAutoUpdater() {
       const v = ((info && info.version) || '').replace(/^v/, '');
       setUpdateState({ hasUpdate: true, latest: v, url: REPO_URL + '/releases/tag/v' + v, status: 'available', error: null });
       if (_manualCheck) _notifyManualResult(true, v, null);
+      if (settingsCfg.revealOnUpdate) revealIfHidden(); // traz à frente se oculto
     });
     autoUpdater.on('update-not-available', () => { setUpdateState({ hasUpdate: false, status: 'idle' }); if (_manualCheck) _notifyManualResult(false, null, null); });
     autoUpdater.on('download-progress', (p) => setUpdateState({ status: 'downloading', progress: Math.round((p && p.percent) || 0) }));

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   setAlias: (cwd, alias) => ipcRenderer.send('set-alias', { cwd, alias }),
   notify: (title, body) => ipcRenderer.send('notify', { title, body }), // alerta vermelho
   toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
+  revealOverlay: () => ipcRenderer.send('reveal-overlay'),       // traz à frente (transição p/ vermelho)
   setTrayLevel: (info) => ipcRenderer.send('set-tray-level', info), // tray dinâmico: pior cor + contagem
   getLaunchers: () => ipcRenderer.invoke('get-launchers'),          // Quick Launcher: agentes detectados
   launchAgent: (target) => ipcRenderer.send('launch-agent', target), // {agent, cwd}

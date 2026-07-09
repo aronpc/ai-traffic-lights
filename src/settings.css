@@ -137,6 +137,9 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63, 1
 .row { display: flex; align-items: center; gap: 10px; }
 .row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--green); cursor: pointer; }
 .row label { cursor: pointer; }
+/* Checkboxes em 2 colunas (seção "Trazer à frente" — compacta a aba Notificações). */
+.reveal-grid { display: flex; flex-wrap: wrap; gap: 4px 0; margin-top: 8px; }
+.reveal-grid .row { width: 50%; gap: 8px; }
 
 /* ---------- botões de ação dentro das abas + rodapé ---------- */
 .tab-panel button {

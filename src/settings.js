@@ -23,6 +23,9 @@ const DEFAULTS = Object.freeze({
   soundVolume: 0.18,           // volume do alerta (0–1; 0.18 = volume do beep original)
   soundType: 'beep',           // preset sintético (beep/double/chime/low) ou 'custom' (arquivo)
   soundFile: '',               // caminho do arquivo de áudio quando soundType === 'custom'
+  revealOnRed: false,          // trazer o overlay à frente (se oculto) quando um agente fica vermelho
+  revealOnReset: false,        // trazer à frente quando a cota reseta
+  revealOnUpdate: false,       // trazer à frente quando há uma nova versão disponível
 });
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).
@@ -63,6 +66,9 @@ function mergeWithDefaults(raw) {
     if (typeof raw.compact === 'boolean') out.compact = raw.compact;
     if (typeof raw.markReadOnClick === 'boolean') out.markReadOnClick = raw.markReadOnClick;
     if (typeof raw.notifyOnReset === 'boolean') out.notifyOnReset = raw.notifyOnReset;
+    if (typeof raw.revealOnRed === 'boolean') out.revealOnRed = raw.revealOnRed;
+    if (typeof raw.revealOnReset === 'boolean') out.revealOnReset = raw.revealOnReset;
+    if (typeof raw.revealOnUpdate === 'boolean') out.revealOnUpdate = raw.revealOnUpdate;
     // resetNotifyThresholdPct: inteiro em [1, 100]; fora da faixa/não-número → default (90).
     if (typeof raw.resetNotifyThresholdPct === 'number' && Number.isFinite(raw.resetNotifyThresholdPct)) {
       out.resetNotifyThresholdPct = Math.max(1, Math.min(100, Math.round(raw.resetNotifyThresholdPct)));

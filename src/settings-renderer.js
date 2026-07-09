@@ -12,6 +12,9 @@ const $opacity = document.getElementById('opacity');
 const $opacityVal = document.getElementById('opacityVal');
 const $markRead = document.getElementById('markRead');
 const $notifyReset = document.getElementById('notifyReset');
+const $revealRed = document.getElementById('revealOnRed');
+const $revealReset = document.getElementById('revealOnReset');
+const $revealUpdate = document.getElementById('revealOnUpdate');
 const $resetThreshold = document.getElementById('resetThreshold');
 const $resetThresholdVal = document.getElementById('resetThresholdVal');
 const $soundEnabled = document.getElementById('soundEnabled');
@@ -84,6 +87,9 @@ function buildCfg() {
   cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100;  // slider 60–100 → 0.6–1.0
   cfg.markReadOnClick = $markRead.checked;   // clique marca como lido
   cfg.notifyOnReset = $notifyReset.checked;  // avisar quando a cota resetar
+  cfg.revealOnRed = $revealRed.checked;      // trazer à frente ao ficar vermelho
+  cfg.revealOnReset = $revealReset.checked;  // trazer à frente ao resetar a cota
+  cfg.revealOnUpdate = $revealUpdate.checked; // trazer à frente ao ter update
   cfg.resetNotifyThresholdPct = parseInt($resetThreshold.value, 10) || 90; // limiar de "esgotado"
   cfg.soundEnabled = $soundEnabled.checked;
   cfg.soundVolume = (parseInt($soundVolume.value, 10) || 0) / 100;  // slider 0–100 → 0–1
@@ -117,6 +123,9 @@ $idle.addEventListener('change', pushLive);
 $lang.addEventListener('change', pushLive);
 $markRead.addEventListener('change', pushLive);
 $notifyReset.addEventListener('change', pushLive);
+$revealRed.addEventListener('change', pushLive);
+$revealReset.addEventListener('change', pushLive);
+$revealUpdate.addEventListener('change', pushLive);
 // slider do limiar: atualiza o rótulo a cada pixel (barato/local); salva só ao
 // soltar (change). Não afeta o overlay ao vivo, então dispensa o debounce do opacity.
 $resetThreshold.addEventListener('input', () => { $resetThresholdVal.textContent = $resetThreshold.value + '%'; });
@@ -235,6 +244,9 @@ window.trafficLight.getSettings().then((c) => {
     $opacityVal.textContent = opct + '%';
     $markRead.checked = c.markReadOnClick !== false; // default ligado
     $notifyReset.checked = c.notifyOnReset !== false; // default ligado
+    $revealRed.checked = c.revealOnRed === true;      // default desligado
+    $revealReset.checked = c.revealOnReset === true;  // default desligado
+    $revealUpdate.checked = c.revealOnUpdate === true; // default desligado
     const thr = typeof c.resetNotifyThresholdPct === 'number' ? c.resetNotifyThresholdPct : 90;
     $resetThreshold.value = String(thr);
     $resetThresholdVal.textContent = thr + '%';
