@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 ### Fixed
 
+## [0.6.7] - 2026-07-09
+
+### Fixed
+- **Overlay ficava atrás das janelas no Wayland.** O GNOME/Wayland nativo ignora
+  `alwaysOnTop` (restrição do protocolo) — o overlay aparecia por baixo e o
+  toggle (mostrar/ocultar) parecia confuso. Agora o app roda em **XWayland**
+  (`--ozone-platform=x11` no `executableArgs`/`scripts.start`): em X11 puro é
+  no-op; em Wayland cai em XWayland, onde `above` funciona. `IS_WAYLAND` é
+  `false` sob a flag (wmctrl/xdotool enxergam janelas XWayland → paths X11).
+- **Raise explícito** no `toggleWin`/`revealIfHidden` (`win.moveTop()` ao mostrar)
+  — robustez onde o `alwaysOnTop` oscila em X11.
+- **Ícone no dock em alguns DEs.** O `install.sh` agora instala o ícone hicolor em
+  **256 e 512** (alguns procuram 256 antes; só 512 deixava o dock genérico).
+
 ## [0.6.6] - 2026-07-09
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "ai-traffic-lights",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Overlay com um semáforo 🟢🟡🔴 por sessão de agente de IA no desktop — Claude Code, Antigravity, Codex e OpenCode via adapters",
   "main": "main.js",
   "scripts": {
