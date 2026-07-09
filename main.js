@@ -1118,17 +1118,61 @@ ipcMain.on('request-usage', () => {
 
 // ---- update checker (versão + release mais nova do GitHub) ----
 // Detecta COMO o app foi instalado pra oferecer o caminho de atualização certo.
-//   appimage → APPIMAGE env (Electron seta quando rodado de .AppImage)
+//   appimage → AppImage type 2 (execPath em /tmp/.mount_<nome>, ou *.AppImage)
 //   deb      → instalado em /opt (electronic-builder deb vira /opt/AI Traffic Lights)
 //   npm      → rodando de node_modules (npm install / dev)
 //   source   → clone do repo (dev direto)
+//
+// A detecção de AppImage NÃO depende só da env APPIMAGE: o Electron 43 às vezes
+// a perde no re-exec do sandbox, então conferimos também o execPath (mount point
+// /tmp/.mount_<nome>). Quando detectamos AppImage sem a env, recuperamos o caminho
+// do .AppImage e re-exportamos em process.env.APPIMAGE — o electron-updater
+// depende dela pra (a) saber que é AppImage e (b) qual arquivo substituir na
+// instalação. Sem isto, o auto-update nunca aparecia (sempre caía em "abrir release").
 function detectInstallMethod() {
   if (process.env.APPIMAGE) return 'appimage';
   const exe = process.execPath || '';
+  if (/^\/tmp\/\.mount_[^/]+\//.test(exe) || /\.AppImage$/i.test(exe)) {
+    const resolved = resolveAppImagePath();
+    if (resolved && !process.env.APPIMAGE) process.env.APPIMAGE = resolved;
+    return 'appimage';
+  }
   const appPath = app.getAppPath();
   if (/\/opt\/AI Traffic Lights/.test(exe) || appPath.includes('/opt/')) return 'deb';
   if (appPath.includes('node_modules')) return 'npm';
   return 'source';
+}
+
+// Recupera o caminho absoluto do .AppImage em execução quando o runtime perdeu a
+// env APPIMAGE. Cascata: env → execPath (*.AppImage) → Exec= do .desktop do app
+// (fonte confiável mantida pelo próprio app) → busca por basename do mount em
+// locais canônicos (~/Applications, ~/.local/bin, ~/Downloads, /opt).
+function resolveAppImagePath() {
+  if (process.env.APPIMAGE) return process.env.APPIMAGE;
+  const exe = process.execPath || '';
+  if (/\.AppImage$/i.test(exe)) return exe;
+  try {
+    const home = app.getPath('home');
+    const desktops = [
+      path.join(home, '.local', 'share', 'applications', 'ai-traffic-lights.desktop'),
+      AUTOSTART_FILE,
+    ];
+    for (const dp of desktops) {
+      try {
+        const m = fs.readFileSync(dp, 'utf8').match(/^Exec=(\S+\.AppImage)\b/m);
+        if (m && fs.existsSync(m[1])) return m[1];
+      } catch {}
+    }
+    const mm = exe.match(/\/tmp\/\.mount_([^/]+)/);
+    if (mm) {
+      const dirs = [path.join(home, 'Applications'), path.join(home, '.local', 'bin'), path.join(home, 'Downloads'), '/opt'];
+      for (const d of dirs) {
+        let ents; try { ents = fs.readdirSync(d); } catch { continue; }
+        for (const f of ents) if (/\.AppImage$/i.test(f) && /ai.?traffic.?lights/i.test(f)) return path.join(d, f);
+      }
+    }
+  } catch {}
+  return null;
 }
 // Compara versões semver ('0.3.2' vs '0.4.0'); >0 se a>b, 0 se iguais, <0 se a<b.
 function semverCmp(a, b) {
