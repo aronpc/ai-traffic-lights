@@ -39,6 +39,7 @@ let prefsAudioCtx = null, prefsCustomBuffer = null, prefsCustomFor = null;
 function applyI18n() {
   for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
   document.title = T('prefs_title');
+  if (typeof relabelAllSelects === 'function') relabelAllSelects(); // dropdowns custom seguem o idioma
 }
 
 const KEYNAME = { ' ': 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' };

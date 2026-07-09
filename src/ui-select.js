@@ -31,6 +31,18 @@ function refreshSelect(sel) {
 }
 function refreshAllSelects(root) { (root || document).querySelectorAll('.sel select').forEach(refreshSelect); }
 
+// Re-copia os textos das <option> para as opções custom. Necessário após o i18n
+// trocar os <option>: o enhance captura os rótulos ANTES do applyI18n rodar (é
+// síncrono, no top-level; o applyI18n vem do getLang async), então sem isto o
+// dropdown mostraria os rótulos no idioma default do HTML (pt), não no traduzido.
+function relabelSelect(sel) {
+  const wrap = sel.closest && sel.closest('.sel'); if (!wrap) return;
+  const opts = wrap.querySelectorAll('.sel__opt');
+  Array.from(sel.options).forEach((o, i) => { if (opts[i]) opts[i].textContent = o.textContent; });
+  refreshSelect(sel); // atualiza o rótulo do botão a partir da opção selecionada
+}
+function relabelAllSelects(root) { (root || document).querySelectorAll('.sel select').forEach(relabelSelect); }
+
 function enhanceSelect(sel) {
   if (!sel || sel.dataset.enhanced) return;
   sel.dataset.enhanced = '1';
@@ -98,4 +110,4 @@ function enhanceAllSelects(root) {
   (root || document).querySelectorAll('select').forEach(enhanceSelect);
 }
 
-if (typeof module !== 'undefined') module.exports = { enhanceSelect, enhanceAllSelects, refreshSelect, refreshAllSelects, closeAllSelects };
+if (typeof module !== 'undefined') module.exports = { enhanceSelect, enhanceAllSelects, refreshSelect, refreshAllSelects, relabelSelect, relabelAllSelects, closeAllSelects };
