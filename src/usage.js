@@ -796,7 +796,11 @@ function detectReset(prevState, entries, now, threshold) {
     // uma oscilação do % pra baixo antes do reset não pode desarmar o aviso.
     // Numa janela nova (após reset) NÃO regruda → dedupe no tick seguinte.
     const sameWindow = !!p && resetAtMs === p.resetAtMs;
-    nextState[e.id] = { resetAtMs, armed: armed || (!resetou && sameWindow && p.armed) };
+    const staleResetWindow = sameWindow && now >= resetAtMs && !p.armed;
+    const nextArmed = resetou || staleResetWindow
+      ? false
+      : armed || (sameWindow && p.armed);
+    nextState[e.id] = { resetAtMs, armed: nextArmed };
   }
   return { toNotify, nextState };
 }

@@ -704,6 +704,16 @@ test('detectReset: não redispara no tick seguinte à mesma janela nova (dedupe)
   assert.equal(r3.toNotify.length, 0, 'mesma janela nova não pode redisparar');
 });
 
+test('detectReset: API stale com mesmo resetAt não rearma após notificar', () => {
+  const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
+  const later = NOW + 6 * H;
+  const r2 = detectReset(s1, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], later, 90);
+  assert.equal(r2.toNotify.length, 1);                 // passou do reset, mas API ainda não avançou
+  const r3 = detectReset(r2.nextState, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], later + 60 * 1000, 90);
+  assert.equal(r3.toNotify.length, 0, 'mesmo resetAt stale não pode rearma/redisparar');
+  assert.equal(r3.nextState['glm-tokens'].armed, false);
+});
+
 test('detectReset: entry sem resetAt é ignorada (não quebra, não notifica)', () => {
   const r = detectReset(null, [RESET_ENTRY('claude-plan', null, null)], NOW, 90);
   assert.equal(r.toNotify.length, 0);
@@ -716,4 +726,3 @@ test('detectReset: threshold configurável — em 100 só esgotamento total arma
   const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 5, '2026-07-07T22:00:00Z')], later, 100);
   assert.equal(toNotify.length, 0, '95 < 100 → não armou, logo não notifica');
 });
-
