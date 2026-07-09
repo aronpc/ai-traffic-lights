@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+### Changed
+### Fixed
+
+## [0.6.0] - 2026-07-09
+
+### Added
 - **Custom alert sound.** The red-alert sound is now configurable in
   Preferences → Notifications → "Alert sound": turn it on/off, set the volume,
   pick a built-in tone (beep, double tap, chime, low) or load your own audio file
@@ -29,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so behavior is unchanged; the swap happens before load to avoid a flash of the
   native control.
 ### Fixed
+- **Stale quota-reset notifications no longer pile up.** Re-checking usage while
+  a reset notification was still queued could post a duplicate; consecutive polls
+  are now deduped.
+- **Themed dropdown now follows the UI language** — its option labels were built
+  in English regardless of the selected language.
 
 ## [0.5.0] - 2026-07-08
 
