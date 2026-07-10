@@ -824,7 +824,14 @@ function mergeUsage(prev, fresh, now) {
     // como resquício legado no usage.json. Sem isto as duas versões têm chaves
     // diferentes e não colapsam → o GLM aparece duplicado ("z.ai 2×").
     const planNorm = String(e.plan || '').replace(/\s*\((z\.ai|bigmodel\.cn)\)\s*$/, '').trim();
-    const key = [e.agent, e.title || '', planNorm, e.resetAt || ''].join('|');
+    // Normaliza o resetAt p/ SEGUNDOS na chave: a mesma conta chegando por 2
+    // credenciais (tokens distintos) recebe resetAt da API com diferença de ~1ms
+    // ("...09.995Z" vs "...09.996Z") — sem isto, a chave difere e o tile mensal
+    // aparece duplicado ("z.ai Pro mês 2×"). Trunca sub-segundo; contas realmente
+    // distintas têm resets separados por muito mais que 1s.
+    const resetMs = e.resetAt ? Date.parse(e.resetAt) : NaN;
+    const resetKey = Number.isNaN(resetMs) ? '' : Math.floor(resetMs / 1000);
+    const key = [e.agent, e.title || '', planNorm, resetKey].join('|');
     const prev = byContent.get(key);
     if (!prev) { byContent.set(key, e); continue; }
     // escolhe a melhor: valor bom > stale menor > fetchedAt maior.

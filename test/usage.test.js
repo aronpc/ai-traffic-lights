@@ -891,6 +891,16 @@ test('mergeUsage: token inválido (summary sem %) some quando há concreto do me
   assert.equal(out[0].id, 'glm-tokens'); // o summary fantasma sumiu
 });
 
+test('mergeUsage: mesma conta por 2 credenciais com resetAt differing 1ms → colapsa (bug "mês 2×")', () => {
+  // Regressão real: a mesma conta z.ai Pro chega por 2 tokens (sufixos 6baca3 e
+  // c3c374); a API devolve resetAt com ~1ms de diferença ("...09.995Z" vs
+  // "...09.996Z"). A chave de dedup via resetAt exato não cola → "MCP (mês) 2×".
+  const a = { id: 'glm-month:6baca3', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro (z.ai)', usedPct: 0, resetAt: '2026-08-10T11:47:09.995Z', error: null };
+  const b = { id: 'glm-month:c3c374', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro (z.ai)', usedPct: 0, resetAt: '2026-08-10T11:47:09.996Z', error: null };
+  const out = mergeUsage([], [a, b], NOW);
+  assert.equal(out.length, 1, 'o mensal duplicado (1ms de diferença) colapsa em 1 linha');
+});
+
 test('mergeUsage: antigravity-plan limpa antigravity-quota do cache anterior', () => {
   const prev = [{ id: 'antigravity-quota', agent: 'antigravity', plan: 'Antigravity (m)', usedPct: 100, resetAt: '2026-07-14T19:56:12Z', fetchedAt: NOW }];
   const fresh = [{ id: 'antigravity-plan', agent: 'antigravity', plan: 'Antigravity (m)', usedPct: null }];
