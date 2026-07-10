@@ -657,6 +657,10 @@ function applyUsageMeta(meta) {
   }
 }
 if ($forceUsage) $forceUsage.addEventListener('click', () => {
+  // Bloqueado durante o cooldown do 429: recoletar não traria % novo (o coletor
+  // respeita o cooldown) e o spinner daria falsa impressão de atualização. O
+  // tooltip já explica "aguarde Xmin"; aqui só não dispara nada.
+  if (claudeCooldownUntil > Date.now()) return;
   window.trafficLight.forceUsage();
   $forceUsage.classList.add('is-spinning');
   setTimeout(() => $forceUsage.classList.remove('is-spinning'), 600);

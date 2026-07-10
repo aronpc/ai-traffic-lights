@@ -1188,7 +1188,15 @@ ipcMain.on('request-usage', () => {
 // em collectUsage, então mesmo com o cache limpo o coletor não re-bate durante a
 // janela de rate limit (evita re-escalar). É "atualizar já", não "ignorar limite".
 ipcMain.on('force-usage', () => {
-  try { usage._clearClaudeCache(); usage._clearGlmCache(); usage._clearCodexCache(); } catch { /* ignore */ }
+  try {
+    // Durante cooldown ativo NÃO limpa o cache do Claude: ele guarda o último
+    // valor bom que readClaudeUsage usa como fallback. Limpá-lo faria o tile
+    // regredir p/ plano-só (perder o %) só porque o usuário clicou ⟳ no rate
+    // limit. Fora do cooldown, limpa normalmente p/ forçar recoleta real.
+    if (!(claudeCooldownUntil > Date.now())) usage._clearClaudeCache();
+    usage._clearGlmCache();
+    usage._clearCodexCache();
+  } catch { /* ignore */ }
   collectAndSendUsage();
 });
 

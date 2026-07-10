@@ -24,7 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ter um tier interno opaco (`default_raven`) — assim o rótulo fica preciso
   ("Claude Max 5×") em vez do genérico.
 
-### Changed
 ### Fixed
 - **Overlay caía para trás ao clicar fora.** No Mutter/XWayland o estado
   `_NET_WM_STATE_ABOVE` oscilava ao perder o foco: clicar em outra janela ou no
