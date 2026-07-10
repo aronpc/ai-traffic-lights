@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- **Overlay caía para trás ao clicar fora.** No Mutter/XWayland o estado
+  `_NET_WM_STATE_ABOVE` oscilava ao perder o foco: clicar em outra janela ou no
+  desktop mandava o overlay para o fundo, sem passar por `toggleWin`/`revealIfHidden`
+  (únicos pontos que reafirmavam o `alwaysOnTop`). Agora `win.on('blur')` reafirma
+  `setAlwaysOnTop(true, 'screen-saver')` + `moveTop()` — mesmo padrão do toggle/reveal.
+  Complementa o raise explícito da v0.6.7.
 
 ## [0.6.7] - 2026-07-09
 
