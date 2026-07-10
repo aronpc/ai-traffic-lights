@@ -562,6 +562,14 @@ function createWindow() {
   // Linux/Mutter ignora `maximizable` → reverte na hora qualquer maximize
   // (Super+↑, drag no topo da tela, tiling). Overlay nunca vira tela cheia.
   win.on('maximize', () => { try { win.unmaximize(); } catch {} });
+  // Mutter/XWayland: o estado _NET_WM_STATE_ABOVE oscila ao perder foco (ver
+  // CHANGELOG 0.6.7) — clicar em outra janela/no desktop derruba o always-on-top
+  // sem passar por toggleWin/revealIfHidden. Reafirma no blur, do mesmo jeito
+  // que já se faz no toggle/reveal (setAlwaysOnTop + moveTop).
+  win.on('blur', () => {
+    try { win.setAlwaysOnTop(true, 'screen-saver'); } catch {}
+    try { win.moveTop(); } catch {}
+  });
   // skipTaskbar FORÇADO via wmctrl: no Mutter, com frameless+transparent+
   // alwaysOnTop, nem a option `skipTaskbar` nem setSkipTaskbar() geram o
   // hint X11 _NET_WM_STATE_SKIP_TASKBAR/PAGER de forma confiável (ele é
