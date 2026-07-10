@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- **Consumo do Claude agora é _lazy_ (coleta sob demanda).** O loop de fundo (60s)
+  deixou de bater na API `/api/oauth/usage` do Claude — a chamada só acontece quando
+  você **vai olhar o uso**: ao **abrir/expandir** o overlay, ao **revelar** a janela
+  (tray/atalho), no botão **⟳** e no **boot** (1 chamada). Essa API divide um limite
+  **agregado** com o `/status` do próprio Claude Code, então consultá-la a cada 60 s
+  alimentava o **429** e a barra de % do Claude sumia. Agora o app fica fora desse
+  balde na maior parte do tempo; entre gatilhos, mostra o último % conhecido (ou o
+  plano-só, sem inventar número). O cache de 5 min evita repetir a chamada a cada
+  abrir/fechar. GLM/Codex/Antigravity seguem no loop normal (não sofrem esse limite).
 ### Fixed
 
 ## [0.6.8] - 2026-07-10

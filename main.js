@@ -596,7 +596,12 @@ function createWindow() {
 function toggleWin() {
   if (!win || win.isDestroyed()) return;
   if (win.isVisible()) win.hide();
-  else { win.show(); try { win.setSkipTaskbar(true); } catch {} try { win.moveTop(); } catch {} }
+  else {
+    win.show(); try { win.setSkipTaskbar(true); } catch {} try { win.moveTop(); } catch {}
+    // Revelou o overlay (tray/atalho) → o usuário vai olhar; busca o % do Claude
+    // agora (lazy). Cache de 5 min evita repetir a cada mostra/esconde.
+    collectAndSendUsage({ claudeFetch: true });
+  }
 }
 
 // Traz o overlay de volta à tela se ele estiver OCULTO (hide). Não rouba o foco
@@ -791,6 +796,10 @@ ipcMain.on('set-expanded', (_e, { expanded, h } = {}) => {
     // que o autosize deixou no estado expandido (janela não reduzia ao recolher).
     win.setMinimumSize(MIN_W, height);
     win.setSize(w, height, false);
+  } else {
+    // Expandiu: o usuário quer VER o uso → busca o % do Claude agora (lazy). O
+    // cache de 5 min evita spam de abrir/fechar; fora daqui o loop não bate.
+    collectAndSendUsage({ claudeFetch: true });
   }
 });
 
@@ -944,10 +953,12 @@ app.whenReady().then(() => {
     .on('all', () => sendSessions());
   reapDead();
   setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
-  // Consumo/reset dos agentes: GLM (rede, cache 30s) + Claude (arquivo local).
+  // Consumo/reset dos agentes: GLM (rede, cache 30s) + Codex/Antigravity (disco).
   // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
-  collectAndSendUsage();
-  setInterval(collectAndSendUsage, 60 * 1000);
+  // O Claude é LAZY: o loop de fundo NÃO bate na API dele (limite agregado do
+  // 429); só o boot e os gatilhos de UI (abrir/revelar overlay, ⟳) buscam o %.
+  collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o %
+  setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
   setupAutoUpdater();                            // update checker (boot + 1h) — AppImage auto-update
 });
 
@@ -1122,7 +1133,7 @@ function codexCwdsFromSessions() {
   return [...cwds];
 }
 
-async function collectAndSendUsage() {
+async function collectAndSendUsage({ claudeFetch = false } = {}) {
   try {
     let glmCreds = glmCredsFromSessions();
     // Fallback 1: o próprio app foi lançado de um terminal GLM (vars já no env).
@@ -1140,6 +1151,10 @@ async function collectAndSendUsage() {
     const codexCwds = codexCwdsFromSessions();
     const entries = await usage.collectUsage({
       glmCreds, codexCwds, home: app.getPath('home'),
+      // LAZY: o loop de fundo (claudeFetch=false) NÃO bate na API do Claude — só
+      // os gatilhos de UI (abrir/revelar overlay, ⟳) e o boot passam true. Tira o
+      // app do limite agregado do 429 (compartilhado com o /status do Claude Code).
+      claudeAllowFetch: claudeFetch,
       // cooldown do 429 persistido: não rebate na API enquanto vigente; o coletor
       // chama de volta setCooldown quando leva um 429 novo (grava {until, fails}).
       claudeCooldownUntil: claudeCooldownUntil,
@@ -1197,7 +1212,7 @@ ipcMain.on('force-usage', () => {
     usage._clearGlmCache();
     usage._clearCodexCache();
   } catch { /* ignore */ }
-  collectAndSendUsage();
+  collectAndSendUsage({ claudeFetch: true });   // ⟳: gatilho de UI → busca o % agora
 });
 
 // ---- update checker (versão + release mais nova do GitHub) ----

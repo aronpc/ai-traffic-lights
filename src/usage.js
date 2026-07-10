@@ -286,7 +286,7 @@ function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
 // na API: devolvemos o último valor bom conhecido, ou o plano-só. Assim o tile
 // não some nem pisca ⚠ e a janela de rate limit expira sozinha.
 const _claudeCacheByToken = new Map(); // token → { at, entries, cooldownUntil }
-async function readClaudeUsage({ home, now, fetcher, cooldownUntil, cooldownFails, setCooldown } = {}) {
+async function readClaudeUsage({ home, now, fetcher, cooldownUntil, cooldownFails, setCooldown, allowFetch = true } = {}) {
   const pc = readClaudeConfig({ home, now });
   const creds = readClaudeCreds({ home });
   // Plano: credenciais primeiro (tier/subscription REAIS — ex.: 'default_claude_max_5x'),
@@ -316,6 +316,14 @@ async function readClaudeUsage({ home, now, fetcher, cooldownUntil, cooldownFail
   // e RE-ESCALA o 429 (o servidor sobe o Retry-After a cada toque). Não rebate.
   const cd = Math.max(cached && cached.cooldownUntil || 0, cooldownUntil || 0);
   if (cd && nowMs < cd) return (cached && cached.entries) || planOnly;
+
+  // LAZY (coleta sob demanda): o loop de fundo passa allowFetch=false e NÃO bate
+  // na API — a chamada só acontece quando o usuário VAI OLHAR o uso (abrir/revelar
+  // o overlay, botão ⟳) ou no boot. A /api/oauth/usage divide um limite AGREGADO
+  // com o /status do próprio Claude Code; consultá-la em loop de 60s alimentava o
+  // 429. Sem gatilho, devolvemos o último valor bom conhecido (ou o plano-só) —
+  // mesmo comportamento do cooldown, porém sem tocar na rede.
+  if (!allowFetch) return (cached && cached.entries) || planOnly;
 
   const headers = {
     Authorization: 'Bearer ' + token,
@@ -754,6 +762,10 @@ async function collectUsage(opts = {}) {
       home: opts.home, now: opts.now, fetcher: opts.claudeFetcher,
       cooldownUntil: opts.claudeCooldownUntil, cooldownFails: opts.claudeCooldownFails,
       setCooldown: opts.claudeSetCooldown,
+      // Lazy: só bate na API do Claude quando o caller pede (gatilho de UI). O
+      // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
+      // omite → false. Default true preserva o contrato dos testes/uso direto.
+      allowFetch: opts.claudeAllowFetch !== false,
     }).catch(() => null),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
     ...creds.map((c) => readGlmUsage({

@@ -428,6 +428,34 @@ test('readClaudeUsage: cooldownUntil injetado (persistido) bloqueia a chamada me
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test('readClaudeUsage: allowFetch=false (lazy) NÃO bate na API — cai no plano-só sem chamar o fetcher', async () => {
+  _clearClaudeCache();                                 // sem valor bom prévio
+  const tmp = claudeHome({ token: 'tok' });
+  const f = mockFetcher({ five_hour: { utilization: 50, resets_at: '2026-07-07T17:00:00Z' } });
+  // loop de fundo (lazy): sem cache e sem gatilho de UI → não toca a rede.
+  const r = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, allowFetch: false });
+  assert.equal(f.calls.length, 0, 'loop de fundo não bate na API do Claude');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].id, 'claude-plan');                // plano-só honesto (sem %)
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('readClaudeUsage: allowFetch=false devolve o ÚLTIMO valor bom do cache (não rebate nem regride)', async () => {
+  _clearClaudeCache();
+  const tmp = claudeHome({ token: 'tok' });
+  const f = mockFetcher({ five_hour: { utilization: 50, resets_at: '2026-07-07T17:00:00Z' } });
+  // gatilho de UI (abrir overlay) → busca 1x e popula o cache com o % real.
+  const r1 = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, allowFetch: true });
+  assert.equal(r1[0].id, 'claude-5h');
+  assert.equal(f.calls.length, 1);
+  // +6min (cache de 5min já expirou) MAS loop de fundo (lazy) → não rebate; mantém o %.
+  const r2 = await readClaudeUsage({ home: tmp, now: NOW + 6 * 60_000, fetcher: f, allowFetch: false });
+  assert.equal(f.calls.length, 1, 'lazy não gasta chamada no loop de fundo');
+  assert.equal(r2[0].id, 'claude-5h');
+  assert.equal(r2[0].usedPct, 50, 'segura o último valor bom em vez de regredir pro plano-só');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('readClaudeUsage: 429 chama setCooldown com {until, fails} p/ persistir', async () => {
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
