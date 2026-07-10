@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   de 5h/7d — não faz sentido consultar a cada 60 s). O cooldown é **persistido em
   disco** (`claude-cooldown.json`, só o timestamp — nunca o token), então rodar em
   dev (`bun start`/restarts) não re-bate no boot nem **re-escala** o rate limit.
+  **Reset do plano no tile plano-só**: o `planLimitsEndDate` (ex.: reset semanal do
+  Claude Team) agora aparece mesmo sem a API OAuth — antes o tile mostrava o campo
+  de reset vazio. **Backoff exponencial**: o endpoint `/api/oauth/usage` é compartilhado com o
+  próprio Claude Code (`/status`) — limite agregado apertado. A cada 429 seguido, o
+  app alonga a espera (`Retry-After × 1.5^fails`, teto 1 h) em vez de rebater logo
+  que o `Retry-After` expira, dando espaço ao limite recuperar (bater de volta só
+  piorava a punição).
 
 ## [0.6.7] - 2026-07-09
 

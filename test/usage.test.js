@@ -251,6 +251,22 @@ test('readClaudeUsage: sem token OAuth → fallback plano-só (1 linha, sem %)',
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test('readClaudeUsage: plano-só mostra o RESET do plano (planLimitsEndDate) — bug do "reset vazio"', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({
+    oauthAccount: { organizationType: 'claude_team', organizationRateLimitTier: 'default_raven' },
+    cachedGrowthBookFeatures: { tengu_saffron_lattice: { planLimitsEndDate: '2026-07-07T17:00:00Z' } }, // 5h após NOW
+  }));
+  const r = await readClaudeUsage({ home: tmp, now: NOW });   // sem token → plano-só
+  assert.equal(r[0].id, 'claude-plan');
+  assert.equal(r[0].plan, 'Claude Team');
+  assert.equal(r[0].resetAt, '2026-07-07T17:00:00Z', 'reset do plano preenchido (antes era null)');
+  assert.equal(r[0].resetInMin, 5 * 60, 'resetInMin calculado');
+  assert.equal(r[0].usedPct, null);                           // % só vem da API (honesto)
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('readClaudeUsage: OAuth falha (rede) → fallback plano-só, não lança', async () => {
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
@@ -355,13 +371,63 @@ test('readClaudeUsage: cooldownUntil injetado (persistido) bloqueia a chamada me
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('readClaudeUsage: 429 chama setCooldown com o timestamp p/ persistir', async () => {
+test('readClaudeUsage: 429 chama setCooldown com {until, fails} p/ persistir', async () => {
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
   const f = fetcher429(20 * 60_000);
   let saved = null;
-  await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, setCooldown: (until) => { saved = until; } });
-  assert.equal(saved, NOW + 20 * 60_000, 'persistiu o cooldownUntil (Retry-After) via callback');
+  await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, setCooldown: (o) => { saved = o; } });
+  assert.deepEqual(saved, { until: NOW + 20 * 60_000, fails: 1 }, 'persistiu {until=Retry-After, fails=1}');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('readClaudeUsage: 429 seguidos aplicam backoff exponencial (Retry-After × 1.5^fails)', async () => {
+  _clearClaudeCache();
+  const tmp = claudeHome({ token: 'tok' });
+  const f = fetcher429(10 * 60_000);                 // Retry-After fixo 10min
+  let saved = null;
+  // 1ª falha: fails 0→1, backoff = 10min × 1.5^0 = 10min
+  await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, setCooldown: (o) => { saved = o; } });
+  assert.equal(saved.until, NOW + 10 * 60_000, '1ª falha: sem multiplicar ainda');
+  assert.equal(saved.fails, 1);
+  // 2ª falha (fails=1 injetado do disco): backoff = 10min × 1.5^1 = 15min
+  await readClaudeUsage({ home: tmp, now: NOW + 11 * 60_000, fetcher: f, cooldownFails: 1, setCooldown: (o) => { saved = o; } });
+  assert.equal(saved.until, NOW + 11 * 60_000 + 15 * 60_000, '2ª falha: ×1.5 = 15min');
+  assert.equal(saved.fails, 2);
+  // 3ª falha (fails=2): backoff = 10min × 1.5^2 = 22.5min
+  await readClaudeUsage({ home: tmp, now: NOW + 30 * 60_000, fetcher: f, cooldownFails: 2, setCooldown: (o) => { saved = o; } });
+  assert.equal(saved.until, NOW + 30 * 60_000 + Math.round(10 * 60_000 * 1.5 * 1.5), '3ª falha: ×2.25');
+  assert.equal(saved.fails, 3);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('readClaudeUsage: 429 respeita o teto de backoff (1h)', async () => {
+  _clearClaudeCache();
+  const tmp = claudeHome({ token: 'tok' });
+  const f = fetcher429(30 * 60_000);                 // Retry-After 30min
+  let saved = null;
+  // fails=10 injetado: 30min × 1.5^10 = imenso → clampado no teto de 1h
+  await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, cooldownFails: 10, setCooldown: (o) => { saved = o; } });
+  assert.equal(saved.until, NOW + 60 * 60_000, 'clampado no teto de 1h');
+  assert.equal(saved.fails, 11);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('readClaudeUsage: sucesso zera o contador de backoff (fails=0)', async () => {
+  _clearClaudeCache();
+  const tmp = claudeHome({ token: 'tok' });
+  let n = 0;
+  const f = async () => {
+    n += 1;
+    if (n === 1) { const e = new Error('HTTP 429'); e.statusCode = 429; e.retryAfterMs = 5 * 60_000; throw e; }
+    return JSON.stringify({ five_hour: { utilization: 9, resets_at: '2026-07-07T17:00:00Z' } });
+  };
+  let saved = null;
+  await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, cooldownFails: 0, setCooldown: (o) => { saved = o; } });
+  assert.equal(saved.fails, 1, 'falhou → armou fails=1');
+  // depois de expirar, sucesso → zera
+  await readClaudeUsage({ home: tmp, now: NOW + 6 * 60_000, fetcher: f, cooldownFails: 1, setCooldown: (o) => { saved = o; } });
+  assert.deepEqual(saved, { until: 0, fails: 0 }, 'sucesso zera o backoff persistido');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 

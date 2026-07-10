@@ -206,14 +206,16 @@ function windowTitle(min) {
 
 // =========================== I/O ===========================
 
-// Resolve o label do plano Claude (tier) a partir do .claude.json. Barato,
-// síncrono. Devolve 'Claude Max 5×' / 'Claude Team' / 'Claude' (genérico) quando
-// há conta, ou null quando NÃO há conta OAuth (sem .claude.json ou sem campos de
-// identidade). O null distingue "sem Claude" de "Claude sem plano mapeado".
-function claudePlanLabel({ home } = {}) {
+// Lê o .claude.json e devolve o objeto COMPLETO do parseClaudeConfig — plano,
+// reset (planLimitsEndDate), resetInMin e passes — p/ o tile plano-só poder
+// mostrar o reset mesmo sem a API OAuth (ex.: conta Team durante um 429). Barato,
+// síncrono. Devolve null quando NÃO há conta OAuth (sem .claude.json ou sem
+// campos de identidade) — distingue "sem Claude" de "Claude sem plano mapeado".
+function readClaudeConfig({ home, now } = {}) {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.claude.json'), 'utf8'));
-    return parseClaudeConfig(cfg, 0).plan;   // null se não há conta
+    const parsed = parseClaudeConfig(cfg, now || Date.now());
+    return parsed.plan ? parsed : null;   // sem conta (plan null) → null
   } catch { return null; }
 }
 
@@ -240,11 +242,17 @@ function readClaudeOAuthToken({ home } = {}) {
 // na API: devolvemos o último valor bom conhecido, ou o plano-só. Assim o tile
 // não some nem pisca ⚠ e a janela de rate limit expira sozinha.
 const _claudeCacheByToken = new Map(); // token → { at, entries, cooldownUntil }
-async function readClaudeUsage({ home, now, fetcher, cooldownUntil, setCooldown } = {}) {
-  const plan = claudePlanLabel({ home });
+async function readClaudeUsage({ home, now, fetcher, cooldownUntil, cooldownFails, setCooldown } = {}) {
+  const pc = readClaudeConfig({ home, now });
+  const plan = pc ? pc.plan : null;
   const token = readClaudeOAuthToken({ home });
+  // Tile plano-só: mostra o reset (planLimitsEndDate) e passes mesmo sem a API
+  // OAuth — assim a conta Team exibe "3d" durante um 429, em vez de campo vazio.
   const planOnly = plan
-    ? [{ id: 'claude-plan', agent: 'claude', plan, title: null, usedPct: null, resetAt: null, resetInMin: null, extra: null, source: 'claude.json', error: null }]
+    ? [{ id: 'claude-plan', agent: 'claude', plan, title: null, usedPct: null,
+        resetAt: pc.resetAt, resetInMin: pc.resetInMin,
+        extra: (pc.passes != null ? pc.passes + ' passes' : null),
+        source: 'claude.json', error: null }]
     : null;
   if (!token) return planOnly;
 
@@ -267,16 +275,20 @@ async function readClaudeUsage({ home, now, fetcher, cooldownUntil, setCooldown 
   try {
     payload = await _httpsGetJson('https://api.anthropic.com/api/oauth/usage', headers, fetcher);
   } catch (e) {
-    // 429 → agenda cooldown (Retry-After, ou fallback conservador) e mantém o
-    // último valor conhecido; outras falhas (401/offline) caem no plano-só.
+    // 429 → backoff exponencial: cada 429 seguido alonga a espera (Retry-After ×
+    // 1.5^fails, teto 1h) p/ dar espaço ao limite agregado recuperar. Mantém o
+    // último valor bom (ou plano-só). Outras falhas (401/offline) → plano-só.
     if (e && e.statusCode === 429) {
-      const retryMs = (typeof e.retryAfterMs === 'number' && e.retryAfterMs > 0)
+      const baseMs = (typeof e.retryAfterMs === 'number' && e.retryAfterMs > 0)
         ? e.retryAfterMs : CLAUDE_429_COOLDOWN_MS;
-      const until = nowMs + retryMs;
+      const fails = (cached && cached.fails) || (cooldownFails || 0);
+      const backoff = Math.min(CLAUDE_429_MAX_BACKOFF_MS,
+        Math.round(baseMs * Math.pow(CLAUDE_429_BACKOFF_FACTOR, fails)));
+      const until = nowMs + backoff;
       const keep = (cached && cached.entries) ? cached.entries : planOnly;
-      _claudeCacheByToken.set(token, { at: nowMs, entries: keep, cooldownUntil: until });
-      // Persiste o cooldown (só o timestamp, nunca o token) p/ sobreviver a restart.
-      if (typeof setCooldown === 'function') { try { setCooldown(until); } catch { /* nunca quebra a coleta */ } }
+      _claudeCacheByToken.set(token, { at: nowMs, entries: keep, cooldownUntil: until, fails: fails + 1 });
+      // Persiste {until, fails} (só timestamps/contador, nunca o token) p/ restart.
+      if (typeof setCooldown === 'function') { try { setCooldown({ until, fails: fails + 1 }); } catch { /* nunca quebra a coleta */ } }
       return keep;
     }
     return planOnly; // token expirado/offline → plano-só (não polui com ⚠)
@@ -295,7 +307,9 @@ async function readClaudeUsage({ home, now, fetcher, cooldownUntil, setCooldown 
     source: 'anthropic.oauth',
     error: null,
   }));
-  _claudeCacheByToken.set(token, { at: nowMs, entries });
+  _claudeCacheByToken.set(token, { at: nowMs, entries, fails: 0 });
+  // Sucesso → zera o backoff persistido (libera p/ futuras coletas normais).
+  if (typeof setCooldown === 'function') { try { setCooldown({ until: 0, fails: 0 }); } catch { /* nunca quebra a coleta */ } }
   return entries;
 }
 function _clearClaudeCache() { _claudeCacheByToken.clear(); }
@@ -591,6 +605,12 @@ const CACHE_MS = 30 * 1000;
 const CLAUDE_CACHE_MS = 5 * 60 * 1000; // 5 min
 // Cooldown padrão quando o 429 não traz Retry-After legível (fallback conservador).
 const CLAUDE_429_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
+// Backoff exponencial: a cada 429 SEGUIDO, o app espera cada vez mais antes de
+// tentar (Retry-After × 1.5^fails), até o teto. Evita o ciclo "cooldown expira →
+// rebater → 429 de novo → re-armar" que mantinha o limite agregado estourado (o
+// mesmo endpoint é consultado pelo próprio Claude Code no /status). Teto de 1h.
+const CLAUDE_429_BACKOFF_FACTOR = 1.5;
+const CLAUDE_429_MAX_BACKOFF_MS = 60 * 60 * 1000;
 const _glmCacheByToken = new Map(); // token → { at, entries }
 async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
   const E = env || process.env;
@@ -677,7 +697,8 @@ async function collectUsage(opts = {}) {
   const [claude, antigravity, ...glm] = await Promise.all([
     readClaudeUsage({
       home: opts.home, now: opts.now, fetcher: opts.claudeFetcher,
-      cooldownUntil: opts.claudeCooldownUntil, setCooldown: opts.claudeSetCooldown,
+      cooldownUntil: opts.claudeCooldownUntil, cooldownFails: opts.claudeCooldownFails,
+      setCooldown: opts.claudeSetCooldown,
     }).catch(() => null),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
     ...creds.map((c) => readGlmUsage({
@@ -888,5 +909,6 @@ if (typeof module !== 'undefined') module.exports = {
   readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, collectUsage, parseEnviron,
   findCodexRollout, lastCodexRateLimits, mergeUsage, isSummaryEntry, detectReset, parseRetryAfter,
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
+  CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
 };

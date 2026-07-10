@@ -982,21 +982,26 @@ function saveUsage() {
 }
 let lastUsage = loadUsage();
 
-// Cooldown do 429 da API de uso do Claude, PERSISTIDO em disco. Sem isto, rodar
-// em dev (`bun start`/restarts) perde o cooldown em memória a cada reinício,
-// re-bate no boot e RE-ESCALA o rate limit (o servidor sobe o Retry-After a cada
-// toque). Grava só o timestamp {until} — NUNCA o token. Nunca lança.
+// Cooldown do 429 da API de uso do Claude, PERSISTIDO em disco (com o contador
+// de falhas p/ o backoff exponencial). Sem isto, rodar em dev (`bun start`/
+// restarts) perde o estado a cada reinício, re-bate no boot e RE-ESCALA o rate
+// limit. Grava só {until, fails} — NUNCA o token. Nunca lança.
 function loadClaudeCooldown() {
   try {
     const o = JSON.parse(fs.readFileSync(CLAUDE_COOLDOWN_FILE, 'utf8'));
-    return (o && typeof o.until === 'number' && o.until > Date.now()) ? o.until : 0;
-  } catch { return 0; }
+    const until = (o && typeof o.until === 'number' && o.until > Date.now()) ? o.until : 0;
+    const fails = (o && typeof o.fails === 'number' && o.fails > 0) ? o.fails : 0;
+    return { until, fails };
+  } catch { return { until: 0, fails: 0 }; }
 }
-function saveClaudeCooldown(until) {
-  claudeCooldownUntil = until;
-  try { fs.writeFileSync(CLAUDE_COOLDOWN_FILE, JSON.stringify({ until })); } catch { /* ignore */ }
+function saveClaudeCooldown({ until, fails } = {}) {
+  claudeCooldownUntil = until || 0;
+  claudeCooldownFails = fails || 0;
+  try { fs.writeFileSync(CLAUDE_COOLDOWN_FILE, JSON.stringify({ until: claudeCooldownUntil, fails: claudeCooldownFails })); } catch { /* ignore */ }
 }
-let claudeCooldownUntil = loadClaudeCooldown();
+const _cd0 = loadClaudeCooldown();
+let claudeCooldownUntil = _cd0.until;
+let claudeCooldownFails = _cd0.fails;
 
 // Credenciais do GLM vivem no AMBIENTE DE CADA TERMINAL (o usuário tem terminais
 // Claude/Anthropic e terminais Claude/GLM — z.ai), possivelmente com CONTAS
@@ -1136,8 +1141,9 @@ async function collectAndSendUsage() {
     const entries = await usage.collectUsage({
       glmCreds, codexCwds, home: app.getPath('home'),
       // cooldown do 429 persistido: não rebate na API enquanto vigente; o coletor
-      // chama de volta setCooldown quando leva um 429 novo (grava o timestamp).
+      // chama de volta setCooldown quando leva um 429 novo (grava {until, fails}).
       claudeCooldownUntil: claudeCooldownUntil,
+      claudeCooldownFails: claudeCooldownFails,
       claudeSetCooldown: saveClaudeCooldown,
     });
     // Funde com o último estado: mantém o valor bom de cada linha se a coleta
@@ -1147,7 +1153,7 @@ async function collectAndSendUsage() {
   } catch { /* collectUsage já engole erros internamente; defeção dupla */ }
   sendToRenderer('usage', lastUsage);
   // meta p/ a UI: o cooldown do 429 (se vigente) alimenta o tooltip do botão ⟳.
-  sendToRenderer('usage-meta', { claudeCooldownUntil: claudeCooldownUntil > Date.now() ? claudeCooldownUntil : 0 });
+  sendToRenderer('usage-meta', { claudeCooldownUntil: claudeCooldownUntil > Date.now() ? claudeCooldownUntil : 0, claudeCooldownFails: claudeCooldownUntil > Date.now() ? claudeCooldownFails : 0 });
 }
 
 // Estado (por id) que detectReset usa entre coletas p/ achar a transição
@@ -1174,7 +1180,7 @@ function maybeNotifyReset() {
 }
 ipcMain.on('request-usage', () => {
   sendToRenderer('usage', lastUsage);
-  sendToRenderer('usage-meta', { claudeCooldownUntil: claudeCooldownUntil > Date.now() ? claudeCooldownUntil : 0 });
+  sendToRenderer('usage-meta', { claudeCooldownUntil: claudeCooldownUntil > Date.now() ? claudeCooldownUntil : 0, claudeCooldownFails: claudeCooldownUntil > Date.now() ? claudeCooldownFails : 0 });
 });
 
 // Force (botão ⟳): fura o cache de CONVENIÊNCIA (5min Claude / 30s GLM) e
