@@ -1570,11 +1570,11 @@ function setupAutoUpdater() {
   const method = detectInstallMethod();
   updateState.method = method;
   if (method === 'appimage') {
-    try { autoUpdater = require('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+    try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { console.error('[auto-update] require electron-updater falhou:', e && e.message); autoUpdater = null; }
   }
   updateState.canAutoInstall = !!autoUpdater;
   if (autoUpdater) {
-    autoUpdater.autoDownload = false;          // só baixa quando o usuário clica
+    autoUpdater.autoDownload = true;           // baixa sozinho ao detectar (instala no clique "↻" ou no quit)
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('update-available', (info) => {
       const v = ((info && info.version) || '').replace(/^v/, '');

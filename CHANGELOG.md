@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 ### Fixed
 
+## [0.7.1] - 2026-07-13
+
+### Changed
+- **Auto-download de atualizações (AppImage).** O `electron-updater` agora baixa a
+  nova versão automaticamente em segundo plano assim que a detecta
+  (`autoDownload = true`) — antes ficava aguardando o usuário clicar em "↓". O
+  indicador mostra o progresso (%) e, ao concluir, "↻ reiniciar" (1 clique para
+  instalar; ou instala sozinho no próximo encerramento, via `autoInstallOnAppQuit`).
+
+### Fixed
+- **Log do erro quando o `electron-updater` não carrega.** O `catch` silencioso em
+  `setupAutoUpdater` agora registra o motivo (`[auto-update] require electron-updater
+  falhou: ...`). Antes, o bug de empacotamento da v0.6.8 (módulo ausente do
+  `app.asar`) era invisível e a app caía no fallback "abrir release" sem nenhuma
+  pista. A v0.7.0+ já empacota o módulo corretamente.
+
 ## [0.7.0] - 2026-07-13
 
 ### Added
