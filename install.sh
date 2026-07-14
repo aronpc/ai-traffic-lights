@@ -71,7 +71,7 @@ version="$(printf '%s\n' "$json" | grep -oE '"tag_name":[[:space:]]*"v[^"]+"' | 
 [ -n "$download_url" ] || die "não encontrei o asset .AppImage no release latest do $REPO."
 info "versão mais recente: v${version:-?}"
 
-mkdir -p "$INSTALL_DIR" "$APPS_DIR" "$ICON_DIR"
+mkdir -p "$INSTALL_DIR" "$APPS_DIR"
 
 info "baixando AppImage -> $APPIMAGE_PATH"
 curl -fSL --retry 3 -o "$APPIMAGE_PATH.new" "$download_url"
