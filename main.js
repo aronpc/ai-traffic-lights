@@ -178,29 +178,69 @@ function backfillModels() {
 const SHELLS = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
 function discoverAgentProcs() {
   const found = [];
-  try {
-    for (const ent of fs.readdirSync('/proc')) {
-      if (!/^\d+$/.test(ent)) continue;
-      try {
-        const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
+  if (process.platform === 'darwin') {
+    try {
+      const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 2000 });
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const m = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/);
+        if (!m) continue;
+        const pid = parseInt(m[1], 10);
+        const ppid = parseInt(m[2], 10);
+        const fullArgsStr = m[3];
+        const argv = fullArgsStr.split(/\s+/);
+        const execPath = argv[0] || '';
+        const comm = path.basename(execPath);
+        
         let agent = COMM_TO_AGENT.get(comm);
-        // CLIs Node (comm="node"): identifica pelo basename do script no argv
-        if (!agent && comm === 'node' && ARGV_TO_AGENT.size) {
-          try {
-            const argv = fs.readFileSync(`/proc/${ent}/cmdline`, 'utf8').split('\0');
-            agent = ARGV_TO_AGENT.get(path.basename(argv[1] || ''));
-          } catch {}
+        if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
+          for (let i = 1; i < argv.length; i++) {
+            const scriptName = path.basename(argv[i] || '');
+            agent = ARGV_TO_AGENT.get(scriptName);
+            if (agent) break;
+          }
         }
         if (!agent) continue;
-        const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
-        const m = status.match(/^PPid:\s+(\d+)/m);
-        if (!m) continue;
+        
         let pcomm = '';
-        try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
-        if (SHELLS.has(pcomm)) found.push({ pid: parseInt(ent, 10), agent });
-      } catch {}
-    }
-  } catch {}
+        try {
+          const parentOutput = execFileSync('ps', ['-p', ppid, '-o', 'comm='], { encoding: 'utf8', timeout: 1000 }).trim();
+          pcomm = path.basename(parentOutput);
+        } catch {}
+        
+        if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
+        
+        if (SHELLS.has(pcomm)) {
+          found.push({ pid, agent });
+        }
+      }
+    } catch {}
+  } else {
+    try {
+      for (const ent of fs.readdirSync('/proc')) {
+        if (!/^\d+$/.test(ent)) continue;
+        try {
+          const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
+          let agent = COMM_TO_AGENT.get(comm);
+          if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
+            try {
+              const argv = fs.readFileSync(`/proc/${ent}/cmdline`, 'utf8').split('\0');
+              agent = ARGV_TO_AGENT.get(path.basename(argv[1] || ''));
+            } catch {}
+          }
+          if (!agent) continue;
+          const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
+          const m = status.match(/^PPid:\s+(\d+)/m);
+          if (!m) continue;
+          let pcomm = '';
+          try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
+          if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
+          if (SHELLS.has(pcomm)) found.push({ pid: parseInt(ent, 10), agent });
+        } catch {}
+      }
+    } catch {}
+  }
   return found;
 }
 let _disc = null, _discAt = 0;
@@ -224,19 +264,66 @@ function discoveredTerminalAgents() {
 function ancestorPidsOf(pid) {
   const set = new Set();
   let p = pid;
-  for (let i = 0; i < 25 && p > 1; i++) {
-    set.add(p);
-    try {
-      const m = fs.readFileSync(`/proc/${p}/status`, 'utf8').match(/^PPid:\s+(\d+)/m);
-      if (!m) break;
-      p = parseInt(m[1], 10);
-    } catch { break; }
+  if (process.platform === 'darwin') {
+    for (let i = 0; i < 25 && p > 1; i++) {
+      set.add(p);
+      try {
+        const ppidStr = execFileSync('ps', ['-o', 'ppid=', '-p', p], { encoding: 'utf8', timeout: 1000 }).trim();
+        if (!ppidStr) break;
+        p = parseInt(ppidStr, 10);
+      } catch { break; }
+    }
+  } else {
+    for (let i = 0; i < 25 && p > 1; i++) {
+      set.add(p);
+      try {
+        const m = fs.readFileSync(`/proc/${p}/status`, 'utf8').match(/^PPid:\s+(\d+)/m);
+        if (!m) break;
+        p = parseInt(m[1], 10);
+      } catch { break; }
+    }
   }
   return set;
 }
 
+function findTerminalAppNameFromPid(pid) {
+  const ancestors = Array.from(ancestorPidsOf(pid));
+  for (const p of ancestors) {
+    try {
+      const commPath = execFileSync('ps', ['-p', p, '-o', 'comm='], { encoding: 'utf8', timeout: 500 }).trim();
+      const name = path.basename(commPath).toLowerCase();
+      if (name.includes('warp') || commPath.includes('Warp.app')) return 'Warp';
+      if (name.includes('iterm') || commPath.includes('iTerm.app')) return 'iTerm';
+      if (name.includes('terminal') || commPath.includes('Terminal.app')) return 'Terminal';
+      if (name.includes('ghostty') || commPath.includes('Ghostty.app')) return 'Ghostty';
+    } catch {}
+  }
+  return null;
+}
+
 function raiseWindow(windowid, pid) {
   if (!pid) return false;
+  if (process.platform === 'darwin') {
+    const ancestors = Array.from(ancestorPidsOf(pid));
+    for (let i = ancestors.length - 1; i >= 0; i--) {
+      const apid = ancestors[i];
+      try {
+        const check = execFileSync('osascript', ['-e', `tell application "System Events" to get name of first process whose unix id is ${apid}`], { encoding: 'utf8', timeout: 500 }).trim();
+        if (check) {
+          execFileSync('osascript', ['-e', `tell application "System Events" to set frontmost of first process whose unix id is ${apid} to true`], { timeout: 1000 });
+          return true;
+        }
+      } catch {}
+    }
+    const appName = findTerminalAppNameFromPid(pid);
+    if (appName) {
+      try {
+        execFileSync('osascript', ['-e', `tell application "${appName}" to activate`], { timeout: 2000 });
+        return true;
+      } catch {}
+    }
+    return false;
+  }
   let list = '';
   try { list = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch { return false; }
   const wins = [];
@@ -254,7 +341,8 @@ function focusTab(state) {
   if (!ch) return;
   try {
     if (ch.kind === 'warp') {
-      execFileSync('xdg-open', [ch.value], { timeout: 2000 });
+      const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+      execFileSync(cmd, [ch.value], { timeout: 2000 });
     } else if (ch.kind === 'tilix') {
       execFileSync('gdbus', ['call', '--session', '--dest', 'com.gexperts.Tilix',
         '--object-path', '/com/gexperts/Tilix', '--method', 'org.gtk.Actions.Activate',
@@ -263,14 +351,62 @@ function focusTab(state) {
   } catch {}
 }
 
-// Enriquece o alvo com os hints de foco lidos AO VIVO do /proc/<pid>/environ.
+function parseMacOSEnviron(content) {
+  if (!content) return '';
+  const regex = /(?<=\s|^)([A-Za-z0-9_]+)=/g;
+  const matches = [];
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    matches.push({
+      key: match[1],
+      index: match.index,
+      valueStart: match.index + match[0].length
+    });
+  }
+  const envVars = [];
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].valueStart;
+    const end = (i + 1 < matches.length) ? matches[i + 1].index : content.length;
+    const val = content.slice(start, end).trim();
+    envVars.push(`${matches[i].key}=${val}`);
+  }
+  return envVars.join('\0');
+}
+
+function escapeAppleScriptString(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function getProcessEnviron(pid) {
+  if (!pid) return '';
+  if (process.platform === 'darwin') {
+    try {
+      const output = execFileSync('ps', ['-p', pid, '-E'], { encoding: 'utf8', timeout: 1000 });
+      const lines = output.split('\n');
+      if (lines.length < 2) return '';
+      const content = lines.slice(1).join(' ');
+      return parseMacOSEnviron(content);
+    } catch {
+      return '';
+    }
+  } else {
+    try {
+      return fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+}
+
+// Enriquece o alvo com os hints de foco lidos AO VIVO do processo.
 // O state file guarda um snapshot capturado no prompt; o environ é a fonte
 // viva — cobre sessões cujo evento veio antes do hook atual e as detectadas
 // só via /proc (sem focus_url/tilix_id no state). O state tem precedência.
 function enrichTarget(target) {
   if (!target || !target.pid || (target.focus_url && target.tilix_id)) return target;
   try {
-    const hints = focus.parseEnviron(fs.readFileSync(`/proc/${target.pid}/environ`, 'utf8'));
+    const hints = focus.parseEnviron(getProcessEnviron(target.pid));
     return {
       ...target,
       focus_url: target.focus_url || hints.focus_url,
@@ -382,6 +518,32 @@ function detectLaunchers() {
 
 // Quais terminais suportados estão no PATH? (pra 'auto' e pra validar o seletor)
 function availableTerminals() {
+  if (process.platform === 'darwin') {
+    const list = [];
+    const homeApps = path.join(process.env.HOME || '/', 'Applications');
+    
+    if (fs.existsSync('/Applications/iTerm.app') || 
+        fs.existsSync(path.join(homeApps, 'iTerm.app')) || 
+        !!scanPathBin('iterm')) {
+      list.push('iterm2');
+    }
+    if (fs.existsSync('/System/Applications/Utilities/Terminal.app') || 
+        fs.existsSync('/Applications/Utilities/Terminal.app') || 
+        fs.existsSync(path.join(homeApps, 'Utilities/Terminal.app'))) {
+      list.push('terminal');
+    }
+    if (fs.existsSync('/Applications/Warp.app') || 
+        fs.existsSync(path.join(homeApps, 'Warp.app')) ||
+        !!scanPathBin('warp')) {
+      list.push('warp');
+    }
+    if (fs.existsSync('/Applications/Ghostty.app') || 
+        fs.existsSync(path.join(homeApps, 'Ghostty.app')) || 
+        !!scanPathBin('ghostty')) {
+      list.push('ghostty');
+    }
+    return list;
+  }
   return launcher.TERMINAL_ORDER.filter((t) => !!scanPathBin(t));
 }
 
@@ -407,6 +569,68 @@ function launchAgent({ agent, cwd }) {
   const entry = detectLaunchers().find((l) => l.id === agent);
   if (!entry) { notifyUser(T('ntf_no_launcher', { agent: a.label })); return; }
   const dir = (cwd && typeof cwd === 'string') ? cwd : (lastSessionCwd() || process.env.HOME || '/');
+
+  if (process.platform === 'darwin') {
+    const term = settingsCfg.terminal === 'auto' ? (availableTerminals()[0] || 'terminal') : settingsCfg.terminal;
+    
+    if (term === 'terminal') {
+      const escDir = escapeAppleScriptString(dir);
+      const escPath = escapeAppleScriptString(entry.path);
+      const appleScript = `
+        tell application "Terminal"
+          do script "cd " & quoted form of "${escDir}" & " && " & quoted form of "${escPath}"
+          activate
+        end tell
+      `;
+      try { spawn('osascript', ['-e', appleScript], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+      return;
+    }
+    
+    if (term === 'iterm2') {
+      const escDir = escapeAppleScriptString(dir);
+      const escPath = escapeAppleScriptString(entry.path);
+      const appleScript = `
+        tell application "iTerm"
+          create window with default profile
+          tell current session of current window
+            write text "cd " & quoted form of "${escDir}" & " && " & quoted form of "${escPath}"
+          end tell
+          activate
+        end tell
+      `;
+      try { spawn('osascript', ['-e', appleScript], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+      return;
+    }
+    
+    if (term === 'warp') {
+      const warpDir = path.join(process.env.HOME || '/', '.warp', 'launch_configurations');
+      try {
+        fs.mkdirSync(warpDir, { recursive: true });
+        const configName = `ai-traffic-lights-${agent}`;
+        const yamlPath = path.join(warpDir, `${configName}.yaml`);
+        const yamlContent = [
+          `name: AI Traffic Lights - ${agent}`,
+          `windows:`,
+          `  - tabs:`,
+          `      - panes:`,
+          `          - cwd: ${JSON.stringify(dir)}`,
+          `            commands:`,
+          `              - ${JSON.stringify(entry.path)}`
+        ].join('\n') + '\n';
+        fs.writeFileSync(yamlPath, yamlContent, 'utf8');
+        spawn('open', [`warp://launch/${configName}`], { detached: true, stdio: 'ignore' }).unref();
+      } catch (e) {
+        notifyUser(`Launch failed: ${e.message}`);
+      }
+      return;
+    }
+    
+    if (term === 'ghostty') {
+      try { spawn('open', ['-a', 'Ghostty', '--args', `--working-directory=${dir}`, `--initial-command=${entry.path}`], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+      return;
+    }
+  }
+
   const term = launcher.pickTerminal(settingsCfg.terminal, availableTerminals());
   if (settingsCfg.terminal === 'custom' && settingsCfg.terminalCmd.trim()) {
     // Custom: template com {cwd} e {cmd}. Split simples (sem shell, sem quoting rico).
@@ -511,7 +735,7 @@ function saveBounds() {
 // Aplica _NET_WM_STATE_SKIP_TASKBAR + SKIP_PAGER via wmctrl no X11 id da
 // janela. No Wayland wmctrl é inócuo (silencioso). Idempotente.
 function applySkip() {
-  if (!win || win.isDestroyed() || IS_WAYLAND) return;
+  if (!win || win.isDestroyed() || IS_WAYLAND || process.platform === 'darwin') return;
   try {
     const buf = win.getNativeWindowHandle(); // X11: XID little-endian
     const xid = '0x' + buf.readUInt32LE(0).toString(16).padStart(8, '0');
@@ -1031,7 +1255,7 @@ function glmCredsFromSessions() {
     if (!s.pid || !/^glm/i.test(s.model || '')) continue;
     let env;
     try {
-      const raw = fs.readFileSync(`/proc/${s.pid}/environ`, 'utf8');
+      const raw = getProcessEnviron(s.pid);
       env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
     } catch { continue; } // processo morreu entre readSessions e a leitura
     if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
@@ -1051,30 +1275,55 @@ function glmCredsFromSessions() {
 // FALLBACK: o processo PRINCIPAL do Claude Code às vezes não herda as env vars
 // do GLM no environ (lançado via wrapper/alias que não repassa), mas seus
 // SUBPROCESSOS sim (MCP servers, shells filhos, etc.). Se glmCredsFromSessions
-// não achou nada nos pids das sessões, varre todo o /proc procurando qualquer
+// não achou nada nos pids das sessões, varre todo o sistema procurando qualquer
 // processo com ANTHROPIC_BASE_URL (z.ai/bigmodel) + token. A conta é uma só —
 // qualquer processo que tenha as credenciais serve pra buscar o % do plano.
 // Dedup por token. Nunca lança; só lê o que o dono consegue (EACCES → skip).
 function glmCredsFromProc() {
   const byToken = new Map();
-  let pids;
-  try { pids = fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d)); } catch { return []; }
-  for (const pid of pids) {
-    let raw;
-    try { raw = fs.readFileSync(`/proc/${pid}/environ`, 'utf8'); } catch { continue; } // EACCES/morto
-    const env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
-    if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
-    if (!/api\.z\.ai|bigmodel\.cn/.test(env.ANTHROPIC_BASE_URL)) continue; // só backend GLM
-    const token = env.ANTHROPIC_AUTH_TOKEN;
-    if (byToken.has(token)) continue;
-    let suffix;
-    try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
-    catch { suffix = String(byToken.size + 1); }
-    let label = '';
-    try { label = new URL(env.ANTHROPIC_BASE_URL).host.replace(/^api\./, ''); } catch {}
-    byToken.set(token, { env, label, suffix });
-    // bastam 2 contas distintas — não precisa varrer os ~1000 processos todos
-    if (byToken.size >= 2) break;
+  if (process.platform === 'darwin') {
+    try {
+      const output = execFileSync('ps', ['-ax', '-E', '-o', 'pid=,args='], { encoding: 'utf8', timeout: 3000 });
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const m = trimmed.match(/^(\d+)\s+(.+)$/);
+        if (!m) continue;
+        const content = m[2];
+        const rawEnv = parseMacOSEnviron(content);
+        const env = usage.parseEnviron(rawEnv, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+        if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
+        if (!/api\.z\.ai|bigmodel\.cn/.test(env.ANTHROPIC_BASE_URL)) continue;
+        const token = env.ANTHROPIC_AUTH_TOKEN;
+        if (byToken.has(token)) continue;
+        let suffix;
+        try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
+        catch { suffix = String(byToken.size + 1); }
+        let label = '';
+        try { label = new URL(env.ANTHROPIC_BASE_URL).host.replace(/^api\./, ''); } catch {}
+        byToken.set(token, { env, label, suffix });
+        if (byToken.size >= 2) break;
+      }
+    } catch { return []; }
+  } else {
+    let pids = [];
+    try { pids = fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d)).map(n => parseInt(n, 10)); } catch { return []; }
+    for (const pid of pids) {
+      let raw;
+      try { raw = getProcessEnviron(pid); } catch { continue; }
+      const env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+      if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
+      if (!/api\.z\.ai|bigmodel\.cn/.test(env.ANTHROPIC_BASE_URL)) continue;
+      const token = env.ANTHROPIC_AUTH_TOKEN;
+      if (byToken.has(token)) continue;
+      let suffix;
+      try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
+      catch { suffix = String(byToken.size + 1); }
+      let label = '';
+      try { label = new URL(env.ANTHROPIC_BASE_URL).host.replace(/^api\./, ''); } catch {}
+      byToken.set(token, { env, label, suffix });
+      if (byToken.size >= 2) break;
+    }
   }
   return [...byToken.values()];
 }
@@ -1115,10 +1364,30 @@ function mergeGlmCreds(a, b) {
   return [...byToken.values()];
 }
 
+function getProcessCwd(pid) {
+  if (!pid) return null;
+  if (process.platform === 'darwin') {
+    try {
+      const output = execFileSync('lsof', ['-p', pid, '-a', '-d', 'cwd', '-Fn'], { encoding: 'utf8', timeout: 1000 });
+      for (const line of output.split('\n')) {
+        if (line.startsWith('n')) {
+          return line.slice(1).trim();
+        }
+      }
+    } catch {}
+    return null;
+  } else {
+    try {
+      return fs.readlinkSync(`/proc/${pid}/cwd`);
+    } catch {
+      return null;
+    }
+  }
+}
+
 // Codex é passivo: o uso vive no rollout da sessão, associado por cwd. As
 // sessões Codex vivas são detectadas por /proc (sem state file próprio) e o
-// cwd é lido de /proc/<pid>/cwd (symlink legível pelo dono — ao contrário do
-// cwd do hook, que o ptrace_scope bloqueia). Dedup por cwd.
+// cwd é lido de /proc/<pid>/cwd no Linux ou via lsof no macOS. Dedup por cwd.
 function codexCwdsFromSessions() {
   let sessions = [];
   try { sessions = readSessions(); } catch { return []; }
@@ -1126,7 +1395,7 @@ function codexCwdsFromSessions() {
   for (const s of sessions) {
     if (!s.pid || agentOf(s) !== 'codex') continue;
     try {
-      const cwd = fs.readlinkSync(`/proc/${s.pid}/cwd`);
+      const cwd = getProcessCwd(s.pid);
       if (cwd) cwds.add(cwd);
     } catch { /* processo morreu ou sem permissão */ }
   }

@@ -54,6 +54,17 @@
     },
     "appImage": {
       "artifactName": "${name}-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "arch": [
+        "arm64"
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png"
     }
   },
   "devDependencies": {

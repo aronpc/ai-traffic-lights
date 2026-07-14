@@ -82,7 +82,7 @@ function mergeWithDefaults(raw) {
     if (typeof raw.soundFile === 'string' && raw.soundFile.length <= 4096) out.soundFile = raw.soundFile;
     if (isValidShortcut(raw.shortcut)) out.shortcut = raw.shortcut;
     if (raw.lang === 'auto' || raw.lang === 'en' || raw.lang === 'pt') out.lang = raw.lang;
-    const TERMINAL_OK = new Set(['auto', 'tilix', 'gnome-terminal', 'ghostty', 'custom']);
+    const TERMINAL_OK = new Set(['auto', 'tilix', 'gnome-terminal', 'ghostty', 'iterm2', 'terminal', 'warp', 'custom']);
     if (TERMINAL_OK.has(raw.terminal)) out.terminal = raw.terminal;
     if (typeof raw.terminalCmd === 'string' && raw.terminalCmd.length <= 1000) out.terminalCmd = raw.terminalCmd;
     // launchers: só strings (paths), chaves curtas — ignorado se malformado.

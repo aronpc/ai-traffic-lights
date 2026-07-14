@@ -97,23 +97,37 @@ main() {
     ntype="${BASH_REMATCH[1]}"
   fi
 
-  # Sobe a árvore até achar o processo do agente. Zero forks.
-  # claude: binário próprio (comm=claude). antigravity/gemini: script Node (comm=node) ou binário agy/antigravity —
-  # o PRIMEIRO ancestral é o agente. codex: binário Rust (comm=codex).
+  # Sobe a árvore até achar o processo do agente. Zero forks no Linux.
+  # No macOS (sem /proc), usamos ps.
   local agent_pid=$$ pid=$$ comm="" ppid=""
-  while [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
-    comm=""
-    read -r comm < "/proc/$pid/comm" 2>/dev/null
-    case "$AGENT:$comm" in
-      claude:claude|claude:claude-agent-acp|gemini:node|antigravity:node|antigravity:agy|antigravity:antigravity|codex:codex) agent_pid="$pid"; break ;;
-    esac
-    ppid=""
-    while IFS=$' \t' read -r k v; do
-      [ "$k" = "PPid:" ] && { ppid="$v"; break; }
-    done < "/proc/$pid/status" 2>/dev/null
-    [ -z "$ppid" ] && break
-    pid="$ppid"
-  done
+  if [ -d "/proc" ]; then
+    while [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
+      comm=""
+      read -r comm < "/proc/$pid/comm" 2>/dev/null
+      case "$AGENT:$comm" in
+        claude:claude|claude:claude-agent-acp|gemini:node|antigravity:node|antigravity:agy|antigravity:antigravity|codex:codex) agent_pid="$pid"; break ;;
+      esac
+      ppid=""
+      while IFS=$' \t' read -r k v; do
+        [ "$k" = "PPid:" ] && { ppid="$v"; break; }
+      done < "/proc/$pid/status" 2>/dev/null
+      [ -z "$ppid" ] && break
+      pid="$ppid"
+    done
+  else
+    while [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
+      local ps_out
+      ps_out=$(ps -p "$pid" -o ppid=,comm= 2>/dev/null)
+      ppid="" comm=""
+      read -r ppid comm <<< "$ps_out"
+      comm=$(basename "$comm")
+      case "$AGENT:$comm" in
+        claude:claude|claude:claude-agent-acp|gemini:node|antigravity:node|antigravity:agy|antigravity:antigravity|codex:codex) agent_pid="$pid"; break ;;
+      esac
+      [ -z "$ppid" ] && break
+      pid="$ppid"
+    done
+  fi
 
   # Canais nativos de foco de aba (invisível pro X11; só o terminal alcança):
   #  Warp  → WARP_FOCUS_URL (warp://session/<uuid>) via xdg-open
@@ -133,7 +147,9 @@ main() {
   fi
 
   local ts
-  printf -v ts '%(%s)T' -1                   # epoch fork-free (bash 4.2+)
+  if ! printf -v ts '%(%s)T' -1 2>/dev/null || [ -z "${ts:-}" ]; then
+    ts=$(date +%s)
+  fi
 
   [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR" 2>/dev/null || return 0
   local file="$STATE_DIR/${sid}.json"

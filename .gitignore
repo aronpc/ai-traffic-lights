@@ -16,3 +16,6 @@ graphify-out/
 
 # lixo de redirecionamento acidental — builtin `cd` com output redirecionado cria um arquivo "cd"
 /cd
+AGENTS.md
+GEMINI.md
+CLAUDE.md

@@ -68,10 +68,9 @@ terminal — **window _and_ tab**.
 
 ## Requirements
 
-- **Linux**. X11: full support (GNOME/Mutter tested). **Wayland: partial** —
-  the overlay runs via XWayland; tab-focus works in Warp (`focus_url`);
-  window focus reaches XWayland terminals only. See Troubleshooting.
-- `wmctrl`, `xdotool`, `jq` — `sudo apt install wmctrl xdotool jq`
+- **Linux** (X11: full support, Wayland: partial — see [Troubleshooting](#troubleshooting)) or **macOS** (supports Apple Silicon M1–M5).
+- On Linux: `wmctrl`, `xdotool`, `jq` — `sudo apt install wmctrl xdotool jq`
+- On macOS: Homebrew and `jq` — `brew install jq`
 - Node.js 20+
 - A supported agent: [Claude Code](https://claude.com/claude-code),
   [Antigravity CLI](https://antigravity.google/docs/cli/reference),
@@ -79,56 +78,61 @@ terminal — **window _and_ tab**.
 
 ## Install
 
-Pick whichever fits. **All three require the agent hooks** so the overlay can
-see Claude Code / Antigravity / OpenCode sessions — from source you run
-`npm run setup-hook`; in a packaged build you click **Install hooks** in the
-tray menu (or the overlay's onboarding button).
+Pick whichever fits your platform. **All options require the agent hooks** so the overlay can see Claude Code / Antigravity / OpenCode sessions — from source you run `npm run setup-hook`; in a packaged build you click **Install/update hooks** in the tray menu or Preferences window (or the overlay's onboarding button).
 
-### A — AppImage (recommended, self-updating)
+### macOS (M1 to M5 / arm64)
 
-**One line** — fetches the latest release, makes it executable, installs the icon
-into the system theme and creates the application-menu shortcut (with
-`StartupWMClass` matching the app's real WM_CLASS):
+#### Option 1: Automated script (recommended)
+Run the following single-line command in your terminal. It will verify dependencies (installing `jq` via Homebrew if needed), download the latest `.dmg` release, copy `AI Traffic Lights.app` to `/Applications`, and configure shell aliases (`atl` and `ai-traffic-lights`) in your `~/.zshrc` and `~/.bash_profile`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aronpc/ai-traffic-lights/main/install_macos.sh | bash
+```
+
+To run the application from the terminal, open a new shell session (or run `source ~/.zshrc`) and execute:
+```bash
+atl
+```
+
+#### Option 2: Manual Install
+1. Download the `.dmg` file from the [latest release](https://github.com/aronpc/ai-traffic-lights/releases/latest).
+2. Open the `.dmg` file and drag `AI Traffic Lights.app` to your `/Applications` folder.
+
+---
+
+### Linux
+
+#### Option 1: AppImage (recommended, self-updating)
+A single command that fetches the latest release, makes it executable, installs the icon into the system theme, and creates an application menu shortcut:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aronpc/ai-traffic-lights/main/install.sh | bash
 ```
 
-Then open it from your **application menu** (search "AI Traffic Lights") or run
-`~/Applications/AI-Traffic-Lights.AppImage`. To remove:
-`curl -fsSL .../install.sh | bash -s -- --uninstall`.
+Then open it from your application menu or run `~/Applications/AI-Traffic-Lights.AppImage`. To uninstall:
+```bash
+curl -fsSL https://raw.githubusercontent.com/aronpc/ai-traffic-lights/main/install.sh | bash -s -- --uninstall
+```
 
-This is the only build that **updates itself**: on launch and hourly it checks
-for a new release, the version badge becomes `↓ vX` (download) → `↻` (restart
-into the new version), and the tray has a "Check for updates" entry.
+<details><summary>Manual AppImage install</summary>
 
-<details><summary>Without <code>install.sh</code> (manual)</summary>
-
-Grab the `.AppImage` from the [latest release](https://github.com/aronpc/ai-traffic-lights/releases/latest),
-drop it in a **user-writable** folder (the self-updater rewrites that file in
-place — so not `/opt` or `/usr`), and run it:
-
+Grab the `.AppImage` from the [latest release](https://github.com/aronpc/ai-traffic-lights/releases/latest), drop it in a user-writable folder (the self-updater rewrites that file in place — do not use `/opt` or `/usr`), and run:
 ```bash
 chmod +x AI-Traffic-Lights-*.AppImage
 ./AI-Traffic-Lights-*.AppImage
 ```
-
 </details>
 
-### B — .deb
-
-Grab the `.deb` from the [latest release](https://github.com/aronpc/ai-traffic-lights/releases/latest) and:
+#### Option 2: Debian Package (.deb)
+Download the `.deb` from the [latest release](https://github.com/aronpc/ai-traffic-lights/releases/latest) and install it:
 
 ```bash
 sudo dpkg -i ai-traffic-lights_*.deb
 ```
 
-Installs under `/opt` and registers a `.desktop` entry. **No self-update** on
-this path (the updater can't replace a root-owned package) — you only get a
-`↑ vX` prompt that opens the release page when a new version ships.
+---
 
-### C — from source (development)
-
+### From Source (Development - Linux & macOS)
 ```bash
 git clone https://github.com/aronpc/ai-traffic-lights.git
 cd ai-traffic-lights
@@ -139,16 +143,9 @@ npm run setup-hook   # registers the adapters: Claude Code (~/.claude),
 npm start            # opens the overlay
 ```
 
-`setup-hook` is idempotent and surgical: it backs up `settings.json` and never
-touches hooks from other tools. The registered command points to a
-self-updating **stable copy** of the hook in
-`~/.local/share/ai-traffic-lights/bin/` — so moving the project (or running
-the packaged AppImage, whose mount path changes every run) never breaks it.
-`npm run remove-hook` undoes everything just as cleanly. The tray menu offers
-the same install/remove actions for packaged installs.
+`setup-hook` is idempotent and surgical: it backs up `settings.json` and never touches hooks from other tools. The registered command points to a self-updating **stable copy** of the hook in `~/.local/share/ai-traffic-lights/bin/` — so moving the project (or running the packaged AppImage/App, whose mount path changes every run) never breaks it. `npm run remove-hook` undoes everything just as cleanly. The tray menu and Preferences window offer the same install/remove actions for packaged installs.
 
-New Claude Code sessions show up immediately; sessions already open appear on
-their next event.
+New Claude Code sessions show up immediately; sessions already open appear on their next event.
 
 ## How it works
 
@@ -259,9 +256,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 - **Overlay shows "no active sessions"** — did you run `npm run setup-hook`?
   Already-open sessions only appear after their next event (send any prompt).
-- **Click doesn't focus / focuses the wrong window** — check `wmctrl` and
-  `xdotool` are installed; on Wayland they don't work (roadmap). The exact-tab
-  jump only works in Warp for now.
+- **Click doesn't focus / focuses the wrong window** — on Linux, check that `wmctrl` and `xdotool` are installed. On macOS, click-to-focus uses AppleScript (`osascript`) to focus the window. If it fails, ensure `AI Traffic Lights.app` (or your terminal if running from source) has **Accessibility** permissions granted in *System Settings > Privacy & Security > Accessibility*.
 - **Wayland** — the overlay itself runs fine (XWayland). Native-Wayland
   windows can't be focused by third parties, so click-to-focus relies on the
   terminal's focus URI (Warp today); the global shortcut may not fire while a
