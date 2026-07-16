@@ -12,6 +12,7 @@ const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
+const collect = require('./src/collect');
 const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
@@ -84,15 +85,9 @@ function migrateOldBase() {
   } catch {}
 }
 
-// Mapas de detecção → agent id, derivados do registro (src/agents.js).
-// comm: nome do processo. argv: basename do script (p/ CLIs Node cujo comm
-// é "node" — ex.: gemini — identifica pelo caminho em /proc/<pid>/cmdline).
-const COMM_TO_AGENT = new Map();
-const ARGV_TO_AGENT = new Map();
-for (const [id, a] of Object.entries(AGENTS)) {
-  for (const c of a.comm || []) COMM_TO_AGENT.set(c, id);
-  for (const s of a.argv || []) ARGV_TO_AGENT.set(s, id);
-}
+// Mapas de detecção (COMM_TO_AGENT/ARGV_TO_AGENT/SHELLS) e a sonda /proc vivem
+// em src/collect.js (core Electron-free, reusado pelo futuro agent.js headless).
+// AGENTS ainda é usado aqui p/ UI/launcher/tray.
 
 const DEFAULT_W = 360;
 const HEADER_H = 58; // tem que casar com --header-h do CSS
@@ -101,155 +96,9 @@ const MIN_H = HEADER_H + 40, MAX_H = 640;
 
 let win;
 
-function readSessions() {
-  try {
-    const files = fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json'));
-    const stateFileSessions = [];
-    for (const f of files) {
-      try {
-        const s = JSON.parse(fs.readFileSync(path.join(STATE_DIR, f), 'utf8'));
-        if (s && s.session_id) stateFileSessions.push(s);
-      } catch { /* parcial/inválido — ignora */ }
-    }
-    // Merge + dedup (lógica pura em src/sessions.js). Sem filtro por
-    // term_program: Tilix não exporta TERM_PROGRAM e sumia do overlay.
-    // O gate de "interativo" é o parent=shell (sonda /proc) e o próprio
-    // state file (o hook só dispara em sessão interativa).
-    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents());
-  } catch { return []; }
-}
-
-// Acha o transcript de uma sessão pelo session_id (procura em .claude e .zclaude).
-function findTranscript(sid) {
-  for (const root of [
-    path.join(process.env.HOME, '.claude/projects'),
-    path.join(process.env.HOME, '.zclaude/projects'),
-  ]) {
-    try {
-      for (const proj of fs.readdirSync(root)) {
-        const p = path.join(root, proj, sid + '.jsonl');
-        if (fs.existsSync(p)) return p;
-      }
-    } catch {}
-  }
-  return null;
-}
-
-// Último model usado num transcript.
-function lastModel(tp) {
-  try {
-    if (!tp || !fs.existsSync(tp) || fs.statSync(tp).size > 50_000_000) return null;
-    const data = fs.readFileSync(tp, 'utf8');
-    let last = null, m;
-    const re = /"model":"([^"]+)"/g;
-    while ((m = re.exec(data))) last = m[1];
-    return last;
-  } catch { return null; }
-}
-
-// Backfill: sessões com model=null pegam o model do transcript (de cara, no startup).
-function backfillModels() {
-  let changed = false;
-  try {
-    for (const f of fs.readdirSync(STATE_DIR).filter((x) => x.endsWith('.json'))) {
-      try {
-        const p = path.join(STATE_DIR, f);
-        const s = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (s.model) continue;
-        const tp = s.transcript_path || findTranscript(s.session_id);
-        const m = tp && lastModel(tp);
-        if (m) {
-          s.transcript_path = tp; s.model = m;
-          // tmp+rename: mesma escrita atômica dos adapters (sem race com o hook)
-          fs.writeFileSync(p + '.tmp', JSON.stringify(s));
-          fs.renameSync(p + '.tmp', p);
-          changed = true;
-        }
-      } catch {}
-    }
-  } catch {}
-  return changed;
-}
-
-// Sonda /proc: descobre agentes rodando em terminal (parent = shell) que AINDA
-// NÃO têm state file — sessões idle ou iniciadas antes do adapter. Os nomes de
-// processo vêm do registro (src/agents.js). (cwd é ilegível por ptrace_scope →
-// essas entram com label fallback "<agente> · PID".)
-const SHELLS = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
-function discoverAgentProcs() {
-  const found = [];
-  if (process.platform === 'darwin') {
-    try {
-      const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 2000 });
-      for (const line of output.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const m = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/);
-        if (!m) continue;
-        const pid = parseInt(m[1], 10);
-        const ppid = parseInt(m[2], 10);
-        const fullArgsStr = m[3];
-        const argv = fullArgsStr.split(/\s+/);
-        const execPath = argv[0] || '';
-        const comm = path.basename(execPath);
-        
-        let agent = COMM_TO_AGENT.get(comm);
-        if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
-          for (let i = 1; i < argv.length; i++) {
-            const scriptName = path.basename(argv[i] || '');
-            agent = ARGV_TO_AGENT.get(scriptName);
-            if (agent) break;
-          }
-        }
-        if (!agent) continue;
-        
-        let pcomm = '';
-        try {
-          const parentOutput = execFileSync('ps', ['-p', ppid, '-o', 'comm='], { encoding: 'utf8', timeout: 1000 }).trim();
-          pcomm = path.basename(parentOutput);
-        } catch {}
-        
-        if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-        
-        if (SHELLS.has(pcomm)) {
-          found.push({ pid, agent });
-        }
-      }
-    } catch {}
-  } else {
-    try {
-      for (const ent of fs.readdirSync('/proc')) {
-        if (!/^\d+$/.test(ent)) continue;
-        try {
-          const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
-          let agent = COMM_TO_AGENT.get(comm);
-          if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
-            try {
-              const argv = fs.readFileSync(`/proc/${ent}/cmdline`, 'utf8').split('\0');
-              agent = ARGV_TO_AGENT.get(path.basename(argv[1] || ''));
-            } catch {}
-          }
-          if (!agent) continue;
-          const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
-          const m = status.match(/^PPid:\s+(\d+)/m);
-          if (!m) continue;
-          let pcomm = '';
-          try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
-          if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-          if (SHELLS.has(pcomm)) found.push({ pid: parseInt(ent, 10), agent });
-        } catch {}
-      }
-    } catch {}
-  }
-  return found;
-}
-let _disc = null, _discAt = 0;
-function discoveredTerminalAgents() {
-  if (_disc && Date.now() - _discAt < 4000) return _disc; // cache 4s
-  _disc = discoverAgentProcs();
-  _discAt = Date.now();
-  return _disc;
-}
+// Coleta de sessões (core Electron-free em src/collect.js). Wrapper fino
+// preserva os call sites deste arquivo (sendSessions, timers, ipc).
+function readSessions() { return collect.readSessions(); }
 
 // ---- click-to-focus: ativa a janela (e a ABA, quando possível) da sessão ----
 // Duas responsabilidades separadas (a decisão pura vive em src/focus.js):
@@ -1175,12 +1024,12 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
-  if (backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
+  if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
   chokidar
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })
     .on('all', () => sendSessions());
   reapDead();
-  setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
+  setInterval(() => { collect.invalidateDiscovery(); reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
   // Consumo/reset dos agentes: GLM (rede, cache 30s) + Codex/Antigravity (disco).
   // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
   // O Claude é LAZY: o loop de fundo NÃO bate na API dele (limite agregado do
