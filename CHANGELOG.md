@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 ### Fixed
 
+## [0.7.2] - 2026-07-16
+
+### Fixed
+- **Rename de terminal agora é por sessão, não por diretório.** Renomear um
+  terminal (duplo-clique no nome) aplicava o apelido a **todos** os terminais no
+  mesmo diretório, porque o alias era indexado pelo `cwd`. Agora a chave é a
+  identidade da sessão (`session_id`, com `pid` de fallback) — a mesma que o
+  overlay já usa para deduplicar as linhas —, então cada terminal tem seu próprio
+  nome. Apelidos salvos antes desta versão (indexados por diretório) voltam ao
+  nome da pasta e precisam ser refeitos uma vez.
+- **Instalação via `curl | bash`.** Removida a variável `$ICON_DIR` não-definida
+  que abortava o instalador sob `set -u`.
+
 ## [0.7.1] - 2026-07-13
 
 ### Changed
