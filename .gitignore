@@ -7,6 +7,9 @@ dist/
 .claude/
 graphify-out/
 
+# rascunhos locais de anúncio (não versionados)
+ANNOUNCEMENT-*.md
+
 # temporários
 *.log
 *.tmp
