@@ -19,7 +19,7 @@ let usageEntries = [];                     // consumo/reset: [{agent,title,usedP
 let appVersion = '';                       // versão do app (rodapé direito)
 let updateInfo = null;                     // {current,method,latest,hasUpdate,url,error} do GitHub
 const SNOOZE_MS = 60 * 60 * 1000;          // 1h
-function snoozeKey(s) { return s.pid || s.session_id; }
+function snoozeKey(s) { return sessionKey(s); }
 // Identidade da LINHA p/ o apelido persistido — nunca o cwd. Dois terminais no
 // mesmo diretório são linhas distintas (session_id/pid diferentes) e devem
 // poder ter nomes distintos; indexar por cwd fazia renomear um renomear todos.
@@ -192,7 +192,7 @@ function render() {
 
   // 1. computa estado de cada sessão (+ tally/worst no mesmo passo).
   const ranked = sessions.map((s) => {
-    const key = s.pid || s.session_id;
+    const key = sessionKey(s);
     // readAt só conta se a feature está ligada; senão computeState ignora.
     const readAt = markRead ? readMarks.get(key) : undefined;
     const st = computeState(s, nowSec, settingsCfg, readAt);
@@ -221,7 +221,7 @@ function render() {
   // Limpa estado por-sessão de sessões que morreram (evita crescer sem limite
   // em uso longo). readMarks/prevLevels/lastAlert/snoozed são chaveados por
   // pid||session_id; qualquer chave fora do conjunto vivo é lixo.
-  const liveKeys = new Set(sessions.map((s) => s.pid || s.session_id));
+  const liveKeys = new Set(sessions.map((s) => sessionKey(s)));
   for (const m of [readMarks, prevLevels, lastAlert, snoozed]) {
     for (const k of m.keys()) if (!liveKeys.has(k)) m.delete(k);
   }
@@ -232,7 +232,7 @@ function render() {
   // 3. monta as linhas na ordem ordenada.
   const rows = ordered.map(({ s, st }) => {
     const label = labelFor(s);
-    const key = s.pid || s.session_id;     // p/ marcar como lido no clique
+    const key = sessionKey(s);     // p/ marcar como lido no clique
     const agent = AGENTS[agentOf(s)];
     // O ícone da LLM (à esquerda) já mostra QUAL agente — então o texto não
     // repete o nome do agente. Normal: modelo · ferramenta · tempo.
