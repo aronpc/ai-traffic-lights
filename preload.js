@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   // Fase 3:
   focus: (target) => ipcRenderer.send('focus', target),       // click-to-focus {pid, windowid}
   getAliases: () => ipcRenderer.invoke('get-aliases'),        // rename in-place
-  setAlias: (cwd, alias) => ipcRenderer.send('set-alias', { cwd, alias }),
+  setAlias: (key, alias) => ipcRenderer.send('set-alias', { key, alias }),
   notify: (title, body) => ipcRenderer.send('notify', { title, body }), // alerta vermelho
   toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
   revealOverlay: () => ipcRenderer.send('reveal-overlay'),       // traz à frente (transição p/ vermelho)

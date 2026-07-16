@@ -4,7 +4,7 @@
 let sessions = [];
 let expanded = true;
 let renaming = false;                      // input de rename aberto → suspende render()
-let aliases = {};                          // cwd -> apelido
+let aliases = {};                          // sessionKey (session_id|pid) -> apelido
 let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} do settings.json
 let lastLangPref = null;                    // pref de idioma aplicada ('auto'|'en'|'pt') — evita re-resolver o idioma a cada settings-changed (live-apply)
 let T = makeT('en');                       // i18n — troca pro idioma do sistema via get-lang
@@ -20,6 +20,13 @@ let appVersion = '';                       // versão do app (rodapé direito)
 let updateInfo = null;                     // {current,method,latest,hasUpdate,url,error} do GitHub
 const SNOOZE_MS = 60 * 60 * 1000;          // 1h
 function snoozeKey(s) { return s.pid || s.session_id; }
+// Identidade da LINHA p/ o apelido persistido — nunca o cwd. Dois terminais no
+// mesmo diretório são linhas distintas (session_id/pid diferentes) e devem
+// poder ter nomes distintos; indexar por cwd fazia renomear um renomear todos.
+// session_id primeiro: é o que Claude/Codex reusam no --resume e persistem em
+// disco, então o apelido sobrevive a restart do app/sessão; pid é o fallback
+// (procs headless, cujo session_id já é `proc-<pid>`). String() p/ o guard do IPC.
+function aliasKey(s) { return String(s.session_id || s.pid || ''); }
 function isSnoozed(key) {
   const until = snoozed.get(key);
   if (!until) return false;
@@ -54,7 +61,8 @@ function ageText(nowSec, ts) {
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}`;
 }
 function labelFor(s) {
-  if (s.cwd && aliases[s.cwd]) return aliases[s.cwd];
+  const alias = aliases[aliasKey(s)];
+  if (alias) return alias;
   if (s.cwd) return basename(s.cwd);
   return AGENTS[agentOf(s)].label.toLowerCase() + ' · ' + s.pid;
 }
@@ -143,11 +151,12 @@ function applyStaticI18n() {
 // replaceChildren() de um tick de idle (2s) ou de um evento de sessão
 // arrancaria o input do DOM no meio da digitação (issue #2).
 function startRename(s, labelEl) {
-  if (!s.cwd || renaming) return;
+  const key = aliasKey(s);
+  if (!key || renaming) return;
   renaming = true;
   const input = document.createElement('input');
   input.className = 'row-input';
-  input.value = aliases[s.cwd] || basename(s.cwd);
+  input.value = aliases[key] || (s.cwd ? basename(s.cwd) : '');
   labelEl.replaceChildren(input);
   input.focus(); input.select();
 
@@ -160,8 +169,8 @@ function startRename(s, labelEl) {
     done = true;
     renaming = false;
     if (save) {
-      window.trafficLight.setAlias(s.cwd, input.value);
-      aliases[s.cwd] = input.value.trim();
+      window.trafficLight.setAlias(key, input.value);
+      aliases[key] = input.value.trim();
     }
     render();
   };

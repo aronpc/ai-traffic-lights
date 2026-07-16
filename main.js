@@ -54,7 +54,7 @@ const DATA_HOME = process.env.XDG_DATA_HOME || path.join(process.env.HOME, '.loc
 const BASE_DIR = path.join(DATA_HOME, 'ai-traffic-lights');
 const STATE_DIR = path.join(BASE_DIR, 'state');
 const BOUNDS_FILE = path.join(BASE_DIR, 'window.json'); // {x, y, width}
-const ALIASES_FILE = path.join(BASE_DIR, 'aliases.json'); // {cwd: apelido}
+const ALIASES_FILE = path.join(BASE_DIR, 'aliases.json'); // {sessionKey: apelido}
 const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec, escalateIdle, shortcut}
 const USAGE_FILE = path.join(BASE_DIR, 'usage.json'); // último uso conhecido (sobrevive a reinício; mostrado stale até refrescar)
 const CLAUDE_COOLDOWN_FILE = path.join(BASE_DIR, 'claude-cooldown.json'); // {until:<ms>} — cooldown do 429 da API de uso (SÓ o timestamp, nunca o token)
@@ -430,14 +430,18 @@ function focusSession(target) {
   }
 }
 
-// ---- aliases (apelido manual por cwd) ----
+// ---- aliases (apelido manual por SESSÃO) ----
+// Chave = identidade da sessão (session_id, fallback pid) — a MESMA linha do
+// overlay, calculada em renderer.aliasKey. Antes era o cwd, o que fazia dois
+// terminais no mesmo diretório compartilharem o apelido (renomear um renomeava
+// todos). O main só persiste a chave opaca que o renderer manda.
 function loadAliases() {
   try { return JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8')) || {}; } catch { return {}; }
 }
-function saveAlias(cwd, alias) {
+function saveAlias(key, alias) {
   const a = loadAliases();
-  if (alias && alias.trim()) a[cwd] = alias.trim();
-  else delete a[cwd];
+  if (alias && alias.trim()) a[key] = alias.trim();
+  else delete a[key];
   try { fs.writeFileSync(ALIASES_FILE, JSON.stringify(a)); } catch {}
 }
 
@@ -1057,14 +1061,14 @@ ipcMain.on('quit', () => app.quit());
 // Click-to-focus: ativa o terminal da sessão ({pid, windowid}).
 ipcMain.on('focus', (_e, target) => focusSession(target));
 
-// Aliases (apelido por cwd).
+// Aliases (apelido por sessão — chave = session_id|pid, ver renderer.aliasKey).
 ipcMain.handle('get-aliases', () => loadAliases());
-ipcMain.on('set-alias', (_e, { cwd, alias }) => {
-  // valida no limite IPC: cwd é chave do JSON de aliases (path real), alias é
-  // string curta. Ignora payload malformado em vez de gravar lixo.
-  if (typeof cwd !== 'string' || !cwd || cwd.length > 4096) return;
+ipcMain.on('set-alias', (_e, { key, alias }) => {
+  // valida no limite IPC: key é a identidade da sessão (session_id ou pid),
+  // alias é string curta. Ignora payload malformado em vez de gravar lixo.
+  if (typeof key !== 'string' || !key || key.length > 512) return;
   if (alias != null && (typeof alias !== 'string' || alias.length > 256)) return;
-  saveAlias(cwd, alias);
+  saveAlias(key, alias);
   sendSessions();
 });
 
