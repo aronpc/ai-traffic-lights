@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('trafficLight', {
   openExternal: (url) => ipcRenderer.send('open-external', url), // abre no navegador (http/s só)
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),
+  getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
+  setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
   pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
   getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),

@@ -6,6 +6,7 @@
 const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { execFileSync } = require('child_process');
 const chokidar = require('chokidar');
 const { AGENTS, agentOf } = require('./src/agents');
@@ -13,6 +14,7 @@ const hookInstaller = require('./src/hook-installer');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const collect = require('./src/collect');
+const net = require('./src/net');
 const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
@@ -96,9 +98,15 @@ const MIN_H = HEADER_H + 40, MAX_H = 640;
 
 let win;
 
-// Coleta de sessões (core Electron-free em src/collect.js). Wrapper fino
-// preserva os call sites deste arquivo (sendSessions, timers, ipc).
-function readSessions() { return collect.readSessions(); }
+// Coleta de sessões: locais (collect) + remotas (peers, já com `origin` setada
+// pelo pollPeers). Wrapper preserva os call sites (sendSessions, timers, ipc).
+// Sessões remotas entram no MESMO pipeline — sessionKey (namespaced por origin,
+// em identity.js) as separa das locais, sem colisão de pid entre máquinas.
+function readSessions() {
+  const local = collect.readSessions();
+  if (!remoteSessions.size) return local;
+  return local.concat(Array.from(remoteSessions.values()).flat());
+}
 
 // ---- click-to-focus: ativa a janela (e a ABA, quando possível) da sessão ----
 // Duas responsabilidades separadas (a decisão pura vive em src/focus.js):
@@ -940,6 +948,7 @@ ipcMain.on('save-settings', (_e, cfg) => {
   // globalShortcut e reconstruir o tray a cada tick de arraste do slider).
   const prevShortcut = settingsCfg.shortcut, prevLang = settingsCfg.lang;
   settingsCfg = persistSettings(cfg);
+  applySync();                                                 // re-avalia servidor/poller (sync)
   if (settingsCfg.shortcut !== prevShortcut) applyShortcut();   // re-registra só se o atalho mudou
   if (settingsCfg.lang !== prevLang) {                          // idioma só se mudou
     applyLang();
@@ -948,6 +957,14 @@ ipcMain.on('save-settings', (_e, cfg) => {
   sendToRenderer('settings-changed', settingsCfg);
 });
 ipcMain.on('open-settings', () => createSettingsWindow());
+
+// Sync multi-máquina: lê/gravar SÓ o sub-objeto sync (validado em persistSettings).
+ipcMain.handle('get-sync', () => (settingsCfg && settingsCfg.sync) || null);
+ipcMain.on('set-sync', (_e, syncCfg) => {
+  settingsCfg = persistSettings({ sync: syncCfg });
+  applySync();
+  sendToRenderer('settings-changed', settingsCfg);
+});
 
 // Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair
 // reusam os canais 'toggle-visibility' e 'quit' já registrados.
@@ -1012,6 +1029,48 @@ ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
 ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
 ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));
 
+// ---- sync multi-máquina (P2P): servidor + poller, OPT-IN (fase 2) ----
+// Sessões remotas dos peers são mergeadas em readSessions(); chegam com `origin`
+// = nome do peer → sessionKey (namespaced) separa das locais. Idempotente: só
+// derruba/sobe o lado que mudou de desejo/config. Sem efeito com sync desligado
+// (superfície zero). Token vazio => nada sobe (fail-safe).
+let remoteSessions = new Map();   // peerHost -> sessions[] (já com origin)
+let syncServer = null, syncServerKey = null;
+let stopPoll = null, pollKey = null;
+function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
+function applySync() {
+  const s = (settingsCfg && settingsCfg.sync) || {};
+  const tok = typeof s.token === 'string' ? s.token : '';
+  // SERVIDOR (compartilhar minhas sessões): localhost-only; o ingress da tailnet
+  // é o `tailscale serve`. Reinicia só se a config relevante mudou (chave abaixo).
+  const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${syncNodeName()}` : '';
+  if (!srvKey && syncServer) { try { syncServer.close(); } catch {} syncServer = null; syncServerKey = null; }
+  if (srvKey && srvKey !== syncServerKey) {
+    if (syncServer) { try { syncServer.close(); } catch {} }
+    try {
+      syncServer = net.startServer({
+        port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts,
+        getSessions: () => collect.readSessions(),
+        getTranscript: () => [],   // TODO fase 3: transcript.lastMessages(findTranscript(key), n)
+      });
+      syncServerKey = srvKey;
+      try { console.log('[sync] server up :' + s.port + ' (' + syncNodeName() + ')'); } catch {}
+    } catch (e) { try { console.log('[sync] server falhou: ' + e.message); } catch {} syncServer = null; syncServerKey = null; }
+  }
+  // CLIENTE (observar peers): poll de /sessions a cada 5s.
+  const pKey = (s.enabled && Array.isArray(s.peers) && s.peers.length && tok) ? `${s.port}|${tok}|${s.peers.map((p) => p.host).join(',')}` : '';
+  if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; remoteSessions.clear(); sendSessions(); }
+  if (pKey && pKey !== pollKey) {
+    if (stopPoll) { stopPoll(); }
+    stopPoll = net.pollPeers({
+      peers: s.peers, port: s.port, token: tok,
+      onSessions: (host, sessions) => { remoteSessions.set(host, sessions); sendSessions(); },
+      onError: (host, e) => { try { console.log('[sync] peer ' + host + ': ' + e.message); } catch {} },
+    });
+    pollKey = pKey;
+  }
+}
+
 app.whenReady().then(() => {
   migrateOldBase();                              // dados da era claude-traffic-light
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch {}
@@ -1037,6 +1096,7 @@ app.whenReady().then(() => {
   collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o %
   setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
   setupAutoUpdater();                            // update checker (boot + 1h) — AppImage auto-update
+  applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
 
 app.on('window-all-closed', () => app.quit());
