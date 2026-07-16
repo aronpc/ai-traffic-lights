@@ -26,6 +26,16 @@ const DEFAULTS = Object.freeze({
   revealOnRed: false,          // trazer o overlay à frente (se oculto) quando um agente fica vermelho
   revealOnReset: false,        // trazer à frente quando a cota reseta
   revealOnUpdate: false,       // trazer à frente quando há uma nova versão disponível
+  // ---- sync multi-máquina (P2P via Tailscale) — OPT-IN TOTAL, tudo OFF ----
+  sync: Object.freeze({
+    enabled: false,            // chave-mestra: liga/desliga servidor E cliente
+    share: false,              // subir o servidor /sessions (expõe meu estado)
+    shareTranscripts: false,   // habilitar /transcript (expõe meus prompts) — exige share
+    port: 47474,               // porta comum a todos os nós (convenção p/ os peers)
+    token: '',                 // segredo compartilhado (obrigatório se enabled; compare constante)
+    node: '',                  // nome deste nó no overlay (default = hostname; vazio → hostname)
+    peers: [],                 // [{name, host}] nós que EU observo (cliente). host = IP/name Tailscale
+  }),
 });
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).
@@ -96,6 +106,31 @@ function mergeWithDefaults(raw) {
         }
       }
       out.launchers = clean;
+    }
+    // sync (P2P): sub-objeto OPT-IN. Tudo OFF/seguro por default; valida cada
+    // campo e saneia peers (host vem de config — anti-abuso de tamanho/formato).
+    if (raw.sync && typeof raw.sync === 'object' && !Array.isArray(raw.sync)) {
+      const s = { ...DEFAULTS.sync };
+      if (typeof raw.sync.enabled === 'boolean') s.enabled = raw.sync.enabled;
+      if (typeof raw.sync.share === 'boolean') s.share = raw.sync.share;
+      if (typeof raw.sync.shareTranscripts === 'boolean') s.shareTranscripts = raw.sync.shareTranscripts;
+      if (typeof raw.sync.port === 'number' && Number.isFinite(raw.sync.port)) {
+        s.port = Math.max(1, Math.min(65535, Math.round(raw.sync.port)));
+      }
+      if (typeof raw.sync.token === 'string' && raw.sync.token.length <= 256) s.token = raw.sync.token;
+      if (typeof raw.sync.node === 'string' && raw.sync.node.length <= 64) s.node = raw.sync.node;
+      if (Array.isArray(raw.sync.peers)) {
+        const cleanPeers = [];
+        for (const p of raw.sync.peers) {
+          if (!p || typeof p !== 'object') continue;
+          const name = typeof p.name === 'string' ? p.name.slice(0, 64) : '';
+          const host = typeof p.host === 'string' ? p.host.slice(0, 256) : '';
+          if (host) cleanPeers.push({ name: name || host, host });
+          if (cleanPeers.length >= 32) break;     // teto anti-abuso
+        }
+        s.peers = cleanPeers;
+      }
+      out.sync = Object.freeze(s);
     }
   }
   return out;
