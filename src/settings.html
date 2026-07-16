@@ -178,6 +178,41 @@
             <input id="terminalCmd" class="shortcut" placeholder="kitty --directory {cwd} -e {cmd}" style="width:100%">
           </div>
         </div>
+
+        <div class="section">
+          <div class="section-title" data-i18n="sec_sync">Sincronização multi-máquina (P2P via Tailscale)</div>
+          <div class="hint" data-i18n="sync_hint"></div>
+          <div class="row">
+            <input type="checkbox" id="syncEnabled">
+            <label for="syncEnabled" data-i18n="sync_enabled_label">Ativar sincronização</label>
+          </div>
+          <div class="field">
+            <label class="top" for="syncToken" data-i18n="sync_token_label">Token compartilhado</label>
+            <input id="syncToken" class="shortcut" placeholder="segredo" style="width:100%">
+            <div class="hint" data-i18n="sync_token_hint"></div>
+          </div>
+          <div class="field">
+            <label class="top" for="syncNode" data-i18n="sync_node_label">Nome desta máquina</label>
+            <input id="syncNode" class="shortcut" placeholder="(hostname)" style="width:100%">
+          </div>
+          <div class="field">
+            <label class="top" for="syncPort" data-i18n="sync_port_label">Porta</label>
+            <input id="syncPort" type="number" min="1" max="65535" style="width:120px">
+          </div>
+          <div class="row">
+            <input type="checkbox" id="syncShare">
+            <label for="syncShare" data-i18n="sync_share_label">Compartilhar minhas sessões (servidor)</label>
+          </div>
+          <div class="row">
+            <input type="checkbox" id="syncShareTr">
+            <label for="syncShareTr" data-i18n="sync_sharetr_label">Permitir ver meus prompts (transcripts)</label>
+          </div>
+          <div class="field">
+            <label class="top" for="syncPeers" data-i18n="sync_peers_label">Máquinas que eu observo (uma por linha)</label>
+            <textarea id="syncPeers" rows="4" style="width:100%" placeholder="100.64.0.2&#10;servidor loja-mqx"></textarea>
+            <div class="hint" data-i18n="sync_peers_hint"></div>
+          </div>
+        </div>
       </section>
     </div>
 
