@@ -15,6 +15,7 @@ const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const collect = require('./src/collect');
 const net = require('./src/net');
+const transcript = require('./src/transcript');
 const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
@@ -965,6 +966,18 @@ ipcMain.on('set-sync', (_e, syncCfg) => {
   applySync();
   sendToRenderer('settings-changed', settingsCfg);
 });
+// Ver prompt de uma sessão: local lê direto do disco; remoto busca /transcript no peer.
+ipcMain.handle('fetch-transcript', async (_e, { origin, key, n }) => {
+  const N = Math.max(1, Math.min(50, parseInt(n || 20, 10)));
+  if (!origin || origin === 'local') {
+    try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, N) : []; }
+    catch { return []; }
+  }
+  const s = (settingsCfg && settingsCfg.sync) || {};
+  const host = originToHost.get(origin);
+  if (!host) return [];
+  return net.fetchTranscriptFromPeer({ host, port: s.port, token: s.token, key, n: N });
+});
 
 // Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair
 // reusam os canais 'toggle-visibility' e 'quit' já registrados.
@@ -1035,6 +1048,7 @@ ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));
 // derruba/sobe o lado que mudou de desejo/config. Sem efeito com sync desligado
 // (superfície zero). Token vazio => nada sobe (fail-safe).
 let remoteSessions = new Map();   // peerHost -> sessions[] (já com origin)
+let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcript remoto)
 let syncServer = null, syncServerKey = null;
 let stopPoll = null, pollKey = null;
 function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
@@ -1051,7 +1065,10 @@ function applySync() {
       syncServer = net.startServer({
         port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts,
         getSessions: () => collect.readSessions(),
-        getTranscript: () => [],   // TODO fase 3: transcript.lastMessages(findTranscript(key), n)
+        getTranscript: (key, n) => {
+          try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
+          catch { return []; }
+        },
       });
       syncServerKey = srvKey;
       try { console.log('[sync] server up :' + s.port + ' (' + syncNodeName() + ')'); } catch {}
@@ -1064,7 +1081,11 @@ function applySync() {
     if (stopPoll) { stopPoll(); }
     stopPoll = net.pollPeers({
       peers: s.peers, port: s.port, token: tok,
-      onSessions: (host, sessions) => { remoteSessions.set(host, sessions); sendSessions(); },
+      onSessions: (host, sessions) => {
+        remoteSessions.set(host, sessions);
+        for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto
+        sendSessions();
+      },
       onError: (host, e) => { try { console.log('[sync] peer ' + host + ': ' + e.message); } catch {} },
     });
     pollKey = pKey;

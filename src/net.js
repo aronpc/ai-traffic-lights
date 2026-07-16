@@ -98,4 +98,21 @@ function pollPeers({ peers, port, token, intervalMs = 5000, onSessions, onError 
   return () => { stopped = true; clearInterval(id); };
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession };
+// Busca /transcript de um peer (cliente). Devolve [] se host ausente/erro/403.
+// Usado pelo IPC fetch-transcript do main quando o usuário abre o painel de uma
+// sessão REMOTA (a local é lida direto do disco via collect+transcript).
+async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
+  if (!host || !key) return [];
+  const hostPort = host.includes(':') ? host : `${host}:${port}`;
+  try {
+    const r = await fetch(
+      `http://${hostPort}/transcript?key=${encodeURIComponent(key)}&n=${n}`,
+      token ? { headers: { Authorization: 'Bearer ' + token } } : {},
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data.messages) ? data.messages : [];
+  } catch { return []; }
+}
+
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer };
