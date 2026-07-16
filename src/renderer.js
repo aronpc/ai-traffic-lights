@@ -306,6 +306,12 @@ function render() {
     const subInline = document.createElement('span');
     subInline.className = 'row__sub-inline'; // compacto: na mesma linha do nome
     subInline.textContent = subCompact;
+    // Clique no sub-texto (modelo · ferramenta · tempo) abre o painel "ver prompt"
+    // — busca as últimas N mensagens sob demanda (local: disco; remoto: /transcript).
+    const openTs = (e) => { e.stopPropagation(); openTranscriptPanel(s); };
+    subEl.addEventListener('click', openTs);
+    subInline.addEventListener('click', openTs);
+    subEl.title = subInline.title = T('ts_see_prompt');
 
     main.append(labelEl, subEl, subInline);
     li.append(led, reason, llm, main);
@@ -757,3 +763,38 @@ if (typeof setupTooltips === 'function') {
 // sobrescreve assim que chega). Sem isso o 1º paint fica sem dimensão definida.
 setExpanded(true);
 render();
+
+// ---- painel "ver prompt" (transcript) — fase 3 ----
+// Abre num clique no sub-texto da linha. Busca as últimas N mensagens sob
+// demanda (local lê disco; remoto via /transcript no peer) — nunca no poll.
+// textContent p/ o texto da mensagem (sem injeção de HTML vindo do prompt).
+let $tsPanel = null;
+function openTranscriptPanel(s) {
+  const $ov = document.getElementById('overlay');
+  if (!$ov) return;
+  if (!$tsPanel) {
+    $tsPanel = document.createElement('div');
+    $tsPanel.className = 'ts-panel';
+    $tsPanel.innerHTML = '<div class="ts-head"><span class="ts-title"></span><button class="ts-close" aria-label="fechar">×</button></div><div class="ts-body"></div>';
+    $tsPanel.querySelector('.ts-close').addEventListener('click', () => $tsPanel.remove());
+  }
+  $ov.appendChild($tsPanel);
+  $tsPanel.querySelector('.ts-title').textContent =
+    labelFor(s) + (s.origin && s.origin !== 'local' ? ' · ' + s.origin : '');
+  const body = $tsPanel.querySelector('.ts-body');
+  body.innerHTML = '<div class="ts-loading">' + T('ts_loading') + '…</div>';
+  window.trafficLight.fetchTranscript(s.origin || 'local', s.session_id, 20)
+    .then((msgs) => {
+      if (!Array.isArray(msgs) || !msgs.length) { body.innerHTML = '<div class="ts-empty">' + T('ts_empty') + '</div>'; return; }
+      body.innerHTML = '';   // limpa o "loading"
+      for (const m of msgs) {
+        const row = document.createElement('div');
+        row.className = 'ts-msg ts-' + m.role;
+        const role = document.createElement('span'); role.className = 'ts-role'; role.textContent = m.role;
+        const text = document.createElement('span'); text.className = 'ts-text'; text.textContent = m.text;
+        row.append(role, text);
+        body.appendChild(row);
+      }
+    })
+    .catch(() => { body.innerHTML = '<div class="ts-empty">' + T('ts_error') + '</div>'; });
+}
