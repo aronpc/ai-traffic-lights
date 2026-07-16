@@ -41,7 +41,6 @@ const $empty = document.getElementById('empty');
 const $counts = document.getElementById('counts');
 const $usage = document.getElementById('usage');
 const $ver = document.getElementById('verBtn');
-const $toggleList = document.getElementById('toggleListBtn');
 const $toggleFooter = document.getElementById('toggleFooterBtn');
 const $forceUsage = document.getElementById('forceUsageBtn');
 const $summaryLed = document.getElementById('summaryLed');
@@ -234,16 +233,9 @@ function render() {
     const label = labelFor(s);
     const key = s.pid || s.session_id;     // p/ marcar como lido no clique
     const agent = AGENTS[agentOf(s)];
-    // O ícone da LLM (à esquerda) já mostra QUAL agente — então o texto não
-    // repete o nome do agente. Normal: modelo · ferramenta · tempo.
+    // Texto à direita do nome: modelo · ferramenta · tempo (o ícone da LLM à
+    // esquerda já diz o agente; o modelo distingue qual variante — glm-5.2, gpt-5).
     const sub = [
-      s.model,
-      s.last_tool ? s.last_tool : (s.last_event || ''),
-      ageText(nowSec, s.last_event_ts),
-    ].filter(Boolean).join(' · ');
-    // Compacto: modelo · ferramenta · tempo (o ícone da LLM à esquerda já diz o
-    // agente; o modelo distingue qual variante — glm-5.2, gpt-5, etc.).
-    const subCompact = [
       s.model,
       s.last_tool ? s.last_tool : (s.last_event || ''),
       ageText(nowSec, s.last_event_ts),
@@ -300,14 +292,11 @@ function render() {
       startRename(s, labelEl);
     });
 
-    const subEl = document.createElement('span');
-    subEl.className = 'row__sub';
-    subEl.textContent = sub;                 // normal
     const subInline = document.createElement('span');
-    subInline.className = 'row__sub-inline'; // compacto: na mesma linha do nome
-    subInline.textContent = subCompact;
+    subInline.className = 'row__sub-inline'; // modelo · ferramenta · tempo na mesma linha do nome
+    subInline.textContent = sub;
 
-    main.append(labelEl, subEl, subInline);
+    main.append(labelEl, subInline);
     li.append(led, reason, llm, main);
 
     // Snooze do alerta (só em vermelho): não apaga a cor, só cala o beep/notif.
@@ -440,17 +429,12 @@ function resetClock(resetAt, resetInMin) {
   const diffDays = Math.round(diffMs / 86400000);
   return `${diffDays}d`;
 }
-// Aparência (Preferências): transparência do painel via --bg-alpha e modo
-// compacto via classe no .overlay. Aplicado ao vivo (boot + settings-changed),
-// sem reiniciar — o CSS já deriva --bg de --bg-alpha. autosize recalcula a
-// altura (compact muda a altura das linhas).
+// Aparência (Preferências): transparência do painel via --bg-alpha. Aplicado ao
+// vivo (boot + settings-changed), sem reiniciar — o CSS já deriva --bg de
+// --bg-alpha. autosize recalcula a altura.
 function applyAppearance() {
   const op = settingsCfg && typeof settingsCfg.opacity === 'number' ? settingsCfg.opacity : 0.97;
   document.documentElement.style.setProperty('--bg-alpha', String(Math.max(0.6, Math.min(1, op))));
-  const compact = !!(settingsCfg && settingsCfg.compact);
-  const $ov = document.getElementById('overlay');
-  if ($ov) $ov.classList.toggle('compact', compact);
-  if ($toggleList) $toggleList.classList.toggle('is-on', compact); // header: destaca quando compacto
   autosize();
 }
 
@@ -638,12 +622,6 @@ $expand.addEventListener('click', () => {
 $quit.addEventListener('click', () => window.trafficLight.toggleVisibility()); // × esconde (tray)
 document.getElementById('settingsBtn').addEventListener('click', () => window.trafficLight.openSettings());
 
-// Toggle da LISTA (header): alterna normal/compacto e persiste em settings.compact.
-if ($toggleList) $toggleList.addEventListener('click', () => {
-  const next = !(settingsCfg && settingsCfg.compact);
-  persistUI({ compact: next });
-  applyAppearance();                        // aplica a classe .compact + reajusta altura
-});
 // Toggle do RODAPÉ (header): alterna uso ⇄ launcher e persiste em settings.showUsage.
 if ($toggleFooter) $toggleFooter.addEventListener('click', () => {
   persistUI({ showUsage: !footerShowsUsage() });
@@ -721,7 +699,7 @@ window.trafficLight.getSettings().then((c) => {
   if (c && c.soundType === 'custom') loadCustomSound(c.soundFile);  // pré-carrega o áudio custom
   // Restaura o estado de UI salvo: recolhido/expandido (default expandido).
   setExpanded(!(c && c.collapsed));
-  applyAppearance();                       // transparência + modo compacto
+  applyAppearance();                       // transparência do painel
   applyFooterMode();
   render();
 });
