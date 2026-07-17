@@ -564,9 +564,12 @@ function attachRemote({ origin, tmux_session, cwd }) {
   const sshBin = scanPathBin('tailscale') ? 'tailscale' : 'ssh';
   const { cmd, error } = buildAttachCmd({ origin, tmux_session, host, sshBin });
   if (!cmd) { notifyUser(error === 'no_host' ? T('ntf_attach_no_host', { origin: origin || '' }) : T('ntf_attach_no_tmux')); return; }
-  // cwd da sessão REMOTA não existe localmente → abrir o terminal no HOME local
-  // (o attach SSH/tmux não depende de cwd local). Local: usa o cwd da sessão.
-  openCmdInTerminal(cmd, (!origin || origin === 'local') ? cwd : undefined);
+  // Abre no terminal EMBUTIDO (xterm+pty dentro do ATL) — não lança terminal
+  // externo (Oz/Warp não aceita; e o embutido é a UX desejada). cwd remoto →
+  // HOME local (não existe aqui); local usa o cwd da sessão.
+  const localCwd = (!origin || origin === 'local') ? cwd : undefined;
+  const title = (origin && origin !== 'local' ? origin + ' · ' : '') + 'tmux: ' + tmux_session;
+  if (win && !win.isDestroyed()) win.webContents.send('term-open', { cmd, cwd: localCwd, title });
 }
 
 // ---- autostart ----
@@ -1162,6 +1165,34 @@ function applySync() {
   }
 }
 
+// ---- terminal embutido: node-pty (o attach roda DENTRO do ATL) ----
+let ptyLib = null, ptyProc = null;
+function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
+function ptySpawn(cmd, cwd, cols, rows) {
+  const p = ptyEnsure(); if (!p || !Array.isArray(cmd) || !cmd.length) return;
+  ptyKill();
+  try {
+    ptyProc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: cwd || process.env.HOME, env: process.env });
+    ptyProc.onData((d) => { if (win && !win.isDestroyed()) win.webContents.send('pty-out', d); });
+    ptyProc.onExit(() => { if (win && !win.isDestroyed()) win.webContents.send('pty-exit', 0); ptyProc = null; });
+  } catch (e) { try { console.log('[pty] spawn falhou: ' + e.message); } catch {} }
+}
+function ptyKill() { try { if (ptyProc) ptyProc.kill(); } catch {} ptyProc = null; }
+// janela cresce p/ acomodar o pane do terminal (overlay + TERM_W) ao lado.
+let termBaseW = 0;
+function resizeForTerminal(open) {
+  if (!win || win.isDestroyed()) return;
+  const TERM_W = 648;   // 640 do pane + 8 de margem
+  const [w, h] = win.getSize();
+  if (open) { termBaseW = w; try { win.setSize(w + TERM_W, h); } catch {} }
+  else if (termBaseW) { try { win.setSize(termBaseW, h); } catch {} }
+}
+ipcMain.on('pty-spawn', (_e, { cmd, cwd, cols, rows }) => ptySpawn(cmd, cwd, cols, rows));
+ipcMain.on('pty-input', (_e, data) => { if (ptyProc) { try { ptyProc.write(data); } catch {} } });
+ipcMain.on('pty-resize', (_e, { cols, rows }) => { if (ptyProc) { try { ptyProc.resize(cols, rows); } catch {} } });
+ipcMain.on('pty-kill', () => ptyKill());
+ipcMain.on('set-term-pane', (_e, open) => resizeForTerminal(open));
+
 app.whenReady().then(() => {
   migrateOldBase();                              // dados da era claude-traffic-light
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch {}
@@ -1191,7 +1222,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => { ptyKill(); globalShortcut.unregisterAll(); });
 
 // ---- consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API) ----
 // Coletor async (GLM faz rede → nunca bloqueia o ciclo de 5s das sessões).

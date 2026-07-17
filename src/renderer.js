@@ -279,14 +279,11 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        if (s.origin && s.origin !== 'local') {
-          // Remoto: attacha no tmux (janela nova, vivo) se tiver tmux_session; senão painel.
-          if (s.tmux_session) window.trafficLight.attachRemote(s.origin, s.tmux_session, s.cwd);
-          else openTranscriptPanel(s);
-        } else {
-          // Local: foca o terminal EXISTENTE (não abre janela nova — você já tá na máquina).
-          window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
-        }
+        // tmux_session (local OU remoto) → attach no terminal EMBUTIDO (xterm+pty
+        // dentro do ATL — não abre janela externa). Remoto sem tmux → painel. Local sem tmux → foca.
+        if (s.tmux_session) window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd);
+        else if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
+        else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
       }, 220);
     });
 
@@ -829,3 +826,40 @@ function openTranscriptPanel(s) {
     })
     .catch(() => { body.innerHTML = '<div class="ts-empty">' + T('ts_error') + '</div>'; });
 }
+
+// ---- terminal embutido (xterm + node-pty): o attach roda DENTRO do ATL ----
+let term = null, fitAddon = null;
+function ensureTerm() {
+  if (term) return term;
+  // FitAddon pode ser a classe direta (UMD browser) ou {FitAddon} (CJS). Robusto aos 2.
+  const FitCls = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
+  if (!window.Terminal || !FitCls) return null;   // xterm não carregou
+  term = new window.Terminal({ fontSize: 12, fontFamily: 'monospace', cursorBlink: true,
+    theme: { background: '#12151c', foreground: '#f4f6f9', cursor: '#f4f6f9' } });
+  fitAddon = new FitCls();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById('termHolder'));
+  term.onData((d) => window.trafficLight.ptyInput(d));
+  window.trafficLight.onPtyOut((d) => { if (term) term.write(d); });
+  window.trafficLight.onPtyExit(() => closeTermPane());
+  return term;
+}
+function openTermPane({ cmd, cwd, title }) {
+  if (!ensureTerm()) return;
+  document.getElementById('termTitle').textContent = title || 'terminal';
+  document.getElementById('termPane').hidden = false;
+  window.trafficLight.setTermPane(true);                 // main amplia a janela
+  setTimeout(() => {                                     // dá 1 tick pro layout assentar
+    try { fitAddon.fit(); } catch {}
+    window.trafficLight.ptySpawn(cmd, cwd, term.cols, term.rows);
+    term.focus();
+  }, 40);
+}
+function closeTermPane() {
+  window.trafficLight.ptyKill();
+  document.getElementById('termPane').hidden = true;
+  window.trafficLight.setTermPane(false);
+}
+const $termCloseBtn = document.getElementById('termCloseBtn');
+if ($termCloseBtn) $termCloseBtn.addEventListener('click', closeTermPane);
+if (window.trafficLight && typeof window.trafficLight.onTermOpen === 'function') window.trafficLight.onTermOpen((d) => openTermPane(d));

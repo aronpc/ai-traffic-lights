@@ -5,8 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Traffic Lights</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
 </head>
 <body>
+  <!-- terminal embutido (xterm+pty) — sibling do overlay; body flex → [termPane | overlay] -->
+  <div class="term-pane" id="termPane" hidden>
+    <div class="term-head">
+      <span class="term-title" id="termTitle">terminal</span>
+      <button class="term-close" id="termCloseBtn" aria-label="fechar terminal">×</button>
+    </div>
+    <div class="term-holder" id="termHolder"></div>
+  </div>
   <div class="overlay" id="overlay">
     <header class="bar">
       <span class="led led-summary" id="summaryLed" data-tip="estado agregado" data-i18n-tip="tooltip_summary"></span>
@@ -41,6 +50,8 @@
     <div class="grip" id="grip" data-tip="arraste para redimensionar" data-i18n-tip="tooltip_grip"></div>
     <div class="tt" id="tooltip" role="tooltip" aria-hidden="true"><span class="tt__label"></span><span class="tt__arrow"></span></div>
   </div>
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="agents.js"></script>
   <script src="state-machine.js"></script>
   <script src="i18n.js"></script>

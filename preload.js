@@ -41,6 +41,15 @@ contextBridge.exposeInMainWorld('trafficLight', {
   setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
   fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
   attachRemote: (origin, tmuxSession, cwd) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd }), // attach tmux (vivo, local/peer)
+  // terminal embutido (xterm + node-pty): o attach roda DENTRO do ATL
+  ptySpawn: (cmd, cwd, cols, rows) => ipcRenderer.send('pty-spawn', { cmd, cwd, cols, rows }),
+  ptyInput: (data) => ipcRenderer.send('pty-input', data),
+  ptyResize: (cols, rows) => ipcRenderer.send('pty-resize', { cols, rows }),
+  ptyKill: () => ipcRenderer.send('pty-kill'),
+  onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, d) => cb(d)),
+  onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, code) => cb(code)),
+  onTermOpen: (cb) => ipcRenderer.on('term-open', (_e, d) => cb(d)),   // main manda abrir pane c/ cmd
+  setTermPane: (open) => ipcRenderer.send('set-term-pane', open),       // main redimensiona a janela
   pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
   getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),
