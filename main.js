@@ -564,7 +564,9 @@ function attachRemote({ origin, tmux_session, cwd }) {
   const sshBin = scanPathBin('tailscale') ? 'tailscale' : 'ssh';
   const { cmd, error } = buildAttachCmd({ origin, tmux_session, host, sshBin });
   if (!cmd) { notifyUser(error === 'no_host' ? T('ntf_attach_no_host', { origin: origin || '' }) : T('ntf_attach_no_tmux')); return; }
-  openCmdInTerminal(cmd, cwd);
+  // cwd da sessão REMOTA não existe localmente → abrir o terminal no HOME local
+  // (o attach SSH/tmux não depende de cwd local). Local: usa o cwd da sessão.
+  openCmdInTerminal(cmd, (!origin || origin === 'local') ? cwd : undefined);
 }
 
 // ---- autostart ----
