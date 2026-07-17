@@ -9,6 +9,7 @@ let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} d
 let lastLangPref = null;                    // pref de idioma aplicada ('auto'|'en'|'pt') — evita re-resolver o idioma a cada settings-changed (live-apply)
 let T = makeT('en');                       // i18n — troca pro idioma do sistema via get-lang
 let firstRender = true;                    // hidrata prevLevels sem alertar no boot
+const seenOrigins = new Set();             // origins já vistas (peer novo = hidrata sem apitar)
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 const snoozed = new Map();                 // key -> ms (silencia o ALERTA até então; a cor fica)
@@ -153,6 +154,7 @@ function applyStaticI18n() {
 function startRename(s, labelEl) {
   const key = aliasKey(s);
   if (!key || renaming) return;
+  if (s.origin && s.origin !== 'local') return;   // linha remota: rename é local-only (não sincroniza)
   renaming = true;
   const input = document.createElement('input');
   input.className = 'row-input';
@@ -190,6 +192,12 @@ function render() {
   const tally = { processing: 0, done: 0, awaiting: 0, read: 0 };
   const markRead = !settingsCfg || settingsCfg.markReadOnClick !== false;
 
+  // Origins que aparecem pela 1ª vez neste render (origens novas = peer acabou
+  // de conectar). Suas sessões são HIDRATADAS (prevLevels semeado) — não apita
+  // tudo de uma vez quando um peer entra; só transições futuras disparam alerta.
+  const newOrigins = new Set();
+  for (const s of sessions) { const o = s.origin || 'local'; if (!seenOrigins.has(o)) newOrigins.add(o); }
+
   // 1. computa estado de cada sessão (+ tally/worst no mesmo passo).
   const ranked = sessions.map((s) => {
     const key = sessionKey(s);
@@ -205,6 +213,9 @@ function render() {
     // não deve apitar (só transições reais disparam alerta). Sessão marcada
     // lida está em 'read' (não 'awaiting'), então não apita — reacende só com
     // evento vermelho novo (que volta pra 'awaiting' e passa por aqui).
+    // 1ª aparição da ORIGEM (peer novo, ou o boot): semeia prevLevels p/ não
+    // estourar alerta em sessões que JÁ estavam vermelhas quando chegaram.
+    if (newOrigins.has(s.origin || 'local')) prevLevels.set(key, st.level);
     const was = prevLevels.get(key);
     if (!firstRender && st.level === 'awaiting' && was !== 'awaiting' && !isSnoozed(key)) {
       const nowMs = Date.now();
@@ -217,6 +228,7 @@ function render() {
     prevLevels.set(key, st.level);
     return { s, st };
   });
+  for (const s of sessions) seenOrigins.add(s.origin || 'local'); // registra as origins vistas
 
   // Limpa estado por-sessão de sessões que morreram (evita crescer sem limite
   // em uso longo). readMarks/prevLevels/lastAlert/snoozed são chaveados por
@@ -267,7 +279,10 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+        // Remoto: windowid/focus_url são machine-local (não há o que focar) →
+        // abre o painel de prompts no lugar. Local: foca o terminal como antes.
+        if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
+        else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
       }, 220);
     });
 
@@ -313,6 +328,13 @@ function render() {
     subInline.addEventListener('click', openTs);
     subEl.title = subInline.title = T('ts_see_prompt');
 
+    // Badge de origem em sessão REMOTA (de qual máquina/peer veio).
+    if (s.origin && s.origin !== 'local') {
+      const badge = document.createElement('span');
+      badge.className = 'row__origin';
+      badge.textContent = s.origin;
+      main.append(badge);
+    }
     main.append(labelEl, subEl, subInline);
     li.append(led, reason, llm, main);
 

@@ -16,6 +16,7 @@
 }
 /* ---- painel "ver prompt" (transcript) — fase 3 ---- */
 .row__sub, .row__sub-inline { cursor: pointer; }
+.row__origin { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-dim); background: rgba(255,255,255,.07); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; margin-right: 6px; vertical-align: middle; }
 .ts-panel { position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); backdrop-filter: blur(6px); }
 .ts-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .ts-title { flex: 1; font-size: 13px; color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

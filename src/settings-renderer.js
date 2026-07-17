@@ -133,6 +133,12 @@ function buildSyncCfg() {
   };
 }
 function pushSync() { if (ready) window.trafficLight.setSync(buildSyncCfg()); }
+// Sub-toggles do sync ficam desabilitados (e meio-apagados) enquanto o mestre
+// `enabled` estiver desligado — sinaliza visualmente que nada está ativo.
+function syncFieldState() {
+  const on = $syncEnabled.checked;
+  for (const $e of [$syncShare, $syncShareTr, $syncToken, $syncNode, $syncPort, $syncPeers]) $e.disabled = !on;
+}
 
 // ---- captura do atalho ----
 $sc.addEventListener('click', () => {
@@ -220,7 +226,7 @@ $opacity.addEventListener('change', () => { clearTimeout(opTimer); pushLive(); }
 $terminal.addEventListener('change', () => { syncTerminalCmdField(); pushLive(); });
 $terminalCmd.addEventListener('change', pushLive);
 // ---- sync multi-máquina (cada controle aplica na hora) ----
-$syncEnabled.addEventListener('change', pushSync);
+$syncEnabled.addEventListener('change', () => { syncFieldState(); pushSync(); });
 $syncShare.addEventListener('change', pushSync);
 $syncShareTr.addEventListener('change', pushSync);
 $syncToken.addEventListener('change', pushSync);
@@ -314,4 +320,5 @@ window.trafficLight.getSync().then((s) => {
   $syncShare.checked = s.share === true;
   $syncShareTr.checked = s.shareTranscripts === true;
   $syncPeers.value = (s.peers || []).map((p) => (p.name && p.name !== p.host ? `${p.name} ${p.host}` : p.host)).join('\n');
+  syncFieldState();   // reflete o estado enabled → sub-toggles on/off
 });

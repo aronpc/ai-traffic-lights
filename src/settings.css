@@ -197,3 +197,7 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63, 1
   border-bottom: 1px dotted transparent; transition: color 0.12s, border-color 0.12s;
 }
 .appmeta .repolink:hover { color: var(--ink); border-bottom-color: var(--ink-dim); }
+
+/* Sub-toggles do sync desabilitados quando o mestre `enabled` está off. */
+input:disabled, textarea:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
+.row:has(input:disabled) > label { opacity: 0.5; }
