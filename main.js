@@ -1187,7 +1187,13 @@ function createPty(cmd, cols, rows, { onData, onExit }) {
 let termWin = null;
 const termSessions = new Map();   // tabId -> { title, kind, origin, tmux_session, proc, ws, cols, rows }
 let tabSeq = 0;
-function sendTerm(ch, payload) { if (termWin && !termWin.isDestroyed()) termWin.webContents.send(ch, payload); }
+let termWinReady = false;         // term.html carregou? Fila de IPCs até did-finish-load — evita perder term-tab-added/pty-out na 1ª abertura (janela vinha vazia).
+const termQueue = [];
+function sendTerm(ch, payload) {
+  if (!termWin || termWin.isDestroyed()) return;
+  if (!termWinReady) { termQueue.push([ch, payload]); return; }
+  try { termWin.webContents.send(ch, payload); } catch {}
+}
 function ensureTermWin() {
   if (termWin && !termWin.isDestroyed()) { try { termWin.show(); termWin.moveTop(); termWin.focus(); } catch {} return termWin; }
   const wa = screen.getPrimaryDisplay().workArea;
@@ -1200,7 +1206,11 @@ function ensureTermWin() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   termWin.loadFile(path.join(__dirname, 'src/term.html'));
-  termWin.on('closed', () => { termWin = null; termSessions.clear(); });
+  termWin.webContents.once('did-finish-load', () => {
+    termWinReady = true;
+    for (const [ch, p] of termQueue.splice(0)) { try { termWin.webContents.send(ch, p); } catch {} }
+  });
+  termWin.on('closed', () => { termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear(); });
   return termWin;
 }
 function destroyTermSession(tabId) {
