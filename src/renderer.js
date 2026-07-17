@@ -279,11 +279,14 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        // 3 caminhos: tem tmux_session → attach (vivo, local ou via peer);
-        // remoto sem tmux → painel de prompts; local sem tmux → foca o terminal.
-        if (s.tmux_session) window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd);
-        else if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
-        else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+        if (s.origin && s.origin !== 'local') {
+          // Remoto: attacha no tmux (janela nova, vivo) se tiver tmux_session; senão painel.
+          if (s.tmux_session) window.trafficLight.attachRemote(s.origin, s.tmux_session, s.cwd);
+          else openTranscriptPanel(s);
+        } else {
+          // Local: foca o terminal EXISTENTE (não abre janela nova — você já tá na máquina).
+          window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+        }
       }, 220);
     });
 

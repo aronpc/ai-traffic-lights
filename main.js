@@ -21,7 +21,7 @@ const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const { spawn } = require('child_process');
-const { desktopEscape, buildAttachCmd } = require('./src/validate');
+const { desktopEscape, buildAttachCmd, shellQuote } = require('./src/validate');
 
 // Flags de sandbox/shared-memory (--no-sandbox --disable-dev-shm-usage) vão na
 // LINHA DE COMANDO: build.linux.executableArgs (packaged) e scripts.start (dev).
@@ -209,6 +209,19 @@ function focusTab(state) {
   } catch {}
 }
 
+// Foca o PAINEL do agente dentro do tmux (complementar ao raise/tab). O pane
+// id ($TMUX_PANE) é global no server; select-window traz a janela do pane e
+// select-pane o ativa. execFileSync não passa por shell e o pane é validado
+// em focus.tmuxTarget → seguro como argumento.
+function focusTmuxPane(state) {
+  const pane = focus.tmuxTarget(state);
+  if (!pane) return;
+  try {
+    execFileSync('tmux', ['select-window', '-t', pane], { timeout: 2000 });
+    execFileSync('tmux', ['select-pane', '-t', pane], { timeout: 2000 });
+  } catch {}
+}
+
 function parseMacOSEnviron(content) {
   if (!content) return '';
   const regex = /(?<=\s|^)([A-Za-z0-9_]+)=/g;
@@ -262,13 +275,15 @@ function getProcessEnviron(pid) {
 // viva — cobre sessões cujo evento veio antes do hook atual e as detectadas
 // só via /proc (sem focus_url/tilix_id no state). O state tem precedência.
 function enrichTarget(target) {
-  if (!target || !target.pid || (target.focus_url && target.tilix_id)) return target;
+  if (!target || !target.pid) return target;
+  if (target.focus_url && target.tilix_id && target.tmux_pane) return target;
   try {
     const hints = focus.parseEnviron(getProcessEnviron(target.pid));
     return {
       ...target,
       focus_url: target.focus_url || hints.focus_url,
       tilix_id: target.tilix_id || hints.tilix_id,
+      tmux_pane: target.tmux_pane || hints.tmux_pane,
     };
   } catch { return target; }
 }
@@ -276,10 +291,11 @@ function enrichTarget(target) {
 function focusSession(target) {
   if (!target) return;
   const t = enrichTarget(target);
-  const hasTab = !!focus.tabChannel(t);
+  const hasTab = !!focus.tabChannel(t) || !!focus.tmuxTarget(t);
   let raised = false;
   if (IS_WAYLAND) { focusTab(t); raised = raiseWindow(t.windowid, t.pid); }
   else { raised = raiseWindow(t.windowid, t.pid); focusTab(t); }
+  focusTmuxPane(t);   // complementar: foca o pane do agente dentro do tmux
   // Wayland + sem canal de aba + sem janela alcançável pelo wmctrl (ex.: GNOME
   // Terminal nativo) → o clique vira no-op silencioso. Avisamos em vez de parecer
   // quebrado (issue: foco do terminal padrão do Ubuntu no Wayland).
@@ -512,8 +528,30 @@ function launchAgent({ agent, cwd }) {
 // (local direto, ou remota via SSH/Tailscale). Vivo e compartilhado (multi-
 // cliente): sem --resume, sem derrubar o terminal da outra máquina. Sanitiza
 // nome+host (vêm de config/peer — anti-injeção de shell no comando remoto).
+// Warp: launch-config YAML + warp://launch. O scheme warp:// costuma estar
+// registrado (dev.warp.Warp.desktop) MESMO quando o binário `warp` não está no
+// PATH — então xdg-open abre o app e roda o comando do config.
+function openInWarp(cmdArray, dir) {
+  const warpDir = path.join(process.env.HOME || '/', '.warp', 'launch_configurations');
+  try {
+    fs.mkdirSync(warpDir, { recursive: true });
+    const yamlPath = path.join(warpDir, 'atl-attach.yaml');
+    const cmdStr = cmdArray.map(shellQuote).join(' ');   // cada arg shell-quoted → cmd shell seguro
+    const yaml = [
+      'name: ATL Attach', 'windows:', '  - tabs:', '      - panes:',
+      `          - cwd: ${JSON.stringify(dir)}`,
+      '            commands:',
+      `              - ${JSON.stringify(cmdStr)}`,
+    ].join('\n') + '\n';
+    fs.writeFileSync(yamlPath, yaml, 'utf8');
+    const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+    spawn(opener, ['warp://launch/atl-attach'], { detached: true, stdio: 'ignore' }).unref();
+    return true;
+  } catch { return false; }
+}
 function openCmdInTerminal(cmdArray, cwd) {
   const dir = (cwd && typeof cwd === 'string') ? cwd : (process.env.HOME || '/');
+  if (settingsCfg.terminal === 'warp') { if (openInWarp(cmdArray, dir)) return; }   // pref Warp
   const avail = availableTerminals();
   const term = launcher.pickTerminal(settingsCfg.terminal, avail);
   const useTerm = term || (avail.includes('gnome-terminal') ? 'gnome-terminal' : 'x-terminal-emulator');
