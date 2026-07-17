@@ -102,13 +102,18 @@ function iconFor(st) {
 //  · demais    → mais recente primeiro (atividade nova visível)
 const URGENCY_RANK = { awaiting: 0, processing: 1, done: 2, read: 3 };
 function sortByUrgency(ranked) {
+  // Chave ESTÁVEL por origem+id. Antes ordenava por last_event_ts dentro da
+  // urgência — mas esse ts muda a cada tool call, fazendo a lista REORDENAR a
+  // cada ~2s (linhas pulavam de posição → confundia local/remoto e causava
+  // mis-click). Estável = a lista só muda quando a URGÊNCIA muda; 'local'
+  // agrupa antes dos peers (ordem alfabética da origin).
+  const skey = (x) => ((x.s && x.s.origin) || 'local') + '' + ((x.s && (x.s.session_id || x.s.pid)) || '');
   return [...ranked].sort((a, b) => {
     const la = (a.st && a.st.level) || 'done';
     const lb = (b.st && b.st.level) || 'done';
     if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
-    const at = (a.s && a.s.last_event_ts) || 0;
-    const bt = (b.s && b.s.last_event_ts) || 0;
-    return la === 'awaiting' ? at - bt : bt - at;
+    const ka = skey(a), kb = skey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 }
 

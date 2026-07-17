@@ -96,12 +96,12 @@ test('computeState: evento desconhecido → verde conservador', () => {
   assert.deepEqual(computeState(state('ativo'), NOW), { level: 'done', reason: null });
 });
 
-test('sortByUrgency: vermelhos no topo; dentro de awaiting a mais antiga primeiro', () => {
-  const mk = (level, ts) => ({ s: { last_event_ts: ts }, st: { level } });
-  // verde novo (100), vermelho recente (200), amarelo (300), vermelho antigo (50)
-  const ranked = [mk('done', 100), mk('awaiting', 200), mk('processing', 300), mk('awaiting', 50)];
-  const out = sortByUrgency(ranked).map((r) => `${r.st.level}:${r.s.last_event_ts}`);
-  assert.deepEqual(out, ['awaiting:50', 'awaiting:200', 'processing:300', 'done:100'], '🔴(antigo) → 🔴(novo) → 🟡 → 🟢');
+test('sortByUrgency: urgência primária (🔴>🟡>🟢>read); mesmo nível = ESTÁVEL por origem+id (local agrupa antes dos peers)', () => {
+  const mk = (level, id, origin) => ({ s: { session_id: id, origin: origin || 'local', last_event_ts: 0 }, st: { level } });
+  // verde, 2 vermelhos (local + remoto), amarelo — ordem de entrada embaralhada
+  const ranked = [mk('done', 'd1'), mk('awaiting', 'r1', 'local'), mk('processing', 'p1'), mk('awaiting', 'r2', 'notebook-hg')];
+  const out = sortByUrgency(ranked).map((r) => `${r.st.level}:${r.s.origin}:${r.s.session_id}`);
+  assert.deepEqual(out, ['awaiting:local:r1', 'awaiting:notebook-hg:r2', 'processing:local:p1', 'done:local:d1']);
 });
 
 test('sortByUrgency: não muta o array original', () => {
@@ -111,12 +111,13 @@ test('sortByUrgency: não muta o array original', () => {
   assert.deepEqual(ranked.map((r) => r.st.level), snap, 'original intacto');
 });
 
-test('sortByUrgency: dentro de done/processing o mais recente vem primeiro', () => {
+test('sortByUrgency: mesmo nível NÃO reordena por timestamp (estável — evita a lista pular a cada evento)', () => {
+  // 2 done com timestamps trocados: a ordem é por identidade, não por ts.
   const ranked = [
-    { s: { last_event_ts: 10 }, st: { level: 'done' } },
-    { s: { last_event_ts: 90 }, st: { level: 'done' } },
+    { s: { session_id: 'a', origin: 'local', last_event_ts: 10 }, st: { level: 'done' } },
+    { s: { session_id: 'b', origin: 'local', last_event_ts: 90 }, st: { level: 'done' } },
   ];
-  assert.deepEqual(sortByUrgency(ranked).map((r) => r.s.last_event_ts), [90, 10], 'recente antes');
+  assert.deepEqual(sortByUrgency(ranked).map((r) => r.s.session_id), ['a', 'b'], 'estável por id (não pula quando ts muda)');
 });
 
 test('iconFor: cada reason tem seu ícone; fallback por level', () => {
