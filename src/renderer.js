@@ -827,42 +827,6 @@ function openTranscriptPanel(s) {
     .catch(() => { body.innerHTML = '<div class="ts-empty">' + T('ts_error') + '</div>'; });
 }
 
-// ---- terminal embutido (xterm + node-pty): o attach roda DENTRO do ATL ----
-let term = null, fitAddon = null;
-function ensureTerm() {
-  if (term) return term;
-  // FitAddon pode ser a classe direta (UMD browser) ou {FitAddon} (CJS). Robusto aos 2.
-  const FitCls = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
-  if (!window.Terminal || !FitCls) return null;   // xterm não carregou
-  term = new window.Terminal({ fontSize: 12, fontFamily: 'monospace', cursorBlink: true,
-    theme: { background: '#12151c', foreground: '#f4f6f9', cursor: '#f4f6f9' } });
-  fitAddon = new FitCls();
-  term.loadAddon(fitAddon);
-  term.open(document.getElementById('termHolder'));
-  term.onData((d) => window.trafficLight.ptyInput(d));
-  window.trafficLight.onPtyOut((d) => { if (term) term.write(d); });
-  // NÃO fecha no exit — deixa o pane aberto pra você ler o output/erro (fecha no ×).
-  // Antes fechava automático → o pane piscava se o comando falhava/exibia rápido.
-  window.trafficLight.onPtyExit(() => { if (term) term.write('\r\n\x1b[90m[processo encerrou]\x1b[0m'); });
-  return term;
-}
-function openTermPane({ cmd, cwd, title }) {
-  if (!ensureTerm()) return;
-  document.getElementById('termTitle').textContent = title || 'terminal';
-  document.getElementById('termPane').hidden = false;
-  window.trafficLight.setTermPane(true);                 // main amplia a janela
-  setTimeout(() => {                                     // dá 1 tick pro layout assentar
-    try { fitAddon.fit(); } catch {}
-    if (cmd) window.trafficLight.ptySpawn(cmd, cwd, term.cols, term.rows);
-    else window.trafficLight.ptyResize(term.cols, term.rows);   // remoto (cmd=null): main já conectou o ws; repassa o tamanho real p/ o tmux do peer renderizar certo
-    term.focus();
-  }, 40);
-}
-function closeTermPane() {
-  window.trafficLight.ptyKill();
-  document.getElementById('termPane').hidden = true;
-  window.trafficLight.setTermPane(false);
-}
-const $termCloseBtn = document.getElementById('termCloseBtn');
-if ($termCloseBtn) $termCloseBtn.addEventListener('click', closeTermPane);
-if (window.trafficLight && typeof window.trafficLight.onTermOpen === 'function') window.trafficLight.onTermOpen((d) => openTermPane(d));
+// (o terminal embutido mudou-se para src/term.html + src/term-renderer.js —
+// aberto numa janela própria maximizável por ensureTermWin() no main. O clique
+// numa sessão segue chamando window.trafficLight.attachRemote em :284.)

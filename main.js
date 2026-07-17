@@ -561,18 +561,24 @@ function openCmdInTerminal(cmdArray, cwd) {
 }
 function attachRemote({ origin, tmux_session, cwd }) {
   if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
-  const title = 'tmux: ' + tmux_session;
-  // LOCAL: node-pty direto no terminal embutido (igual antes).
-  if (!origin || origin === 'local') {
-    if (win && !win.isDestroyed()) win.webContents.send('term-open', { cmd: ['tmux', 'attach', '-t', tmux_session], cwd, title });
-    return;
+  const isLocal = !origin || origin === 'local';
+  const key = (isLocal ? 'local' : origin) + '|' + tmux_session;
+  for (const [id, s] of termSessions) {   // dedupe: aba dessa sessão já existe → só foca
+    if (((s.kind === 'local' ? 'local' : s.origin) + '|' + s.tmux_session) === key) {
+      ensureTermWin(); sendTerm('term-tab-activated', { tabId: id }); return;
+    }
   }
-  // REMOTO: WebSocket no /pty do peer (sem SSH — reusa token+rede do sync; o
-  // peer faz o tmux attach lá e streama o output de volta pro terminal embutido).
-  const host = originToHost.get(origin) || '';
-  const s = (settingsCfg && settingsCfg.sync) || {};
-  if (!host || !s.token) { notifyUser(T('ntf_attach_no_host', { origin: origin || '' })); return; }
-  openRemotePty({ host, port: s.port, token: s.token, tmux_session, title: origin + ' · ' + title });
+  ensureTermWin();
+  const title = (isLocal ? '' : origin + ' · ') + 'tmux: ' + tmux_session;
+  const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session });
+  if (isLocal) {
+    spawnPtyLocal(tabId, ['tmux', 'attach', '-t', tmux_session], cwd);
+  } else {
+    const host = originToHost.get(origin) || '';
+    const s = (settingsCfg && settingsCfg.sync) || {};
+    if (!host || !s.token) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem host/token para ' + origin + '\x1b[0m\r\n' }); return; }
+    openRemotePty(tabId, { host, port: s.port, token: s.token, tmux_session });
+  }
 }
 
 // ---- autostart ----
@@ -1168,76 +1174,104 @@ function applySync() {
   }
 }
 
-// ---- terminal embutido: node-pty (LOCAL) ou WebSocket (REMOTO) ----
-// ptyMode distingue a FONTE do stream pty-out/pty-input: 'local' = node-pty
-// direto; 'remote' = ws pro /pty do peer. O renderer é agnóstico (só consome
-// pty-out e emite pty-input); o main roteia por ptyMode.
-let ptyLib = null, ptyProc = null, ptyMode = null, remoteWs = null, ptyCols = 80, ptyRows = 24;
+// ---- Janela Terminal (abas) — separada do overlay, maximizável ----
+// O overlay NÃO hospeda mais o terminal: o estado dos pty/ws vive aqui (Map
+// termSessions) e o renderer (src/term.html) só desenha abas + xterm, falando
+// por IPC (tabId). Assim o overlay fica leve (não cresce, não bloqueia cliques).
+let ptyLib = null;
 function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
-// factory p/ o SERVIDOR (DI injetada em net.startServer): cria um node-pty por
-// conexão /pty remota e devolve um handle {write,resize,kill} — cada peer
-// attachado tem o seu pty independente.
+// factory p/ o SERVIDOR /pty (DI em net.startServer): 1 node-pty por conexão
+// remota (peer attachando em MIM). Devolve handle {write,resize,kill}.
 function createPty(cmd, cols, rows, { onData, onExit }) {
   const p = ptyEnsure(); if (!p) throw new Error('node-pty indisponível');
   const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: process.env });
   proc.onData(onData); proc.onExit(onExit);
   return { write: (d) => { try { proc.write(d); } catch {} }, resize: (c, r) => { try { proc.resize(c, r); } catch {} }, kill: () => { try { proc.kill(); } catch {} } };
 }
-function ptySpawn(cmd, cwd, cols, rows) {
-  const p = ptyEnsure(); if (!p || !Array.isArray(cmd) || !cmd.length) return;
-  ptyKill(); closeRemotePty();
-  ptyMode = 'local';
-  try {
-    ptyProc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: cwd || process.env.HOME, env: process.env });
-    ptyProc.onData((d) => { if (win && !win.isDestroyed()) win.webContents.send('pty-out', d); });
-    ptyProc.onExit(() => { if (win && !win.isDestroyed()) win.webContents.send('pty-exit', 0); ptyProc = null; });
-  } catch (e) { try { console.log('[pty] spawn falhou: ' + e.message); } catch {} }
+
+let termWin = null;
+const termSessions = new Map();   // tabId -> { title, kind, origin, tmux_session, proc, ws, cols, rows }
+let tabSeq = 0;
+function sendTerm(ch, payload) { if (termWin && !termWin.isDestroyed()) termWin.webContents.send(ch, payload); }
+function ensureTermWin() {
+  if (termWin && !termWin.isDestroyed()) { try { termWin.show(); termWin.moveTop(); termWin.focus(); } catch {} return termWin; }
+  const wa = screen.getPrimaryDisplay().workArea;
+  const w = Math.min(960, Math.max(640, Math.round(wa.width * 0.6)));
+  const h = Math.min(680, Math.max(380, Math.round(wa.height * 0.7)));
+  termWin = new BrowserWindow({
+    width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal',
+    frame: true, transparent: false, resizable: true, maximizable: true, fullscreenable: true,
+    alwaysOnTop: false, skipTaskbar: false, backgroundColor: '#0e1117',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  termWin.loadFile(path.join(__dirname, 'src/term.html'));
+  termWin.on('closed', () => { termWin = null; termSessions.clear(); });
+  return termWin;
 }
-function ptyKill() { try { if (ptyProc) ptyProc.kill(); } catch {} ptyProc = null; }
-function closeRemotePty() { try { if (remoteWs) remoteWs.close(); } catch {} remoteWs = null; }
-// Cliente WebSocket do /pty remoto: abre, manda start e faz pipe ws↔pty-out/input.
-// Reusa os MESMOS canais IPC do terminal embutido → o renderer não muda. cmd=null
-// no term-open sinaliza "main já conectou; renderer não faz ptySpawn local".
-function openRemotePty({ host, port, token, tmux_session, title }) {
-  ptyKill(); closeRemotePty();
+function destroyTermSession(tabId) {
+  const s = termSessions.get(tabId); if (!s) return;
+  try { if (s.proc) s.proc.kill(); } catch {}
+  if (s.ws) { try { s.ws.close(); } catch {} }
+  termSessions.delete(tabId);
+}
+function addTermSession({ title, kind, origin, tmux_session }) {
+  const tabId = ++tabSeq;
+  termSessions.set(tabId, { title, kind, origin, tmux_session, proc: null, ws: null, cols: 80, rows: 24 });
+  sendTerm('term-tab-added', { tabId, title });
+  return tabId;
+}
+function closeTermSession(tabId) {
+  destroyTermSession(tabId);
+  sendTerm('term-tab-removed', { tabId });
+  if (!termSessions.size && termWin && !termWin.isDestroyed()) try { termWin.hide(); } catch {}
+}
+// spawn node-pty local pra uma aba (shell novo ou tmux attach local).
+function spawnPtyLocal(tabId, cmd, cwd) {
+  const p = ptyEnsure(); const s = termSessions.get(tabId);
+  if (!p || !s) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mnode-pty indisponível\x1b[0m\r\n' }); return; }
+  try {
+    const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: cwd || process.env.HOME, env: process.env });
+    proc.onData((d) => sendTerm('pty-out', { tabId, data: d }));
+    proc.onExit(() => sendTerm('pty-exit', { tabId }));
+    s.proc = proc;
+  } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m' + (e.message || e) + '\x1b[0m\r\n' }); }
+}
+// cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
+function openRemotePty(tabId, { host, port, token, tmux_session }) {
+  const s = termSessions.get(tabId); if (!s) return;
   const url = 'ws://' + host + ':' + (port || 47474) + '/pty?token=' + encodeURIComponent(token);
   let ws;
-  try { ws = new (require('ws'))(url); } catch (e) { notifyUser('WebSocket falhou: ' + e.message); return; }
-  remoteWs = ws; ptyMode = 'remote';
-  ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: ptyCols, rows: ptyRows })); } catch {} });
+  try { ws = new (require('ws'))(url); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
+  s.ws = ws;
+  ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: s.cols, rows: s.rows })); } catch {} });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
-    if (!win || win.isDestroyed()) return;
-    if (m.type === 'out') win.webContents.send('pty-out', m.data);
-    else if (m.type === 'exit') win.webContents.send('pty-exit', 0);
-    else if (m.type === 'error') win.webContents.send('pty-out', '\r\n\x1b[31m[remoto] ' + m.msg + '\x1b[0m\r\n');
+    if (m.type === 'out') sendTerm('pty-out', { tabId, data: m.data });
+    else if (m.type === 'exit') sendTerm('pty-exit', { tabId });
+    else if (m.type === 'error') sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + m.msg + '\x1b[0m\r\n' });
   });
-  ws.on('error', (e) => { if (win && !win.isDestroyed()) win.webContents.send('pty-out', '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n'); });
-  ws.on('close', () => { remoteWs = null; if (ptyMode === 'remote') ptyMode = null; });
-  if (win && !win.isDestroyed()) win.webContents.send('term-open', { cmd: null, title });
+  ws.on('error', (e) => sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n' }));
 }
-// janela cresce p/ acomodar o pane do terminal (overlay + TERM_W) ao lado.
-let termBaseW = 0;
-function resizeForTerminal(open) {
-  if (!win || win.isDestroyed()) return;
-  const TERM_W = 648;   // 640 do pane + 8 de margem
-  const [w, h] = win.getSize();
-  if (open) { termBaseW = w; try { win.setSize(w + TERM_W, h); } catch {} }
-  else if (termBaseW) { try { win.setSize(termBaseW, h); } catch {} }
-}
-ipcMain.on('pty-spawn', (_e, { cmd, cwd, cols, rows }) => ptySpawn(cmd, cwd, cols, rows));
-ipcMain.on('pty-input', (_e, data) => {
-  if (ptyMode === 'remote' && remoteWs) { try { remoteWs.send(JSON.stringify({ type: 'in', data })); } catch {} }
-  else if (ptyProc) { try { ptyProc.write(data); } catch {} }
+// ---- handlers IPC da janela Terminal (abas) ----
+ipcMain.on('term-new-shell', () => {
+  ensureTermWin();
+  const tabId = addTermSession({ title: 'shell', kind: 'local' });
+  spawnPtyLocal(tabId, [process.env.SHELL || 'bash'], process.env.HOME);
 });
-ipcMain.on('pty-resize', (_e, { cols, rows }) => {
-  if (cols > 0) ptyCols = cols;          // lembra o tamanho p/ o start do próximo attach remoto (race: resize pode chegar antes do ws.open)
-  if (rows > 0) ptyRows = rows;
-  if (ptyMode === 'remote' && remoteWs) { try { remoteWs.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {} }
-  else if (ptyProc) { try { ptyProc.resize(cols, rows); } catch {} }
+ipcMain.on('term-switch-tab', () => { /* roteamento é por tabId (vem no input/resize); ativação é visual no renderer */ });
+ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });
+ipcMain.on('term-input', (_e, { tabId, data }) => {
+  const s = termSessions.get(tabId); if (!s) return;
+  if (s.ws) { try { s.ws.send(JSON.stringify({ type: 'in', data })); } catch {} }
+  else if (s.proc) { try { s.proc.write(data); } catch {} }
 });
-ipcMain.on('pty-kill', () => { closeRemotePty(); ptyKill(); });
-ipcMain.on('set-term-pane', (_e, open) => resizeForTerminal(open));
+ipcMain.on('term-resize', (_e, { tabId, cols, rows }) => {
+  const s = termSessions.get(tabId); if (!s) return;
+  if (cols > 0) s.cols = cols;
+  if (rows > 0) s.rows = rows;
+  if (s.ws) { try { s.ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {} }
+  else if (s.proc) { try { s.proc.resize(cols, rows); } catch {} }
+});
 
 app.whenReady().then(() => {
   migrateOldBase();                              // dados da era claude-traffic-light
@@ -1268,7 +1302,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { ptyKill(); globalShortcut.unregisterAll(); });
+app.on('will-quit', () => { for (const id of [...termSessions.keys()]) destroyTermSession(id); globalShortcut.unregisterAll(); });
 
 // ---- consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API) ----
 // Coletor async (GLM faz rede → nunca bloqueia o ciclo de 5s das sessões).

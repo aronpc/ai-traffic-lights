@@ -40,16 +40,19 @@ contextBridge.exposeInMainWorld('trafficLight', {
   getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
   setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
   fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
-  attachRemote: (origin, tmuxSession, cwd) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd }), // attach tmux (vivo, local/peer)
-  // terminal embutido (xterm + node-pty): o attach roda DENTRO do ATL
-  ptySpawn: (cmd, cwd, cols, rows) => ipcRenderer.send('pty-spawn', { cmd, cwd, cols, rows }),
-  ptyInput: (data) => ipcRenderer.send('pty-input', data),
-  ptyResize: (cols, rows) => ipcRenderer.send('pty-resize', { cols, rows }),
-  ptyKill: () => ipcRenderer.send('pty-kill'),
-  onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, d) => cb(d)),
-  onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, code) => cb(code)),
-  onTermOpen: (cb) => ipcRenderer.on('term-open', (_e, d) => cb(d)),   // main manda abrir pane c/ cmd
-  setTermPane: (open) => ipcRenderer.send('set-term-pane', open),       // main redimensiona a janela
+  attachRemote: (origin, tmuxSession, cwd) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd }), // attach tmux (vivo, local/peer) — abre na janela Terminal
+  // janela Terminal (abas): o estado dos pty/ws vive no main; o renderer só desenha.
+  // Cada método carrega tabId p/ rotear input/output/resize à aba certa.
+  newShell: () => ipcRenderer.send('term-new-shell'),
+  switchTab: (tabId) => ipcRenderer.send('term-switch-tab', tabId),
+  closeTab: (tabId) => ipcRenderer.send('term-close-tab', tabId),
+  ptyInput: (tabId, data) => ipcRenderer.send('term-input', { tabId, data }),
+  ptyResize: (tabId, cols, rows) => ipcRenderer.send('term-resize', { tabId, cols, rows }),
+  onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, p) => cb(p)),            // p = { tabId, data }
+  onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, p) => cb(p)),          // p = { tabId }
+  onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
+  onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
+  onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente
   pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
   getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),

@@ -30,17 +30,7 @@
 .ts-text { white-space: pre-wrap; word-break: break-word; }
 .ts-loading, .ts-empty { color: var(--ink-dim); font-size: 12.5px; text-align: center; padding: 24px 0; }
 
-/* ---- terminal embutido (xterm+pty): body flex → [termPane | overlay] ---- */
-body { display: flex; align-items: stretch; }
-.term-pane { width: 640px; flex: 0 0 640px; background: #12151c; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; margin-right: 8px; }
-.term-pane[hidden] { display: none; }
-.term-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(255,255,255,.04); border-bottom: 1px solid var(--border); }
-.term-title { flex: 1; font-size: 11px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.term-close { background: transparent; border: none; color: var(--ink-dim); font-size: 16px; cursor: pointer; padding: 0 4px; border-radius: 5px; }
-.term-close:hover { color: var(--ink); background: var(--row-hover); }
-.term-holder { flex: 1; padding: 4px 6px; overflow: hidden; min-height: 120px; }
-.term-holder .xterm { height: 100%; }
-.term-holder .xterm-viewport { background-color: transparent !important; }
+/* (terminal agora vive em src/term.html — estilos próprios no <style> dele) */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
