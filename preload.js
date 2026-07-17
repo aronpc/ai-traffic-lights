@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
   setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
   fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
+  attachRemote: (origin, tmuxSession, cwd) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd }), // attach tmux (vivo, local/peer)
   pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
   getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),

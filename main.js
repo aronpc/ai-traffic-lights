@@ -508,6 +508,30 @@ function launchAgent({ agent, cwd }) {
   try { spawn(term, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
 }
 
+// ---- attach remoto (tmux): abre um terminal LOCAL attachado a uma sessão tmux
+// (local direto, ou remota via SSH/Tailscale). Vivo e compartilhado (multi-
+// cliente): sem --resume, sem derrubar o terminal da outra máquina. Sanitiza
+// nome+host (vêm de config/peer — anti-injeção de shell no comando remoto).
+function openCmdInTerminal(cmdArray, cwd) {
+  const dir = (cwd && typeof cwd === 'string') ? cwd : (process.env.HOME || '/');
+  const avail = availableTerminals();
+  const term = launcher.pickTerminal(settingsCfg.terminal, avail);
+  const useTerm = term || (avail.includes('gnome-terminal') ? 'gnome-terminal' : 'x-terminal-emulator');
+  const args = launcher.terminalArgs(useTerm, dir, cmdArray) || ['-e', ...cmdArray];
+  try { spawn(useTerm, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); }
+  catch (e) { notifyUser('Attach failed: ' + e.message); }
+}
+function attachRemote({ origin, tmux_session, cwd }) {
+  if (!tmux_session || !/^[A-Za-z0-9._-]+$/.test(tmux_session)) { notifyUser(T('ntf_attach_no_tmux')); return; }
+  const name = tmux_session;
+  if (!origin || origin === 'local') { openCmdInTerminal(['tmux', 'attach', '-t', name], cwd); return; }
+  const host = originToHost.get(origin);
+  if (!host || !/^[A-Za-z0-9._:-]+$/.test(host)) { notifyUser(T('ntf_attach_no_host', { origin })); return; }
+  const ssh = scanPathBin('tailscale') ? 'tailscale' : 'ssh';
+  const remoteCmd = 'tmux attach -t ' + name;   // name já sanitizado → seguro no shell remoto
+  openCmdInTerminal(ssh === 'tailscale' ? ['tailscale', 'ssh', host, '-t', remoteCmd] : ['ssh', host, '-t', remoteCmd], cwd);
+}
+
 // ---- autostart ----
 function autostartEnabled() {
   try { return fs.existsSync(AUTOSTART_FILE); } catch { return false; }
@@ -1041,6 +1065,7 @@ ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
 // Quick Launcher: lista de agentes detectados + sobe um agente num terminal.
 ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
 ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));
+ipcMain.on('attach-remote', (_e, t) => attachRemote(t || {}));   // attach tmux (local ou via peer)
 
 // ---- sync multi-máquina (P2P): servidor + poller, OPT-IN (fase 2) ----
 // Sessões remotas dos peers são mergeadas em readSessions(); chegam com `origin`

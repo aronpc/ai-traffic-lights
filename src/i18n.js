@@ -58,6 +58,8 @@ const STRINGS = {
     ntf_remove_fail: 'Failed to remove hook: {msg}',
     ntf_no_launcher: '{agent} CLI not found — add its path in Preferences',
     ntf_no_terminal: 'No supported terminal found (install tilix / gnome-terminal / ghostty)',
+    ntf_attach_no_tmux: 'No tmux session to attach (agent not running in tmux)',
+    ntf_attach_no_host: 'Unknown host for peer "{origin}"',
     ntf_focus_unsupported_wayland: "Can't focus this terminal on Wayland (GNOME Terminal isn't reachable). Use Tilix, or run under X11/XWayland.",
     // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
     ntf_tokens_reset: '🟢 {name}: quota reset — you can go again',
@@ -187,6 +189,8 @@ const STRINGS = {
     ntf_remove_fail: 'Falha ao remover hook: {msg}',
     ntf_no_launcher: 'CLI do {agent} não encontrado — adicione o caminho nas Preferências',
     ntf_no_terminal: 'Nenhum terminal suportado (instale tilix / gnome-terminal / ghostty)',
+    ntf_attach_no_tmux: 'Sem sessão tmux para attach (agente não está no tmux)',
+    ntf_attach_no_host: 'Host desconhecido para o peer "{origin}"',
     ntf_focus_unsupported_wayland: 'Não foi possível focar este terminal no Wayland (o GNOME Terminal não é alcançável). Use o Tilix ou rode em X11/XWayland.',
     // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
     ntf_tokens_reset: '🟢 {name}: cota liberada — pode voltar a usar',

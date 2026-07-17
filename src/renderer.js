@@ -279,9 +279,10 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        // Remoto: windowid/focus_url são machine-local (não há o que focar) →
-        // abre o painel de prompts no lugar. Local: foca o terminal como antes.
-        if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
+        // 3 caminhos: tem tmux_session → attach (vivo, local ou via peer);
+        // remoto sem tmux → painel de prompts; local sem tmux → foca o terminal.
+        if (s.tmux_session) window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd);
+        else if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
         else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
       }, 220);
     });
