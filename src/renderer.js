@@ -322,8 +322,13 @@ function render() {
     subInline.className = 'row__sub-inline'; // compacto: na mesma linha do nome
     subInline.textContent = subCompact;
     // Clique no sub-texto (modelo · ferramenta · tempo) abre o painel "ver prompt"
-    // — busca as últimas N mensagens sob demanda (local: disco; remoto: /transcript).
-    const openTs = (e) => { e.stopPropagation(); openTranscriptPanel(s); };
+    // SÓ pra remota (local: deixa o clique subir e foca o terminal de verdade —
+    // painel só faz sentido onde não dá pra focar).
+    const openTs = (e) => {
+      if (!(s.origin && s.origin !== 'local')) return;   // local: clique sobe → focus
+      e.stopPropagation();
+      openTranscriptPanel(s);
+    };
     subEl.addEventListener('click', openTs);
     subInline.addEventListener('click', openTs);
     subEl.title = subInline.title = T('ts_see_prompt');
