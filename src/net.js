@@ -85,30 +85,46 @@ function startServer({ port, token, nodeName, shareTranscripts, getSessions, get
   return server;
 }
 
-// Faz poll de /sessions de cada peer a cada intervalMs. Retorna um stop().
-// As sessões recebidas já vêm com origin=<nome reportado pelo peer>; CONFIA no
-// nome do peer (data.node) p/ o badge — se ausente, usa p.name (config local).
-function pollPeers({ peers, port, token, intervalMs = 5000, onSessions, onError }) {
+// Faz poll de /sessions de cada peer. Cada peer tem o SEU timer com BACKOFF
+// exponencial: offline => raro (até maxDelayMs, default 5min) e loga só a
+// TRANSIÇÃO; online => cadência normal (intervalMs). Assim um peer offline não
+// enche o log a cada 5s, e quando volta a ser alcançável o próximo ciclo pega,
+// reseta o backoff e volta ao normal (próximo de "só começa quando online").
+// onSessions no sucesso; onPeerState(host, online) só nas MUDANÇAS de estado.
+function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 * 1000, onSessions, onPeerState }) {
   if (!Array.isArray(peers) || !peers.length) return () => {};
-  let stopped = false;
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
-  async function tick() {
+  const timers = new Map();   // host -> timeout id (cadência independente por peer)
+  const state = new Map();    // host -> { delay, online:null|bool }
+  let stopped = false;
+
+  async function pollOne(p) {
     if (stopped) return;
-    await Promise.all(peers.map(async (p) => {
-      const hostPort = p.host.includes(':') ? p.host : `${p.host}:${port}`;
-      try {
-        const r = await fetch(`http://${hostPort}/sessions`, { headers });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const data = await r.json();
-        const origin = data.node || p.name || p.host;
-        const sessions = (data.sessions || []).map((s) => ({ ...s, origin }));
-        onSessions(p.host, sessions);
-      } catch (e) { if (onError) onError(p.host, e); }
-    }));
+    const st = state.get(p.host);
+    const hostPort = p.host.includes(':') ? p.host : `${p.host}:${port}`;
+    let ok = false;
+    try {
+      const r = await fetch(`http://${hostPort}/sessions`, { headers });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const origin = data.node || p.name || p.host;
+      onSessions(p.host, (data.sessions || []).map((s) => ({ ...s, origin })));
+      ok = true;
+    } catch { /* offline/erro — vira backoff abaixo */ }
+    if (ok) {
+      st.delay = intervalMs;                                              // online: cadência normal
+      if (st.online === false && onPeerState) onPeerState(p.host, true);  // voltou
+      st.online = true;
+    } else {
+      st.delay = Math.min(st.delay * 2, maxDelayMs);                      // backoff exponencial
+      if (st.online !== false && onPeerState) onPeerState(p.host, false); // caiu (1ª vez)
+      st.online = false;
+    }
+    if (!stopped) timers.set(p.host, setTimeout(() => pollOne(p), st.delay));
   }
-  tick();
-  const id = setInterval(tick, intervalMs);
-  return () => { stopped = true; clearInterval(id); };
+
+  for (const p of peers) { state.set(p.host, { delay: intervalMs, online: null }); pollOne(p); }
+  return () => { stopped = true; for (const id of timers.values()) clearTimeout(id); timers.clear(); };
 }
 
 // Busca /transcript de um peer (cliente). Devolve [] se host ausente/erro/403.

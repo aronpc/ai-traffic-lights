@@ -2,7 +2,7 @@
 // localhost de verdade (porta efêmera, fetch real) cobrindo /sessions e /transcript.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, tokenOk, exportSession } = require('../src/net.js');
+const { startServer, tokenOk, exportSession, pollPeers } = require('../src/net.js');
 
 // ---- tokenOk: compare constante, fail-safe ----
 test('tokenOk: token correto → true', () => {
@@ -81,4 +81,20 @@ test('server: rota desconhecida → 404', async () => {
   const { server, port } = await up({});
   try { assert.equal((await GET(port, '/nope', 'tok')).status, 404); }
   finally { server.close(); }
+});
+
+// ---- pollPeers: backoff por peer + loga só a transição ----
+test('pollPeers: peer offline → onPeerState(false) UMA vez (backoff, sem spam)', async () => {
+  const calls = { online: 0, offline: 0, sessions: 0 };
+  const stop = pollPeers({
+    peers: [{ host: '127.0.0.1', name: 'x' }], port: 1, token: 't',  // porta 1 fechada → recusa
+    intervalMs: 30, maxDelayMs: 60,
+    onSessions: () => calls.sessions++,
+    onPeerState: (_h, on) => { if (on) calls.online++; else calls.offline++; },
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  stop();
+  assert.equal(calls.offline, 1, 'loga offline só 1 vez (transição), não a cada tentativa');
+  assert.equal(calls.online, 0);
+  assert.equal(calls.sessions, 0);
 });

@@ -1087,7 +1087,7 @@ function applySync() {
         for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto
         sendSessions();
       },
-      onError: (host, e) => { try { console.log('[sync] peer ' + host + ': ' + e.message); } catch {} },
+      onPeerState: (host, online) => { try { console.log('[sync] peer ' + host + ' ' + (online ? 'online' : 'offline (backoff)')); } catch {} },
     });
     pollKey = pKey;
   }
