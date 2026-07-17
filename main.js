@@ -509,25 +509,14 @@ function launchAgent({ agent, cwd }) {
     }
   }
 
-  const term = launcher.pickTerminal(settingsCfg.terminal, availableTerminals());
-  if (settingsCfg.terminal === 'custom' && settingsCfg.terminalCmd.trim()) {
-    // Custom: template com {cwd} e {cmd}. Split simples (sem shell, sem quoting rico).
-    const cmd = settingsCfg.terminalCmd
-      .replace(/\{cwd\}/g, dir)
-      .replace(/\{cmd\}/g, entry.path);
-    const parts = cmd.split(/\s+/).filter(Boolean);
-    try { spawn(parts[0], parts.slice(1), { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-    return;
-  }
-  if (!term) { notifyUser(T('ntf_no_terminal')); return; }
-  // Auto-wrap em tmux: o agente roda numa sessão própria → o hook captura
-  // tmux_session (#S) → o clique attacha na janela Terminal. Só se tmux no PATH.
+  // Linux: lança DIRETO numa aba da janela Terminal, dentro de um tmux próprio.
+  // Não depende de terminal externo (tilix/Warp) — o ATL controla o spawn e
+  // garante o wrap; o hook do agente captura tmux_session (#S) e o overlay mostra.
   const hasTmux = !!scanPathBin('tmux');
-  const agentCmd = hasTmux
-    ? launcher.tmuxWrap([entry.path], launcher.tmuxSessionName(agent) + '-' + Date.now().toString(36))
-    : [entry.path];
-  const args = launcher.terminalArgs(term, dir, agentCmd);
-  try { spawn(term, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+  const sessionName = launcher.tmuxSessionName(agent) + '-' + Date.now().toString(36);
+  ensureTermWin();
+  const tabId = addTermSession({ title: (a && a.label) || agent, kind: 'local' });
+  spawnPtyLocal(tabId, hasTmux ? launcher.tmuxWrap([entry.path], sessionName) : [entry.path], dir);
 }
 
 // ---- attach remoto (tmux): abre um terminal LOCAL attachado a uma sessão tmux
