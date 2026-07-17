@@ -841,7 +841,9 @@ function ensureTerm() {
   term.open(document.getElementById('termHolder'));
   term.onData((d) => window.trafficLight.ptyInput(d));
   window.trafficLight.onPtyOut((d) => { if (term) term.write(d); });
-  window.trafficLight.onPtyExit(() => closeTermPane());
+  // NÃO fecha no exit — deixa o pane aberto pra você ler o output/erro (fecha no ×).
+  // Antes fechava automático → o pane piscava se o comando falhava/exibia rápido.
+  window.trafficLight.onPtyExit(() => { if (term) term.write('\r\n\x1b[90m[processo encerrou]\x1b[0m'); });
   return term;
 }
 function openTermPane({ cmd, cwd, title }) {
