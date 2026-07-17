@@ -9,7 +9,8 @@
     "remove-hook": "node scripts/setup-hook.js --remove",
     "hook:test": "bash hooks/traffic-hook.sh",
     "test": "node --test",
-    "dist": "electron-builder --linux"
+    "dist": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac"
   },
   "author": "Aron Peyroteo <aronpeyroteo@gmail.com>",
   "license": "MIT",
@@ -22,6 +23,9 @@
     "url": "https://github.com/aronpc/ai-traffic-lights/issues"
   },
   "build": {
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "appId": "dev.aitrafficlights.app",
     "productName": "AI Traffic Lights",
     "files": [
@@ -61,7 +65,8 @@
         "zip"
       ],
       "category": "public.app-category.utilities",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "hardenedRuntime": false
     }
   },
   "devDependencies": {
