@@ -29,6 +29,24 @@ function detectTailnetIP() {
   return _tsIP;
 }
 
+// Set de peers ONLINE segundo o Tailscale (HostName + IPs, lowercased). O poller
+// usa p/ SÓ tentar rede quem tá online (zero fetch em offline; detecta "ficou
+// online" assim que o Tailscale marca — ~cadência de refresh do main). null se
+// tailscale ausente (aí o poller cai pro backoff puro, sem gate).
+function tailscaleOnlineSet() {
+  try {
+    const j = JSON.parse(execFileSync('tailscale', ['status', '--json'], { encoding: 'utf8', timeout: 3000 }));
+    const set = new Set();
+    for (const peer of Object.values(j.Peer || {})) {
+      if (peer && peer.Online) {
+        if (peer.HostName) set.add(String(peer.HostName).toLowerCase());
+        for (const ip of peer.TailscaleIPs || []) set.add(String(ip));
+      }
+    }
+    return set;
+  } catch { return null; }
+}
+
 // Campos machine-local que NÃO atravessam a rede (só fazem sentido neste host).
 const LOCAL_ONLY = ['windowid', 'focus_url', 'tilix_id', 'zellij_session'];
 
@@ -91,7 +109,7 @@ function startServer({ port, token, nodeName, shareTranscripts, getSessions, get
 // enche o log a cada 5s, e quando volta a ser alcançável o próximo ciclo pega,
 // reseta o backoff e volta ao normal (próximo de "só começa quando online").
 // onSessions no sucesso; onPeerState(host, online) só nas MUDANÇAS de estado.
-function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 * 1000, onSessions, onPeerState }) {
+function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 * 1000, offlineRecheckMs = 3000, onSessions, onPeerState, isOnline }) {
   if (!Array.isArray(peers) || !peers.length) return () => {};
   const headers = token ? { Authorization: 'Bearer ' + token } : {};
   const timers = new Map();   // host -> timeout id (cadência independente por peer)
@@ -101,6 +119,17 @@ function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 
   async function pollOne(p) {
     if (stopped) return;
     const st = state.get(p.host);
+    // GATE (opcional): se há predicate isOnline (Tailscale) e o peer NÃO tá
+    // online, NÃO gasta rede — só re-checa barato (offlineRecheckMs) e mantém
+    // offline. Assim offline => zero fetch; quando o Tailscale marca online,
+    // o próximo re-check pega e parte pra cadência normal.
+    if (isOnline && !isOnline(p.host)) {
+      if (st.online !== false && onPeerState) onPeerState(p.host, false);
+      st.online = false;
+      st.delay = offlineRecheckMs;
+      if (!stopped) timers.set(p.host, setTimeout(() => pollOne(p), st.delay));
+      return;
+    }
     const hostPort = p.host.includes(':') ? p.host : `${p.host}:${port}`;
     let ok = false;
     try {
@@ -144,4 +173,4 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
   } catch { return []; }
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP };
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet };

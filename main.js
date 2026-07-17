@@ -354,7 +354,7 @@ function scanPathBin(bin) {
   for (const dir of path.split(':')) {
     if (!dir) continue;
     const p = path_join(dir, bin);
-    try { if (fs.statSync(p).isFile() && (fs.accessSync(p, fs.X_OK), true)) return p; } catch {}
+    try { if (fs.statSync(p).isFile() && (fs.accessSync(p, fs.constants.X_OK), true)) return p; } catch {}
   }
   return null;
 }
@@ -1051,6 +1051,7 @@ let remoteSessions = new Map();   // peerHost -> sessions[] (já com origin)
 let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcript remoto)
 let syncServer = null, syncServerKey = null;
 let stopPoll = null, pollKey = null;
+let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
 function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
 function applySync() {
   const s = (settingsCfg && settingsCfg.sync) || {};
@@ -1077,11 +1078,17 @@ function applySync() {
   }
   // CLIENTE (observar peers): poll de /sessions a cada 5s.
   const pKey = (s.enabled && Array.isArray(s.peers) && s.peers.length && tok) ? `${s.port}|${tok}|${s.peers.map((p) => p.host).join(',')}` : '';
-  if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; remoteSessions.clear(); sendSessions(); }
+  if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; clearInterval(onlineTimer); onlineTimer = null; remoteSessions.clear(); sendSessions(); }
   if (pKey && pKey !== pollKey) {
     if (stopPoll) { stopPoll(); }
+    // Gate Tailscale: só tenta rede em peers que o Tailscale diz online. Set
+    // refresh a cada 10s (barato, local); null => sem tailscale => sem gate (cai p/ backoff).
+    onlineSet = net.tailscaleOnlineSet();
+    clearInterval(onlineTimer);
+    onlineTimer = setInterval(() => { onlineSet = net.tailscaleOnlineSet(); }, 10000);
     stopPoll = net.pollPeers({
       peers: s.peers, port: s.port, token: tok,
+      isOnline: (h) => { if (!onlineSet) return true; const lc = String(h).toLowerCase(); return onlineSet.has(h) || onlineSet.has(lc); },
       onSessions: (host, sessions) => {
         remoteSessions.set(host, sessions);
         for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto

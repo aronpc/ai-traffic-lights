@@ -2,7 +2,7 @@
 // localhost de verdade (porta efêmera, fetch real) cobrindo /sessions e /transcript.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, tokenOk, exportSession, pollPeers } = require('../src/net.js');
+const { startServer, tokenOk, exportSession, pollPeers, tailscaleOnlineSet } = require('../src/net.js');
 
 // ---- tokenOk: compare constante, fail-safe ----
 test('tokenOk: token correto → true', () => {
@@ -84,6 +84,14 @@ test('server: rota desconhecida → 404', async () => {
 });
 
 // ---- pollPeers: backoff por peer + loga só a transição ----
+test('tailscaleOnlineSet: null (sem tailscale) ou Set de hosts online', () => {
+  const s = tailscaleOnlineSet();   // CI sem tailscale => null; máquina c/ tailscale => Set
+  assert.ok(s === null || s instanceof Set, 'null ou Set');
+  if (s instanceof Set) {
+    for (const h of s) assert.equal(typeof h, 'string');   // hostnames/IPs lowercase
+  }
+});
+
 test('pollPeers: peer offline → onPeerState(false) UMA vez (backoff, sem spam)', async () => {
   const calls = { online: 0, offline: 0, sessions: 0 };
   const stop = pollPeers({
