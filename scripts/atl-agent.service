@@ -1,0 +1,33 @@
+# atl-agent.service — unit do systemd para o modo headless do sync (fase 4).
+# Expõe as sessões DESTE servidor no mesh P2P (servidor /sessions em localhost,
+# atrás do `tailscale serve`). Sem GUI, sem Electron.
+#
+# Instalar:
+#   1) sudo cp scripts/atl-agent.service /etc/systemd/system/
+#   2) edite ExecStart/Environment (token, node, paths) conforme o host
+#   3) sudo systemctl daemon-reload && sudo systemctl enable --now atl-agent
+#
+# O servidor escuta em 127.0.0.1:<porta>; exponha à tailnet com:
+#   tailscale serve --bg 47474    # mesma porta do ATL em cada nó
+
+[Unit]
+Description=AI Traffic Lights — sync agent (headless, P2P over Tailscale)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ajuste o caminho do node e do agent.js para o seu host:
+ExecStart=/usr/bin/node /opt/ai-traffic-lights/agent.js
+# overrides por env (servidor sem GUI pra editar settings.json):
+Environment="ATL_SYNC_ENABLED=1"
+Environment="ATL_SYNC_SHARE=1"
+Environment="ATL_SYNC_TOKEN=COLOQUE-O-TOKEN-AQUI"
+Environment="ATL_SYNC_NODE=%H"
+# XDG_DATA_HOME aponta onde os hooks do ATL gravam os state files (default ~/.local/share):
+# Environment="XDG_DATA_HOME=/var/lib/ai-traffic-lights"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
