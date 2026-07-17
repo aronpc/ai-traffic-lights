@@ -10,6 +10,7 @@
 #   bash install.sh --uninstall           # remove tudo
 #   INSTALL_DIR=~/bin bash install.sh     # diretório de destino custom
 #   GITHUB_TOKEN=ghp_xxx bash install.sh  # evita rate-limit da API do GitHub
+#   ATL_PKG=deb bash install.sh           # (Debian/Ubuntu) via .deb: apt resolve as deps
 #
 # Instala automaticamente as dependências de runtime que faltarem: libfuse2
 # (FUSE 2, exigida pelo AppImage clássico) + libs do Electron (libgbm/nss/gtk)
@@ -139,6 +140,50 @@ smoke_test() {
   return 0
 }
 
+# Verifica a integridade (sha512) do arquivo baixado contra o latest-linux.yml
+# que o electron-builder publica no release. Best-effort: sem yml/sha512/ferramenta,
+# apenas avisa; se o hash NÃO confere, aborta (corrompido ou adulterado).
+verify_checksum() {
+  local file="$1" asset_url="$2" yml yml_url base expected actual
+  base="$(basename "${asset_url%%\?*}")"
+  yml_url="${asset_url%/*}/latest-linux.yml"
+  yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
+    || { info "sem latest-linux.yml — pulei a verificação de integridade"; return 0; }
+  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+  [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+  [ -n "$expected" ] || { info "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
+  if command -v openssl >/dev/null 2>&1; then
+    actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | base64 | tr -d '\n')"
+  elif command -v sha512sum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
+    actual="$(sha512sum "$file" | cut -d' ' -f1 | xxd -r -p | base64 | tr -d '\n')"
+  else
+    info "sem openssl/xxd — pulei a verificação de integridade"; return 0
+  fi
+  if [ "$actual" = "$expected" ]; then
+    ok "integridade verificada (sha512)"
+  else
+    die "checksum NÃO confere ($base) — download corrompido ou adulterado. Abortei."
+  fi
+}
+
+# Instala via .deb (Debian/Ubuntu, opt-in ATL_PKG=deb): o apt resolve as Depends
+# automaticamente e o app roda de /opt SEM FUSE. NÃO auto-atualiza via
+# electron-updater — a atualização passa a ser via apt / re-rodando este script.
+install_via_deb() {
+  local f; f="$(mktemp "${TMPDIR:-/tmp}/atl-XXXXXX.deb")"
+  info "baixando .deb e instalando via apt (resolve dependências automaticamente)..."
+  curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 -o "$f" "$deb_url" \
+    || { rm -f "$f"; die "falha ao baixar o .deb."; }
+  verify_checksum "$f" "$deb_url"
+  if $SUDO apt-get install -y "$f"; then
+    rm -f "$f"
+    ok "instalado via .deb — apt resolveu as dependências (abre pelo menu, roda sem FUSE)."
+  else
+    rm -f "$f"
+    die "apt-get install do .deb falhou."
+  fi
+}
+
 # ----------------------------- uninstall -----------------------------
 if [ "$ACTION" = "uninstall" ]; then
   info "removendo $APP_TITLE..."
@@ -194,8 +239,25 @@ else
   download_url="$(printf '%s\n' "$json" | grep -oE '"browser_download_url":[[:space:]]*"[^"]+\.AppImage"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')" || true
   version="$(printf '%s\n' "$json" | grep -oE '"tag_name":[[:space:]]*"v[^"]+"' | head -1 | sed -E 's/.*"v([^"]+)"$/\1/')" || true
 fi
-[ -n "$download_url" ] || die "não encontrei o asset .AppImage no release latest do $REPO."
+
+# asset .deb (para o caminho opt-in ATL_PKG=deb)
+if command -v jq >/dev/null 2>&1; then
+  deb_url="$(printf '%s' "$json" | jq -r '.assets[].browser_download_url | select(endswith(".deb"))' | head -1)" || true
+else
+  deb_url="$(printf '%s\n' "$json" | grep -oE '"browser_download_url":[[:space:]]*"[^"]+\.deb"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')" || true
+fi
 info "versão mais recente: v${version:-?}"
+
+# caminho .deb opt-in: em Debian/Ubuntu o apt resolve as dependências nativamente
+# e o app roda sem FUSE. O padrão continua sendo o AppImage (auto-atualizável).
+if [ "${ATL_PKG:-}" = "deb" ]; then
+  [ "$PM" = "apt-get" ] || die "ATL_PKG=deb requer apt (Debian/Ubuntu). Gerenciador detectado: ${PM:-nenhum}."
+  [ -n "$deb_url" ] || die "não encontrei o asset .deb no release latest do $REPO."
+  install_via_deb
+  exit 0
+fi
+
+[ -n "$download_url" ] || die "não encontrei o asset .AppImage no release latest do $REPO."
 
 # idempotência: já na última versão e binário presente → nada a fazer
 if [ -f "$VERSION_FILE" ] && [ "$(cat "$VERSION_FILE" 2>/dev/null)" = "$version" ] && [ -x "$APPIMAGE_PATH" ]; then
@@ -210,6 +272,7 @@ ensure_runtime_deps
 info "baixando AppImage -> $APPIMAGE_PATH"
 TMP_NEW="$APPIMAGE_PATH.new"
 curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 -o "$TMP_NEW" "$download_url"
+verify_checksum "$TMP_NEW" "$download_url"
 mv -f "$TMP_NEW" "$APPIMAGE_PATH"; TMP_NEW=""
 chmod +x "$APPIMAGE_PATH"
 printf '%s' "$version" > "$VERSION_FILE"
@@ -275,6 +338,9 @@ cat <<EOF
 
   O app se AUTO-ATUALIZA (AppImage): avisa quando há versão nova e baixa +
   reinicia pela própria interface — sem refazer este install.
+
+  Debian/Ubuntu: se preferir o pacote nativo (apt resolve as deps, roda sem
+  FUSE — porém sem auto-update), rode:  ATL_PKG=deb bash install.sh
 
   Remover:  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --uninstall
 EOF
