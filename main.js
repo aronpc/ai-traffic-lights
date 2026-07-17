@@ -520,7 +520,13 @@ function launchAgent({ agent, cwd }) {
     return;
   }
   if (!term) { notifyUser(T('ntf_no_terminal')); return; }
-  const args = launcher.terminalArgs(term, dir, [entry.path]);
+  // Auto-wrap em tmux: o agente roda numa sessão própria → o hook captura
+  // tmux_session (#S) → o clique attacha na janela Terminal. Só se tmux no PATH.
+  const hasTmux = !!scanPathBin('tmux');
+  const agentCmd = hasTmux
+    ? launcher.tmuxWrap([entry.path], launcher.tmuxSessionName(agent) + '-' + Date.now().toString(36))
+    : [entry.path];
+  const args = launcher.terminalArgs(term, dir, agentCmd);
   try { spawn(term, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
 }
 
