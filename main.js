@@ -1172,7 +1172,7 @@ function applySync() {
 // ptyMode distingue a FONTE do stream pty-out/pty-input: 'local' = node-pty
 // direto; 'remote' = ws pro /pty do peer. O renderer é agnóstico (só consome
 // pty-out e emite pty-input); o main roteia por ptyMode.
-let ptyLib = null, ptyProc = null, ptyMode = null, remoteWs = null;
+let ptyLib = null, ptyProc = null, ptyMode = null, remoteWs = null, ptyCols = 80, ptyRows = 24;
 function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
 // factory p/ o SERVIDOR (DI injetada em net.startServer): cria um node-pty por
 // conexão /pty remota e devolve um handle {write,resize,kill} — cada peer
@@ -1204,7 +1204,7 @@ function openRemotePty({ host, port, token, tmux_session, title }) {
   let ws;
   try { ws = new (require('ws'))(url); } catch (e) { notifyUser('WebSocket falhou: ' + e.message); return; }
   remoteWs = ws; ptyMode = 'remote';
-  ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: 100, rows: 30 })); } catch {} });
+  ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: ptyCols, rows: ptyRows })); } catch {} });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (!win || win.isDestroyed()) return;
@@ -1231,6 +1231,8 @@ ipcMain.on('pty-input', (_e, data) => {
   else if (ptyProc) { try { ptyProc.write(data); } catch {} }
 });
 ipcMain.on('pty-resize', (_e, { cols, rows }) => {
+  if (cols > 0) ptyCols = cols;          // lembra o tamanho p/ o start do próximo attach remoto (race: resize pode chegar antes do ws.open)
+  if (rows > 0) ptyRows = rows;
   if (ptyMode === 'remote' && remoteWs) { try { remoteWs.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {} }
   else if (ptyProc) { try { ptyProc.resize(cols, rows); } catch {} }
 });

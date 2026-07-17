@@ -853,7 +853,8 @@ function openTermPane({ cmd, cwd, title }) {
   window.trafficLight.setTermPane(true);                 // main amplia a janela
   setTimeout(() => {                                     // dá 1 tick pro layout assentar
     try { fitAddon.fit(); } catch {}
-    if (cmd) window.trafficLight.ptySpawn(cmd, cwd, term.cols, term.rows);  // cmd=null (remoto/WS): main já conectou
+    if (cmd) window.trafficLight.ptySpawn(cmd, cwd, term.cols, term.rows);
+    else window.trafficLight.ptyResize(term.cols, term.rows);   // remoto (cmd=null): main já conectou o ws; repassa o tamanho real p/ o tmux do peer renderizar certo
     term.focus();
   }, 40);
 }
