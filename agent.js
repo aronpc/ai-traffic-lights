@@ -54,16 +54,17 @@ function start() {
   if (!sync.enabled) { log('sync desabilitado (settings/ATL_SYNC_ENABLED). Nada a fazer.'); return; }
   if (!sync.token) { log('sync habilitado MAS sem token — recusando (fail-safe).'); return; }
   if (!sync.share) { log('sync habilitado com token, mas share=0 — nada a servir.'); return; }
+  const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
   try {
     server = net.startServer({
-      port: sync.port, token: sync.token, nodeName, shareTranscripts: !!sync.shareTranscripts,
+      port: sync.port, token: sync.token, nodeName, shareTranscripts: !!sync.shareTranscripts, bindHost,
       getSessions: () => collect.readSessions(),
       getTranscript: (key, n) => {
         try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
         catch { return []; }
       },
     });
-    log('servidor UP :%d (%s) shareTranscripts=%s', sync.port, nodeName, !!sync.shareTranscripts);
+    log('servidor UP %s:%d (%s) shareTranscripts=%s', bindHost || '127.0.0.1', sync.port, nodeName, !!sync.shareTranscripts);
     // Mantém o cache de descoberta /proc fresco (igual ao loop de 5s da GUI).
     setInterval(() => collect.invalidateDiscovery(), 5000);
   } catch (e) { log('servidor falhou: %s', e.message); }

@@ -1061,9 +1061,10 @@ function applySync() {
   if (!srvKey && syncServer) { try { syncServer.close(); } catch {} syncServer = null; syncServerKey = null; }
   if (srvKey && srvKey !== syncServerKey) {
     if (syncServer) { try { syncServer.close(); } catch {} }
+    const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
     try {
       syncServer = net.startServer({
-        port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts,
+        port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts, bindHost,
         getSessions: () => collect.readSessions(),
         getTranscript: (key, n) => {
           try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
@@ -1071,7 +1072,7 @@ function applySync() {
         },
       });
       syncServerKey = srvKey;
-      try { console.log('[sync] server up :' + s.port + ' (' + syncNodeName() + ')'); } catch {}
+      try { console.log('[sync] server up ' + (bindHost || '127.0.0.1') + ':' + s.port + ' (' + syncNodeName() + (bindHost ? '' : ' — localhost só, sem tailscale?') + ')'); } catch {}
     } catch (e) { try { console.log('[sync] server falhou: ' + e.message); } catch {} syncServer = null; syncServerKey = null; }
   }
   // CLIENTE (observar peers): poll de /sessions a cada 5s.

@@ -15,6 +15,19 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
+
+// IP desta máquina na tailnet (100.64.0.0/10), p/ o servidor bindar DIRETO nele
+// em vez de localhost — assim os peers alcançam http://<meu-ip-tailnet>:<porta>
+// sem precisar de `tailscale serve`. Memoizado; null se tailscale ausente (cai
+// p/ localhost: feature degrada p/ só-this-host, sem explodir).
+let _tsIP;
+function detectTailnetIP() {
+  if (_tsIP !== undefined) return _tsIP;
+  try { const ip = execFileSync('tailscale', ['ip', '-4'], { encoding: 'utf8', timeout: 2000 }).trim(); _tsIP = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip) ? ip : null; }
+  catch { _tsIP = null; }
+  return _tsIP;
+}
 
 // Campos machine-local que NÃO atravessam a rede (só fazem sentido neste host).
 const LOCAL_ONLY = ['windowid', 'focus_url', 'tilix_id', 'zellij_session'];
@@ -45,7 +58,7 @@ function exportSession(s, nodeName) {
 // Sobe o servidor em 127.0.0.1 (localhost-only). Retorna o http.Server.
 //   getSessions()  → array local de sessões (de collect.readSessions)
 //   getTranscript(key, n) → [{role,text,ts}] (stub em []; parser real é fase 3)
-function startServer({ port, token, nodeName, shareTranscripts, getSessions, getTranscript }) {
+function startServer({ port, token, nodeName, shareTranscripts, getSessions, getTranscript, bindHost }) {
   const server = http.createServer((req, res) => {
     const respond = (code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
     res.setHeader('Content-Type', 'application/json');
@@ -68,7 +81,7 @@ function startServer({ port, token, nodeName, shareTranscripts, getSessions, get
     }
     respond(404, { error: 'not found' });
   });
-  server.listen(port, '127.0.0.1');
+  server.listen(port, bindHost || '127.0.0.1');   // tailnet IP p/ peers alcançarem direto; default localhost
   return server;
 }
 
@@ -115,4 +128,4 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
   } catch { return []; }
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer };
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP };

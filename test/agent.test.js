@@ -26,6 +26,7 @@ function startAgent(extraEnv, port) {
       ...process.env,
       ATL_SYNC_ENABLED: '1', ATL_SYNC_SHARE: '1', ATL_SYNC_TOKEN: 'tok',
       ATL_SYNC_PORT: String(port),
+      ATL_SYNC_BIND: '127.0.0.1',   // testa em localhost (senão o agent binda no IP da tailnet)
       ...extraEnv,
     },
   });
