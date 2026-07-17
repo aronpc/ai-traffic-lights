@@ -38,6 +38,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
     tilix_id: process.env.TILIX_ID || null,         // Tilix: uuid p/ activate-terminal
     zellij_session: process.env.ZELLIJ_SESSION_NAME || null,
     tmux_session: null,   // resolvido abaixo (nome da sessão p/ attach remoto)
+    tmux_pane: process.env.TMUX_PANE || null,   // pane id (%N) p/ FOCO local (LOCAL_ONLY)
   }
   // tmux: nome da sessão só é obtido via CLI (não há env var). 1 fork no boot,
   // só se $TMUX set — agentes fora do tmux => zero custo.
@@ -87,6 +88,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
         tilix_id: boot.tilix_id || ex.tilix_id || null,
         zellij_session: boot.zellij_session,
         tmux_session: boot.tmux_session,
+        tmux_pane: boot.tmux_pane,
         last_event: evt,
         last_event_ts: now,
         last_tool: tool || null,
