@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validSessionId, shellQuote, desktopEscape } = require('../src/validate.js');
+const { validSessionId, shellQuote, desktopEscape, buildAttachCmd } = require('../src/validate.js');
 
 test('validSessionId: aceita IDs seguros', () => {
   assert.equal(validSessionId('abc-123'), true);
@@ -45,4 +45,29 @@ test('desktopEscape: escapa espaço e reservados', () => {
 
 test('desktopEscape: path sem reservados fica intacto', () => {
   assert.equal(desktopEscape('/usr/bin/electron'), '/usr/bin/electron');
+});
+
+// ---- buildAttachCmd (attach remoto tmux) ----
+test('buildAttachCmd: local → tmux attach -t <name>', () => {
+  assert.deepEqual(buildAttachCmd({ origin: 'local', tmux_session: 'work' }), { cmd: ['tmux', 'attach', '-t', 'work'] });
+  assert.deepEqual(buildAttachCmd({ tmux_session: 'work' }), { cmd: ['tmux', 'attach', '-t', 'work'] }); // origin ausente = local
+});
+
+test('buildAttachCmd: remoto via tailscale ou ssh', () => {
+  assert.deepEqual(buildAttachCmd({ origin: 'peer', tmux_session: 'work', host: 'notebook-hg', sshBin: 'tailscale' }),
+    { cmd: ['tailscale', 'ssh', 'notebook-hg', '-t', 'tmux attach -t work'] });
+  assert.deepEqual(buildAttachCmd({ origin: 'peer', tmux_session: 'work', host: '10.0.0.1:2222', sshBin: 'ssh' }),
+    { cmd: ['ssh', '10.0.0.1:2222', '-t', 'tmux attach -t work'] });
+});
+
+test('buildAttachCmd: REJEITA injeção de shell em tmux_session e host', () => {
+  // name malicioso (vem de peer) → nunca chega ao shell remoto
+  assert.deepEqual(buildAttachCmd({ tmux_session: 'work; rm -rf /' }), { error: 'no_tmux' });
+  assert.deepEqual(buildAttachCmd({ tmux_session: 'a b' }), { error: 'no_tmux' });
+  assert.deepEqual(buildAttachCmd({ tmux_session: 'x`whoami`' }), { error: 'no_tmux' });
+  assert.deepEqual(buildAttachCmd({ tmux_session: '$(reboot)' }), { error: 'no_tmux' });
+  assert.deepEqual(buildAttachCmd({ tmux_session: '' }), { error: 'no_tmux' });
+  // host malicioso ou ausente
+  assert.deepEqual(buildAttachCmd({ origin: 'peer', tmux_session: 'work', host: 'peer; evil' }), { error: 'no_host' });
+  assert.deepEqual(buildAttachCmd({ origin: 'peer', tmux_session: 'work', host: '' }), { error: 'no_host' });
 });

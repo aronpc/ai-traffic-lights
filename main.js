@@ -21,7 +21,7 @@ const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const { spawn } = require('child_process');
-const { desktopEscape } = require('./src/validate');
+const { desktopEscape, buildAttachCmd } = require('./src/validate');
 
 // Flags de sandbox/shared-memory (--no-sandbox --disable-dev-shm-usage) vão na
 // LINHA DE COMANDO: build.linux.executableArgs (packaged) e scripts.start (dev).
@@ -522,14 +522,11 @@ function openCmdInTerminal(cmdArray, cwd) {
   catch (e) { notifyUser('Attach failed: ' + e.message); }
 }
 function attachRemote({ origin, tmux_session, cwd }) {
-  if (!tmux_session || !/^[A-Za-z0-9._-]+$/.test(tmux_session)) { notifyUser(T('ntf_attach_no_tmux')); return; }
-  const name = tmux_session;
-  if (!origin || origin === 'local') { openCmdInTerminal(['tmux', 'attach', '-t', name], cwd); return; }
-  const host = originToHost.get(origin);
-  if (!host || !/^[A-Za-z0-9._:-]+$/.test(host)) { notifyUser(T('ntf_attach_no_host', { origin })); return; }
-  const ssh = scanPathBin('tailscale') ? 'tailscale' : 'ssh';
-  const remoteCmd = 'tmux attach -t ' + name;   // name já sanitizado → seguro no shell remoto
-  openCmdInTerminal(ssh === 'tailscale' ? ['tailscale', 'ssh', host, '-t', remoteCmd] : ['ssh', host, '-t', remoteCmd], cwd);
+  const host = (origin && origin !== 'local') ? (originToHost.get(origin) || '') : '';
+  const sshBin = scanPathBin('tailscale') ? 'tailscale' : 'ssh';
+  const { cmd, error } = buildAttachCmd({ origin, tmux_session, host, sshBin });
+  if (!cmd) { notifyUser(error === 'no_host' ? T('ntf_attach_no_host', { origin: origin || '' }) : T('ntf_attach_no_tmux')); return; }
+  openCmdInTerminal(cmd, cwd);
 }
 
 // ---- autostart ----
