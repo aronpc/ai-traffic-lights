@@ -22,6 +22,7 @@
       <button class="tab is-active" data-tab="general" data-i18n="tab_general">Geral</button>
       <button class="tab" data-tab="notifications" data-i18n="tab_notifications">Notificações</button>
       <button class="tab" data-tab="integration" data-i18n="tab_integration">Integração</button>
+      <button class="tab" data-tab="sync" data-i18n="tab_sync">Sincronização</button>
     </nav>
 
     <div class="tab-body">
@@ -178,7 +179,10 @@
             <input id="terminalCmd" class="shortcut" placeholder="kitty --directory {cwd} -e {cmd}" style="width:100%">
           </div>
         </div>
+      </section>
 
+      <!-- ===================== ABA: SINCRONIZAÇÃO ===================== -->
+      <section class="tab-panel" data-panel="sync" hidden>
         <div class="section">
           <div class="section-title" data-i18n="sec_sync">Sincronização multi-máquina (P2P via Tailscale)</div>
           <div class="hint" data-i18n="sync_hint"></div>
