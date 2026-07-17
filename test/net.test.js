@@ -83,6 +83,46 @@ test('server: rota desconhecida → 404', async () => {
   finally { server.close(); }
 });
 
+// ---- /pty: terminal remoto via WebSocket (allowAttach + ptySpawn DI) ----
+const WebSocket = require('ws');
+function fakePty() { return { write() {}, resize() {}, kill() {} }; }
+async function wsOpen(port, token) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/pty${token != null ? '?token=' + token : ''}`);
+  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); ws.once('unexpected-response', rej); });
+  return ws;
+}
+
+test('/pty: sem allowAttach → handshake recusado (upgrade não sobe)', async () => {
+  const { server, port } = await up({});   // allowAttach ausente
+  try { await assert.rejects(() => wsOpen(port, 'tok')); }
+  finally { server.close(); }
+});
+
+test('/pty: token errado/ausente → handshake rejeitado', async () => {
+  const { server, port } = await up({ allowAttach: true, ptySpawn: fakePty });
+  try {
+    await assert.rejects(() => wsOpen(port, 'wrong'));
+    await assert.rejects(() => wsOpen(port, null));
+  } finally { server.close(); }
+});
+
+test('/pty: start c/ session inválido → close 4400; válido → ptySpawn recebe argv do attach', async () => {
+  const calls = [];
+  const { server, port } = await up({ allowAttach: true, ptySpawn: (cmd, c, r) => { calls.push(cmd); return fakePty(); } });
+  try {
+    const ws1 = await wsOpen(port, 'tok');
+    const code = new Promise((res) => ws1.once('close', res));
+    ws1.send(JSON.stringify({ type: 'start', tmux_session: '../evil; rm -rf /' }));
+    assert.equal(await code, 4400, 'session malicioso → close 4400');
+
+    const ws2 = await wsOpen(port, 'tok');
+    ws2.send(JSON.stringify({ type: 'start', tmux_session: 'work', cols: 90, rows: 20 }));
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(calls[calls.length - 1], ['tmux', 'attach', '-t', 'work'], 'ptySpawn recebeu o argv do attach');
+    ws2.close();
+  } finally { server.close(); }
+});
+
 // ---- pollPeers: backoff por peer + loga só a transição ----
 test('tailscaleOnlineSet: null (sem tailscale) ou Set de hosts online', () => {
   const s = tailscaleOnlineSet();   // CI sem tailscale => null; máquina c/ tailscale => Set

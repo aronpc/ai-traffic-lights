@@ -853,7 +853,7 @@ function openTermPane({ cmd, cwd, title }) {
   window.trafficLight.setTermPane(true);                 // main amplia a janela
   setTimeout(() => {                                     // dá 1 tick pro layout assentar
     try { fitAddon.fit(); } catch {}
-    window.trafficLight.ptySpawn(cmd, cwd, term.cols, term.rows);
+    if (cmd) window.trafficLight.ptySpawn(cmd, cwd, term.cols, term.rows);  // cmd=null (remoto/WS): main já conectou
     term.focus();
   }, 40);
 }

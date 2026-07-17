@@ -31,6 +31,7 @@ const DEFAULTS = Object.freeze({
     enabled: false,            // chave-mestra: liga/desliga servidor E cliente
     share: false,              // subir o servidor /sessions (expõe meu estado)
     shareTranscripts: false,   // habilitar /transcript (expõe meus prompts) — exige share
+    allowAttach: false,        // habilitar /pty (attach remoto ao meu terminal) — exige share; = exec remoto
     port: 47474,               // porta comum a todos os nós (convenção p/ os peers)
     token: '',                 // segredo compartilhado (obrigatório se enabled; compare constante)
     node: '',                  // nome deste nó no overlay (default = hostname; vazio → hostname)
@@ -114,6 +115,7 @@ function mergeWithDefaults(raw) {
       if (typeof raw.sync.enabled === 'boolean') s.enabled = raw.sync.enabled;
       if (typeof raw.sync.share === 'boolean') s.share = raw.sync.share;
       if (typeof raw.sync.shareTranscripts === 'boolean') s.shareTranscripts = raw.sync.shareTranscripts;
+      if (typeof raw.sync.allowAttach === 'boolean') s.allowAttach = raw.sync.allowAttach;
       if (typeof raw.sync.port === 'number' && Number.isFinite(raw.sync.port)) {
         s.port = Math.max(1, Math.min(65535, Math.round(raw.sync.port)));
       }

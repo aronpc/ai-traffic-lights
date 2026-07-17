@@ -21,7 +21,7 @@ const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const { spawn } = require('child_process');
-const { desktopEscape, buildAttachCmd, shellQuote } = require('./src/validate');
+const { desktopEscape, shellQuote } = require('./src/validate');
 
 // Flags de sandbox/shared-memory (--no-sandbox --disable-dev-shm-usage) vão na
 // LINHA DE COMANDO: build.linux.executableArgs (packaged) e scripts.start (dev).
@@ -560,16 +560,19 @@ function openCmdInTerminal(cmdArray, cwd) {
   catch (e) { notifyUser('Attach failed: ' + e.message); }
 }
 function attachRemote({ origin, tmux_session, cwd }) {
-  const host = (origin && origin !== 'local') ? (originToHost.get(origin) || '') : '';
-  const sshBin = scanPathBin('tailscale') ? 'tailscale' : 'ssh';
-  const { cmd, error } = buildAttachCmd({ origin, tmux_session, host, sshBin });
-  if (!cmd) { notifyUser(error === 'no_host' ? T('ntf_attach_no_host', { origin: origin || '' }) : T('ntf_attach_no_tmux')); return; }
-  // Abre no terminal EMBUTIDO (xterm+pty dentro do ATL) — não lança terminal
-  // externo (Oz/Warp não aceita; e o embutido é a UX desejada). cwd remoto →
-  // HOME local (não existe aqui); local usa o cwd da sessão.
-  const localCwd = (!origin || origin === 'local') ? cwd : undefined;
-  const title = (origin && origin !== 'local' ? origin + ' · ' : '') + 'tmux: ' + tmux_session;
-  if (win && !win.isDestroyed()) win.webContents.send('term-open', { cmd, cwd: localCwd, title });
+  if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
+  const title = 'tmux: ' + tmux_session;
+  // LOCAL: node-pty direto no terminal embutido (igual antes).
+  if (!origin || origin === 'local') {
+    if (win && !win.isDestroyed()) win.webContents.send('term-open', { cmd: ['tmux', 'attach', '-t', tmux_session], cwd, title });
+    return;
+  }
+  // REMOTO: WebSocket no /pty do peer (sem SSH — reusa token+rede do sync; o
+  // peer faz o tmux attach lá e streama o output de volta pro terminal embutido).
+  const host = originToHost.get(origin) || '';
+  const s = (settingsCfg && settingsCfg.sync) || {};
+  if (!host || !s.token) { notifyUser(T('ntf_attach_no_host', { origin: origin || '' })); return; }
+  openRemotePty({ host, port: s.port, token: s.token, tmux_session, title: origin + ' · ' + title });
 }
 
 // ---- autostart ----
@@ -1123,14 +1126,14 @@ function applySync() {
   const tok = typeof s.token === 'string' ? s.token : '';
   // SERVIDOR (compartilhar minhas sessões): localhost-only; o ingress da tailnet
   // é o `tailscale serve`. Reinicia só se a config relevante mudou (chave abaixo).
-  const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${syncNodeName()}` : '';
+  const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${s.allowAttach ? 1 : 0}|${syncNodeName()}` : '';
   if (!srvKey && syncServer) { try { syncServer.close(); } catch {} syncServer = null; syncServerKey = null; }
   if (srvKey && srvKey !== syncServerKey) {
     if (syncServer) { try { syncServer.close(); } catch {} }
     const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
     try {
       syncServer = net.startServer({
-        port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts, bindHost,
+        port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts, allowAttach: !!s.allowAttach, ptySpawn: createPty, bindHost,
         getSessions: () => collect.readSessions(),
         getTranscript: (key, n) => {
           try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
@@ -1165,12 +1168,25 @@ function applySync() {
   }
 }
 
-// ---- terminal embutido: node-pty (o attach roda DENTRO do ATL) ----
-let ptyLib = null, ptyProc = null;
+// ---- terminal embutido: node-pty (LOCAL) ou WebSocket (REMOTO) ----
+// ptyMode distingue a FONTE do stream pty-out/pty-input: 'local' = node-pty
+// direto; 'remote' = ws pro /pty do peer. O renderer é agnóstico (só consome
+// pty-out e emite pty-input); o main roteia por ptyMode.
+let ptyLib = null, ptyProc = null, ptyMode = null, remoteWs = null;
 function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
+// factory p/ o SERVIDOR (DI injetada em net.startServer): cria um node-pty por
+// conexão /pty remota e devolve um handle {write,resize,kill} — cada peer
+// attachado tem o seu pty independente.
+function createPty(cmd, cols, rows, { onData, onExit }) {
+  const p = ptyEnsure(); if (!p) throw new Error('node-pty indisponível');
+  const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: process.env });
+  proc.onData(onData); proc.onExit(onExit);
+  return { write: (d) => { try { proc.write(d); } catch {} }, resize: (c, r) => { try { proc.resize(c, r); } catch {} }, kill: () => { try { proc.kill(); } catch {} } };
+}
 function ptySpawn(cmd, cwd, cols, rows) {
   const p = ptyEnsure(); if (!p || !Array.isArray(cmd) || !cmd.length) return;
-  ptyKill();
+  ptyKill(); closeRemotePty();
+  ptyMode = 'local';
   try {
     ptyProc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: cwd || process.env.HOME, env: process.env });
     ptyProc.onData((d) => { if (win && !win.isDestroyed()) win.webContents.send('pty-out', d); });
@@ -1178,6 +1194,28 @@ function ptySpawn(cmd, cwd, cols, rows) {
   } catch (e) { try { console.log('[pty] spawn falhou: ' + e.message); } catch {} }
 }
 function ptyKill() { try { if (ptyProc) ptyProc.kill(); } catch {} ptyProc = null; }
+function closeRemotePty() { try { if (remoteWs) remoteWs.close(); } catch {} remoteWs = null; }
+// Cliente WebSocket do /pty remoto: abre, manda start e faz pipe ws↔pty-out/input.
+// Reusa os MESMOS canais IPC do terminal embutido → o renderer não muda. cmd=null
+// no term-open sinaliza "main já conectou; renderer não faz ptySpawn local".
+function openRemotePty({ host, port, token, tmux_session, title }) {
+  ptyKill(); closeRemotePty();
+  const url = 'ws://' + host + ':' + (port || 47474) + '/pty?token=' + encodeURIComponent(token);
+  let ws;
+  try { ws = new (require('ws'))(url); } catch (e) { notifyUser('WebSocket falhou: ' + e.message); return; }
+  remoteWs = ws; ptyMode = 'remote';
+  ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: 100, rows: 30 })); } catch {} });
+  ws.on('message', (raw) => {
+    let m; try { m = JSON.parse(raw); } catch { return; }
+    if (!win || win.isDestroyed()) return;
+    if (m.type === 'out') win.webContents.send('pty-out', m.data);
+    else if (m.type === 'exit') win.webContents.send('pty-exit', 0);
+    else if (m.type === 'error') win.webContents.send('pty-out', '\r\n\x1b[31m[remoto] ' + m.msg + '\x1b[0m\r\n');
+  });
+  ws.on('error', (e) => { if (win && !win.isDestroyed()) win.webContents.send('pty-out', '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n'); });
+  ws.on('close', () => { remoteWs = null; if (ptyMode === 'remote') ptyMode = null; });
+  if (win && !win.isDestroyed()) win.webContents.send('term-open', { cmd: null, title });
+}
 // janela cresce p/ acomodar o pane do terminal (overlay + TERM_W) ao lado.
 let termBaseW = 0;
 function resizeForTerminal(open) {
@@ -1188,9 +1226,15 @@ function resizeForTerminal(open) {
   else if (termBaseW) { try { win.setSize(termBaseW, h); } catch {} }
 }
 ipcMain.on('pty-spawn', (_e, { cmd, cwd, cols, rows }) => ptySpawn(cmd, cwd, cols, rows));
-ipcMain.on('pty-input', (_e, data) => { if (ptyProc) { try { ptyProc.write(data); } catch {} } });
-ipcMain.on('pty-resize', (_e, { cols, rows }) => { if (ptyProc) { try { ptyProc.resize(cols, rows); } catch {} } });
-ipcMain.on('pty-kill', () => ptyKill());
+ipcMain.on('pty-input', (_e, data) => {
+  if (ptyMode === 'remote' && remoteWs) { try { remoteWs.send(JSON.stringify({ type: 'in', data })); } catch {} }
+  else if (ptyProc) { try { ptyProc.write(data); } catch {} }
+});
+ipcMain.on('pty-resize', (_e, { cols, rows }) => {
+  if (ptyMode === 'remote' && remoteWs) { try { remoteWs.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {} }
+  else if (ptyProc) { try { ptyProc.resize(cols, rows); } catch {} }
+});
+ipcMain.on('pty-kill', () => { closeRemotePty(); ptyKill(); });
 ipcMain.on('set-term-pane', (_e, open) => resizeForTerminal(open));
 
 app.whenReady().then(() => {

@@ -34,6 +34,7 @@ const $syncNode = document.getElementById('syncNode');
 const $syncPort = document.getElementById('syncPort');
 const $syncShare = document.getElementById('syncShare');
 const $syncShareTr = document.getElementById('syncShareTr');
+const $syncAttach = document.getElementById('syncAttach');
 const $syncPeers = document.getElementById('syncPeers');
 
 let captured = null;        // accelerator capturado (string) ou null
@@ -129,6 +130,7 @@ function buildSyncCfg() {
     port: parseInt($syncPort.value, 10) || 47474,
     share: $syncShare.checked,
     shareTranscripts: $syncShareTr.checked,
+    allowAttach: $syncAttach.checked,
     peers,
   };
 }
@@ -137,7 +139,7 @@ function pushSync() { if (ready) window.trafficLight.setSync(buildSyncCfg()); }
 // `enabled` estiver desligado — sinaliza visualmente que nada está ativo.
 function syncFieldState() {
   const on = $syncEnabled.checked;
-  for (const $e of [$syncShare, $syncShareTr, $syncToken, $syncNode, $syncPort, $syncPeers]) $e.disabled = !on;
+  for (const $e of [$syncShare, $syncShareTr, $syncAttach, $syncToken, $syncNode, $syncPort, $syncPeers]) $e.disabled = !on;
 }
 
 // ---- captura do atalho ----
@@ -229,6 +231,7 @@ $terminalCmd.addEventListener('change', pushLive);
 $syncEnabled.addEventListener('change', () => { syncFieldState(); pushSync(); });
 $syncShare.addEventListener('change', pushSync);
 $syncShareTr.addEventListener('change', pushSync);
+$syncAttach.addEventListener('change', pushSync);
 $syncToken.addEventListener('change', pushSync);
 $syncNode.addEventListener('change', pushSync);
 $syncPort.addEventListener('change', pushSync);
@@ -319,6 +322,7 @@ window.trafficLight.getSync().then((s) => {
   $syncPort.value = String(s.port || 47474);
   $syncShare.checked = s.share === true;
   $syncShareTr.checked = s.shareTranscripts === true;
+  $syncAttach.checked = s.allowAttach === true;
   $syncPeers.value = (s.peers || []).map((p) => (p.name && p.name !== p.host ? `${p.name} ${p.host}` : p.host)).join('\n');
   syncFieldState();   // reflete o estado enabled → sub-toggles on/off
 });

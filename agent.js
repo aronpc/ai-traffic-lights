@@ -38,12 +38,24 @@ function applyEnvOverrides(s) {
   if (process.env.ATL_SYNC_ENABLED != null) s.enabled = ENV_BOOL(process.env.ATL_SYNC_ENABLED);
   if (process.env.ATL_SYNC_SHARE != null) s.share = ENV_BOOL(process.env.ATL_SYNC_SHARE);
   if (process.env.ATL_SYNC_SHARE_TR != null) s.shareTranscripts = ENV_BOOL(process.env.ATL_SYNC_SHARE_TR);
+  if (process.env.ATL_SYNC_ALLOW_ATTACH != null) s.allowAttach = ENV_BOOL(process.env.ATL_SYNC_ALLOW_ATTACH);
   if (process.env.ATL_SYNC_PORT != null) { const p = parseInt(process.env.ATL_SYNC_PORT, 10); if (p > 0) s.port = p; }
   if (process.env.ATL_SYNC_NODE != null) s.node = String(process.env.ATL_SYNC_NODE);
   return s;
 }
 
 function log(fmt, ...a) { try { console.log('[agent] ' + fmt, ...a); } catch {} }
+
+// factory node-pty p/ o endpoint /pty (attach remoto). Headless: pode falhar ao
+// carregar (ABI node≠electron) — aí ptySpawn fica undefined e o /pty não sobe.
+let ptyLib = null;
+try { ptyLib = require('node-pty'); } catch (e) { log('node-pty indisponível: %s', e.message); }
+function createPty(cmd, cols, rows, { onData, onExit }) {
+  if (!ptyLib) throw new Error('node-pty indisponível');
+  const p = ptyLib.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: process.env });
+  p.onData(onData); p.onExit(onExit);
+  return { write: (d) => { try { p.write(d); } catch {} }, resize: (c, r) => { try { p.resize(c, r); } catch {} }, kill: () => { try { p.kill(); } catch {} } };
+}
 
 const cfg = loadSettings();
 const sync = applyEnvOverrides({ ...(cfg.sync || {}) });
@@ -57,7 +69,7 @@ function start() {
   const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
   try {
     server = net.startServer({
-      port: sync.port, token: sync.token, nodeName, shareTranscripts: !!sync.shareTranscripts, bindHost,
+      port: sync.port, token: sync.token, nodeName, shareTranscripts: !!sync.shareTranscripts, allowAttach: !!sync.allowAttach, ptySpawn: ptyLib ? createPty : undefined, bindHost,
       getSessions: () => collect.readSessions(),
       getTranscript: (key, n) => {
         try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }

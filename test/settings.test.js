@@ -208,3 +208,9 @@ test('sync: peers saneados (sem host descarta; name fallback = host; teto 32)', 
   const many = mergeWithDefaults({ sync: { peers: Array.from({ length: 40 }, (_, i) => ({ host: 'h' + i })) } }).sync;
   assert.equal(many.peers.length, 32, 'teto de 32 peers');
 });
+
+test('sync.allowAttach: default false + coerce boolean', () => {
+  assert.equal(DEFAULTS.sync.allowAttach, false);
+  assert.equal(mergeWithDefaults({ sync: { allowAttach: true } }).sync.allowAttach, true);
+  assert.equal(mergeWithDefaults({ sync: { allowAttach: 'yes' } }).sync.allowAttach, false, 'não-boolean → default false');
+});

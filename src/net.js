@@ -17,6 +17,11 @@ const http = require('http');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
+// WebSocket p/ o endpoint /pty (attach remoto). try/catch: sem a dep (testes/CI),
+// o módulo continua válido — só o /pty não sobe (graceful degradation).
+let WebSocketServer = null;
+try { ({ WebSocketServer } = require('ws')); } catch {}
+
 // IP desta máquina na tailnet (100.64.0.0/10), p/ o servidor bindar DIRETO nele
 // em vez de localhost — assim os peers alcançam http://<meu-ip-tailnet>:<porta>
 // sem precisar de `tailscale serve`. Memoizado; null se tailscale ausente (cai
@@ -78,7 +83,7 @@ function exportSession(s, nodeName) {
 // Sobe o servidor em 127.0.0.1 (localhost-only). Retorna o http.Server.
 //   getSessions()  → array local de sessões (de collect.readSessions)
 //   getTranscript(key, n) → [{role,text,ts}] (stub em []; parser real é fase 3)
-function startServer({ port, token, nodeName, shareTranscripts, getSessions, getTranscript, bindHost }) {
+function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, bindHost }) {
   const server = http.createServer((req, res) => {
     const respond = (code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
     res.setHeader('Content-Type', 'application/json');
@@ -102,6 +107,44 @@ function startServer({ port, token, nodeName, shareTranscripts, getSessions, get
     respond(404, { error: 'not found' });
   });
   server.listen(port, bindHost || '127.0.0.1');   // tailnet IP p/ peers alcançarem direto; default localhost
+
+  // /pty — terminal remoto via WebSocket (attach remoto ao vivo). Opt-in
+  // (allowAttach) + ptySpawn INJETADO (DI): net.js não conhece node-pty →
+  // módulo puro/testável. Auth pelo mesmo token (query ?token=); tmux_session
+  // sanitizado (anti-injeção no shell do peer). Protocolo JSON por frame:
+  // c→s {start|in|resize} · s→c {out|exit|error}.
+  if (allowAttach && typeof ptySpawn === 'function' && WebSocketServer) {
+    const wss = new WebSocketServer({ noServer: true });
+    server.on('upgrade', (req, socket, head) => {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      if (url.pathname !== '/pty') return socket.destroy();
+      if (!tokenOk(url.searchParams.get('token') || '', token)) {
+        try { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); } catch {}
+        return socket.destroy();
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    });
+    wss.on('connection', (ws) => {
+      let pty = null;
+      const cleanup = () => { try { if (pty) pty.kill(); } catch {} pty = null; };
+      ws.on('message', (raw) => {
+        let m; try { m = JSON.parse(raw); } catch { return; }
+        if (m.type === 'start') {
+          if (!m.tmux_session || !/^[A-Za-z0-9._-]+$/.test(m.tmux_session)) return ws.close(4400, 'bad session');
+          cleanup();
+          try {
+            pty = ptySpawn(['tmux', 'attach', '-t', m.tmux_session], m.cols | 0 || 80, m.rows | 0 || 24, {
+              onData: (d) => { try { ws.send(JSON.stringify({ type: 'out', data: d })); } catch {} },
+              onExit: () => { try { ws.send(JSON.stringify({ type: 'exit' })); } catch {} },
+            });
+          } catch (e) { try { ws.send(JSON.stringify({ type: 'error', msg: String((e && e.message) || e) })); } catch {} }
+        } else if (pty && m.type === 'in') { try { pty.write(m.data); } catch {} }
+        else if (pty && m.type === 'resize') { try { pty.resize(m.cols | 0 || 80, m.rows | 0 || 24); } catch {} }
+      });
+      ws.on('close', cleanup);
+      ws.on('error', cleanup);
+    });
+  }
   return server;
 }
 

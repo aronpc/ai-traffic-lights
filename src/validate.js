@@ -25,17 +25,4 @@ function desktopEscape(s) {
   return s.replace(/[\\$" `'*?();<>|&#~]/g, (c) => '\\' + c);
 }
 
-if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape, buildAttachCmd };
-
-// Monta o argv do "attach remoto tmux" (vivo, compartilhado). Sanitiza
-// tmux_session ([A-Za-z0-9._-]) e host (hostname/IP[:porta]) — ambos vêm de
-// config/peer e entram num COMANDO SHELL remoto ('ssh peer -t "..."' ), então
-// sem isto um peer malicioso poderia injetar shell. Retorna {cmd} ou
-// {error:'no_tmux'|'no_host'}. sshBin='tailscale'|'ssh'.
-function buildAttachCmd({ origin, tmux_session, host, sshBin }) {
-  if (!tmux_session || !/^[A-Za-z0-9._-]+$/.test(tmux_session)) return { error: 'no_tmux' };
-  if (!origin || origin === 'local') return { cmd: ['tmux', 'attach', '-t', tmux_session] };
-  if (!host || !/^[A-Za-z0-9._:-]+$/.test(host)) return { error: 'no_host' };
-  const remote = 'tmux attach -t ' + tmux_session;   // name sanitizado → seguro no shell remoto
-  return { cmd: sshBin === 'tailscale' ? ['tailscale', 'ssh', host, '-t', remote] : ['ssh', host, '-t', remote] };
-}
+if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape };
