@@ -62,7 +62,7 @@ function extractMessage(obj) {
   if (!text) return null;
   if (text.length > MAX_MSG_CHARS) text = text.slice(0, MAX_MSG_CHARS) + '…';
   return {
-    id: msg.id || role,
+    id: msg.id || null,   // PR-32 #15: null quando não há id real (msgs de user do Claude Code) — lastMessages trata cada uma como própria, em vez de colapsar todas num bloco
     role,
     text,
     ts: typeof obj.timestamp === 'string' ? obj.timestamp : null,
@@ -75,14 +75,19 @@ function lastMessages(filePath, n = 20) {
   const lines = readTailLines(filePath);
   const byId = new Map();   // id -> {role, text, ts} (acumula blocos do mesmo msg)
   const order = [];         // ids em ordem de aparição
+  let seq = 0;              // chave sintética p/ msgs SEM id real (user do Claude Code)
   for (const line of lines) {
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     const m = extractMessage(obj);
     if (!m) continue;
-    const prev = byId.get(m.id);
+    // Só agrega por message.id REAL (blocos de streaming do assistant). Sem id,
+    // cada linha é uma mensagem PRÓPRIA (PR-32 #15: antes id='user' colapsava
+    // todos os prompts do usuário num único item, quebrando o painel ver-prompt).
+    const key = m.id || '__noid_' + (++seq);
+    const prev = byId.get(key);
     if (prev) prev.text = prev.text + ' ' + m.text; // mesmo msg.id = bloco a mais do streaming
-    else { byId.set(m.id, { role: m.role, text: m.text, ts: m.ts }); order.push(m.id); }
+    else { byId.set(key, { role: m.role, text: m.text, ts: m.ts }); order.push(key); }
   }
   return order.slice(-Math.max(1, n)).map((id) => byId.get(id)).filter(Boolean);
 }

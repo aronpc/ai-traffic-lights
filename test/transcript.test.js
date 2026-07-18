@@ -88,3 +88,21 @@ test('lastMessages: sem mensagens de chat → []', () => {
   const p = writeFile('e.jsonl', Array.from({ length: 5 }, () => '{"type":"system","content":"x"}').join('\n'));
   assert.deepEqual(lastMessages(p, 20), []);
 });
+
+test('lastMessages: msgs de user SEM message.id viram itens separados (não colapsam)', () => {
+  // PR-32 #15: antes id=msg.id||role => user sem id virava 'user' e TODAS as
+  // mensagens de usuário concatenavam num único item gigante, quebrando o painel
+  // ver-prompt (o objetivo central da feature).
+  const p = writeFile('f.jsonl', [
+    '{"type":"user","message":{"role":"user","content":"primeiro prompt"}}',
+    '{"type":"assistant","message":{"role":"assistant","content":"resposta 1","id":"a1"}}',
+    '{"type":"user","message":{"role":"user","content":"segundo prompt"}}',
+    '{"type":"user","message":{"role":"user","content":"terceiro prompt"}}',
+  ].join('\n'));
+  const msgs = lastMessages(p, 20);
+  assert.equal(msgs.length, 4, '4 mensagens distintas (user sem id não colapsa)');
+  assert.equal(msgs[0].text, 'primeiro prompt');
+  assert.equal(msgs[2].text, 'segundo prompt');
+  assert.equal(msgs[3].text, 'terceiro prompt');
+  assert.equal(msgs[1].text, 'resposta 1', 'assistant com id continua agregando normalmente');
+});
