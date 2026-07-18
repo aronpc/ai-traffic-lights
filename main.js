@@ -1126,6 +1126,7 @@ ipcMain.on('attach-remote', (_e, t) => attachRemote(t || {}));   // attach tmux 
 // (superfície zero). Token vazio => nada sobe (fail-safe).
 let remoteSessions = new Map();   // peerHost -> sessions[] (já com origin)
 let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcript remoto)
+const livePeers = new Set();      // hosts que responderam /sessions (ATL ligado) — o menu + só mostra vivos
 let syncServer = null, syncServerKey = null;
 let stopPoll = null, pollKey = null;
 let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
@@ -1155,7 +1156,7 @@ function applySync() {
   }
   // CLIENTE (observar peers): poll de /sessions a cada 5s.
   const pKey = (s.enabled && Array.isArray(s.peers) && s.peers.length && tok) ? `${s.port}|${tok}|${s.peers.map((p) => p.host).join(',')}` : '';
-  if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; clearInterval(onlineTimer); onlineTimer = null; remoteSessions.clear(); sendSessions(); }
+  if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; clearInterval(onlineTimer); onlineTimer = null; remoteSessions.clear(); livePeers.clear(); sendSessions(); }
   if (pKey && pKey !== pollKey) {
     if (stopPoll) { stopPoll(); }
     // Gate Tailscale: só tenta rede em peers que o Tailscale diz online. Set
@@ -1168,10 +1169,11 @@ function applySync() {
       isOnline: (h) => { if (!onlineSet) return true; const lc = String(h).toLowerCase(); return onlineSet.has(h) || onlineSet.has(lc); },
       onSessions: (host, sessions) => {
         remoteSessions.set(host, sessions);
+        livePeers.add(host);   // ATL ligado no peer → habilita no menu + da termWin
         for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto
         sendSessions();
       },
-      onPeerState: (host, online) => { try { console.log('[sync] peer ' + host + ' ' + (online ? 'online' : 'offline (backoff)')); } catch {} },
+      onPeerState: (host, online) => { try { console.log('[sync] peer ' + host + ' ' + (online ? 'online' : 'offline (backoff)')); } catch {} if (online) livePeers.add(host); else livePeers.delete(host); },
     });
     pollKey = pKey;
   }
@@ -1285,12 +1287,12 @@ function closeTermSession(tabId) {
 function spawnPtyLocal(tabId, cmd, cwd) {
   const p = ptyEnsure(); const s = termSessions.get(tabId);
   if (!p || !s) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mnode-pty indisponível\x1b[0m\r\n' }); return; }
-  try {
+  try { console.log('[term] spawn tabId=' + tabId + ' cmd=' + JSON.stringify(cmd));
     const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: cwd || process.env.HOME, env: ptyEnv() });
     proc.onData((d) => sendTerm('pty-out', { tabId, data: d }));
     proc.onExit(() => sendTerm('pty-exit', { tabId }));
     s.proc = proc;
-  } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m' + (e.message || e) + '\x1b[0m\r\n' }); }
+  } catch (e) { console.log('[term] spawn FAIL tabId=' + tabId + ': ' + (e.message || e)); sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m' + (e.message || e) + '\x1b[0m\r\n' }); }
 }
 // cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
 function openRemotePty(tabId, { host, port, token, tmux_session }) {
@@ -1325,7 +1327,8 @@ ipcMain.on('term-new-shell', (_e, host) => {
 });
 ipcMain.handle('term-hosts', () => {
   const peers = ((settingsCfg && settingsCfg.sync) || {}).peers || [];
-  return [{ id: 'local', label: 'local' }, ...peers.map((p) => ({ id: p.host, label: p.name || p.host }))];
+  const live = peers.filter((p) => livePeers.has(p.host));   // só quem tem o ATL ligado (respondeu /sessions)
+  return [{ id: 'local', label: 'local' }, ...live.map((p) => ({ id: p.host, label: p.name || p.host }))];
 });
 ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/max/close
   if (!termWin || termWin.isDestroyed()) return;

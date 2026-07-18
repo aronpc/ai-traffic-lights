@@ -37,7 +37,7 @@ function showTab(tabId) {
     // 2º fit após o paint: o holder acabou de ficar visível, o layout final só
     // vem depois do frame; refaz fit + repassa o tamanho ao pty/tmux (senão o
     // tmux ficava com o tamanho antigo e não preenchia a janela).
-    requestAnimationFrame(() => { try { t.fit.fit(); } catch {} try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {} });
+    requestAnimationFrame(() => { try { t.fit.fit(); } catch {} try { t.term.focus(); } catch {} try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {} });
   }
 }
 
