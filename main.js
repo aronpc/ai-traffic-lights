@@ -1202,9 +1202,10 @@ function ensureTermWin() {
   termWin = new BrowserWindow({
     width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal',
     frame: true, transparent: false, resizable: true, maximizable: true, fullscreenable: true,
-    alwaysOnTop: false, skipTaskbar: false, backgroundColor: '#0e1117',
+    alwaysOnTop: false, skipTaskbar: false, backgroundColor: '#0e1117', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
+  try { termWin.setMenuBarVisibility(false); } catch {}   // menu bar nativa oculta
   termWin.loadFile(path.join(__dirname, 'src/term.html'));
   termWin.webContents.once('did-finish-load', () => {
     termWinReady = true;
@@ -1258,10 +1259,21 @@ function openRemotePty(tabId, { host, port, token, tmux_session }) {
   ws.on('error', (e) => sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n' }));
 }
 // ---- handlers IPC da janela Terminal (abas) ----
-ipcMain.on('term-new-shell', () => {
+ipcMain.on('term-new-shell', (_e, host) => {
   ensureTermWin();
-  const tabId = addTermSession({ title: 'shell', kind: 'local' });
-  spawnPtyLocal(tabId, [process.env.SHELL || 'bash'], process.env.HOME);
+  if (host && host !== 'local') {            // shell novo num peer remoto (via /pty, sem tmux_session)
+    const cfg = (settingsCfg && settingsCfg.sync) || {};
+    const tabId = addTermSession({ title: host + ' · shell', kind: 'remote', origin: host });
+    if (!cfg.token) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem token sync configurado\x1b[0m\r\n' }); return; }
+    openRemotePty(tabId, { host, port: cfg.port, token: cfg.token });   // sem tmux_session → shell novo no peer
+  } else {
+    const tabId = addTermSession({ title: 'shell', kind: 'local' });
+    spawnPtyLocal(tabId, [process.env.SHELL || 'bash'], process.env.HOME);
+  }
+});
+ipcMain.handle('term-hosts', () => {
+  const peers = ((settingsCfg && settingsCfg.sync) || {}).peers || [];
+  return [{ id: 'local', label: 'local' }, ...peers.map((p) => ({ id: p.host, label: p.name || p.host }))];
 });
 ipcMain.on('term-switch-tab', () => { /* roteamento é por tabId (vem no input/resize); ativação é visual no renderer */ });
 ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });

@@ -14,7 +14,7 @@
     html, body { margin: 0; height: 100%; background: var(--bg-2); color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
     body { display: flex; flex-direction: column; }
-    .term-tabs { display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+    .term-tabs { position: relative; display: flex; align-items: center; gap: 4px; padding: 4px 6px;
       background: var(--bg); border-bottom: 1px solid var(--border); min-height: 34px; flex: 0 0 auto; }
     .term-tabs-list { display: flex; align-items: center; gap: 4px; flex: 1; overflow-x: auto; }
     .term-tabs-list::-webkit-scrollbar { height: 6px; }
@@ -31,6 +31,13 @@
     .tab-new { flex: 0 0 auto; width: 28px; height: 26px; background: transparent; border: 1px dashed var(--border);
       color: var(--ink-dim); font-size: 16px; cursor: pointer; border-radius: 7px; }
     .tab-new:hover { color: var(--ink); border-color: var(--accent); background: var(--row-hover); }
+    .host-menu { position: absolute; top: 100%; right: 6px; margin-top: 2px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 170px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 20; }
+    .host-menu[hidden] { display: none; }
+    .host-item { display: block; width: 100%; text-align: left; background: transparent; border: none;
+      color: var(--ink); padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .host-item:hover { background: var(--row-hover); }
     .term-area { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
     .term-holder { height: 100%; padding: 2px 4px; overflow: hidden; }
     .term-holder[hidden] { display: none; }
@@ -41,7 +48,8 @@
 <body>
   <header class="term-tabs">
     <div class="term-tabs-list" id="tabs"></div>
-    <button class="tab-new" id="newTabBtn" title="novo shell local">+</button>
+    <button class="tab-new" id="newTabBtn" title="novo terminal (local ou servidor)">+</button>
+    <div class="host-menu" id="hostMenu" hidden></div>
   </header>
   <div class="term-area" id="termArea"></div>
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>

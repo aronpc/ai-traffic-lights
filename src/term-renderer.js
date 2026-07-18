@@ -31,7 +31,14 @@ function showTab(tabId) {
   for (const [id, t] of terms) t.holder.hidden = (id !== tabId);
   for (const b of $tabs.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === String(tabId));
   const t = terms.get(tabId);
-  if (t) { try { t.fit.fit(); } catch {} t.term.focus(); }
+  if (t) {
+    try { t.fit.fit(); } catch {}
+    t.term.focus();
+    // 2º fit após o paint: o holder acabou de ficar visível, o layout final só
+    // vem depois do frame; refaz fit + repassa o tamanho ao pty/tmux (senão o
+    // tmux ficava com o tamanho antigo e não preenchia a janela).
+    requestAnimationFrame(() => { try { t.fit.fit(); } catch {} try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {} });
+  }
 }
 
 function fitActive() {
@@ -73,7 +80,24 @@ window.trafficLight.onTermTabRemoved(({ tabId }) => {
 });
 window.trafficLight.onTermTabActivated(({ tabId }) => showTab(tabId));
 
-document.getElementById('newTabBtn').addEventListener('click', () => window.trafficLight.newShell());
+const $hostMenu = document.getElementById('hostMenu');
+async function toggleHostMenu() {
+  if (!$hostMenu.hidden) { $hostMenu.hidden = true; return; }
+  let hosts = [];
+  try { hosts = await window.trafficLight.termHosts(); } catch {}
+  if (!hosts.length) hosts = [{ id: 'local', label: 'local' }];
+  $hostMenu.innerHTML = '';
+  for (const h of hosts) {
+    const b = document.createElement('button');
+    b.className = 'host-item';
+    b.textContent = h.label;
+    b.addEventListener('click', () => { $hostMenu.hidden = true; window.trafficLight.newShell(h.id); });
+    $hostMenu.appendChild(b);
+  }
+  $hostMenu.hidden = false;
+}
+document.getElementById('newTabBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleHostMenu(); });
+document.addEventListener('click', (e) => { if (!$hostMenu.hidden && !$hostMenu.contains(e.target)) $hostMenu.hidden = true; });
 
 // resize: refaz fit da aba ativa e avisa o main (pty/ws) do novo tamanho
 if (typeof ResizeObserver !== 'undefined') (new ResizeObserver(fitActive)).observe($area);

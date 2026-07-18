@@ -43,7 +43,8 @@ contextBridge.exposeInMainWorld('trafficLight', {
   attachRemote: (origin, tmuxSession, cwd) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd }), // attach tmux (vivo, local/peer) — abre na janela Terminal
   // janela Terminal (abas): o estado dos pty/ws vive no main; o renderer só desenha.
   // Cada método carrega tabId p/ rotear input/output/resize à aba certa.
-  newShell: () => ipcRenderer.send('term-new-shell'),
+  newShell: (host) => ipcRenderer.send('term-new-shell', host),         // host=undefined|'local' → local; senão abre shell num peer
+  termHosts: () => ipcRenderer.invoke('term-hosts'),                    // [{id,label}] local + peers p/ o menu do botão +
   switchTab: (tabId) => ipcRenderer.send('term-switch-tab', tabId),
   closeTab: (tabId) => ipcRenderer.send('term-close-tab', tabId),
   ptyInput: (tabId, data) => ipcRenderer.send('term-input', { tabId, data }),

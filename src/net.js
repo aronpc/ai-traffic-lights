@@ -130,10 +130,12 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
       ws.on('message', (raw) => {
         let m; try { m = JSON.parse(raw); } catch { return; }
         if (m.type === 'start') {
-          if (!m.tmux_session || !/^[A-Za-z0-9._-]+$/.test(m.tmux_session)) return ws.close(4400, 'bad session');
+          const sess = (typeof m.tmux_session === 'string') ? m.tmux_session : null;
+          if (sess && !/^[A-Za-z0-9._-]+$/.test(sess)) return ws.close(4400, 'bad session');  // inválido rejeita; ausente = shell novo
           cleanup();
           try {
-            pty = ptySpawn(['tmux', 'attach', '-t', m.tmux_session], m.cols | 0 || 80, m.rows | 0 || 24, {
+            const cmd = sess ? ['tmux', 'attach', '-t', sess] : [process.env.SHELL || 'bash'];   // sem sess → shell novo no peer
+            pty = ptySpawn(cmd, m.cols | 0 || 80, m.rows | 0 || 24, {
               onData: (d) => { try { ws.send(JSON.stringify({ type: 'out', data: d })); } catch {} },
               onExit: () => { try { ws.send(JSON.stringify({ type: 'exit' })); } catch {} },
             });
