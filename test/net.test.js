@@ -83,6 +83,17 @@ test('server: rota desconhecida → 404', async () => {
   finally { server.close(); }
 });
 
+test('server: EADDRINUSE (porta em uso) → chama onError, não crasha o processo', async () => {
+  const { server: s1, port } = await up({});
+  try {
+    const errP = new Promise((res) => {
+      startServer({ port, token: 'tok', nodeName: 'me', getSessions: () => [], getTranscript: () => [], onError: res });
+    });
+    const e = await errP;   // sem o handler, isso seria uncaughtException (processo morre)
+    assert.match(String((e && e.code) || e), /EADDRINUSE/);
+  } finally { s1.close(); }
+});
+
 // ---- /pty: terminal remoto via WebSocket (allowAttach + ptySpawn DI) ----
 const WebSocket = require('ws');
 function fakePty() { return { write() {}, resize() {}, kill() {} }; }

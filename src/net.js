@@ -32,10 +32,16 @@ try { ({ WebSocketServer } = require('ws')); } catch {}
 // p/ localhost: feature degrada p/ só-this-host, sem explodir).
 let _tsIP;
 function detectTailnetIP() {
+  // Só cacheia o SUCESSO (IP 100.x válido). Em falha (tailscale ainda subindo
+  // no boot, PATH restrito do Electron) NÃO cacheia null — re-tenta no próximo
+  // ciclo. Antes, cacheava null pra sempre e o server caía p/ 127.0.0.1 até
+  // reiniciar o app (PR-32 #17).
   if (_tsIP !== undefined) return _tsIP;
-  try { const ip = execFileSync('tailscale', ['ip', '-4'], { encoding: 'utf8', timeout: 2000 }).trim(); _tsIP = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip) ? ip : null; }
-  catch { _tsIP = null; }
-  return _tsIP;
+  try {
+    const ip = execFileSync('tailscale', ['ip', '-4'], { encoding: 'utf8', timeout: 2000 }).trim();
+    if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip)) _tsIP = ip;
+  } catch { /* tailscale ausente/subindo — re-tenta depois (não cacheia null) */ }
+  return _tsIP || null;
 }
 
 // Set de peers ONLINE segundo o Tailscale (HostName + IPs, lowercased). O poller
@@ -88,7 +94,7 @@ function exportSession(s, nodeName) {
 // tailnet via detectTailnetIP — peers alcançam direto; fallback 127.0.0.1).
 //   getSessions()  → array local de sessões (de collect.readSessions)
 //   getTranscript(key, n) → [{role,text,ts}] (stub em []; parser real é fase 3)
-function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, bindHost }) {
+function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, bindHost, onError }) {
   const server = http.createServer((req, res) => {
     const respond = (code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
     res.setHeader('Content-Type', 'application/json');
@@ -111,6 +117,10 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
     }
     respond(404, { error: 'not found' });
   });
+  // Sem error handler, EADDRINUSE (2ª instância, porta em uso, GUI+agent no
+  // mesmo host) vira uncaughtException e mata o processo (PR-32 #09). Degradar:
+  // loga + avisa o caller via onError (DI); o server fica inerte (só-this-host).
+  server.on('error', (e) => { console.error('[net] server error', (e && e.code) || e); if (typeof onError === 'function') onError(e); });
   server.listen(port, bindHost || '127.0.0.1');   // tailnet IP p/ peers alcançarem direto; default localhost
 
   // /pty — terminal remoto via WebSocket (attach remoto ao vivo). Opt-in
@@ -187,7 +197,7 @@ function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 
     const hostPort = p.host.includes(':') ? p.host : `${p.host}:${port}`;
     let ok = false;
     try {
-      const r = await fetch(`http://${hostPort}/sessions`, { headers });
+      const r = await fetch(`http://${hostPort}/sessions`, { headers, signal: AbortSignal.timeout(3000) });   // PR-32 #05: peer em blackhole não trava o ciclo de poll
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       const origin = data.node || p.name || p.host;
@@ -219,7 +229,7 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
   try {
     const r = await fetch(
       `http://${hostPort}/transcript?key=${encodeURIComponent(key)}&n=${n}`,
-      token ? { headers: { Authorization: 'Bearer ' + token } } : {},
+      { signal: AbortSignal.timeout(3000), ...(token ? { headers: { Authorization: 'Bearer ' + token } } : {}) },   // PR-32 #05: blackhole não pendura o painel ver-prompt
     );
     if (!r.ok) return [];
     const data = await r.json();
