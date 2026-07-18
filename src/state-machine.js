@@ -102,16 +102,23 @@ function iconFor(st) {
 //  · demais    → mais recente primeiro (atividade nova visível)
 const URGENCY_RANK = { awaiting: 0, processing: 1, done: 2, read: 3 };
 function sortByUrgency(ranked) {
-  // Chave ESTÁVEL por origem+id. Antes ordenava por last_event_ts dentro da
-  // urgência — mas esse ts muda a cada tool call, fazendo a lista REORDENAR a
-  // cada ~2s (linhas pulavam de posição → confundia local/remoto e causava
-  // mis-click). Estável = a lista só muda quando a URGÊNCIA muda; 'local'
-  // agrupa antes dos peers (ordem alfabética da origin).
-  const skey = (x) => ((x.s && x.s.origin) || 'local') + '' + ((x.s && (x.s.session_id || x.s.pid)) || '');
+  // Chave ESTÁVEL por id (não por last_event_ts, que muda a cada tool call e
+  // faria a lista REORDENAR a cada ~2s — confundia local/remoto, causava
+  // mis-click). A lista só muda quando a URGÊNCIA muda.
+  const skey = (x) => ((x.s && (x.s.session_id || x.s.pid)) || '');
+  const originOf = (x) => ((x.s && x.s.origin) || 'local');
+  const isLocal = (x) => { const o = originOf(x); return !o || o === 'local'; };
   return [...ranked].sort((a, b) => {
     const la = (a.st && a.st.level) || 'done';
     const lb = (b.st && b.st.level) || 'done';
     if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
+    // Mesmo nível: LOCAL (este host) sempre antes dos peers — evita mis-click e
+    // agrupa a máquina do usuário no topo. Antes era string pura de origin, e
+    // hostnames comuns ("alienware") ordenavam antes de "local" (PR-32 #20).
+    const al = isLocal(a), bl = isLocal(b);
+    if (al !== bl) return al ? -1 : 1;
+    const oa = originOf(a), ob = originOf(b);
+    if (oa !== ob) return oa < ob ? -1 : 1;   // peers: ordem alfabética estável
     const ka = skey(a), kb = skey(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });

@@ -104,6 +104,15 @@ test('sortByUrgency: urgência primária (🔴>🟡>🟢>read); mesmo nível = E
   assert.deepEqual(out, ['awaiting:local:r1', 'awaiting:notebook-hg:r2', 'processing:local:p1', 'done:local:d1']);
 });
 
+test('sortByUrgency: local antes dos peers mesmo quando o hostname ordena antes (alienware < local)', () => {
+  const mk = (level, id, origin) => ({ s: { session_id: id, origin: origin || 'local', last_event_ts: 0 }, st: { level } });
+  // 'alienware' < 'local' alfabeticamente — antes do fix (string pura de origin),
+  // o peer vinha antes do local (PR-32 #20).
+  const ranked = [mk('done', 'a1', 'alienware'), mk('done', 'l1', 'local'), mk('done', 'z9', 'notebook-hg')];
+  const out = sortByUrgency(ranked).map((r) => `${r.s.origin}:${r.s.session_id}`);
+  assert.deepEqual(out, ['local:l1', 'alienware:a1', 'notebook-hg:z9'], 'local primeiro (peso 0), depois peers em ordem alfabética');
+});
+
 test('sortByUrgency: não muta o array original', () => {
   const ranked = [{ s: { last_event_ts: 2 }, st: { level: 'done' } }, { s: { last_event_ts: 1 }, st: { level: 'awaiting' } }];
   const snap = ranked.map((r) => r.st.level);

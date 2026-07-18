@@ -2,7 +2,7 @@
 // localhost de verdade (porta efêmera, fetch real) cobrindo /sessions e /transcript.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, tokenOk, exportSession, pollPeers, tailscaleOnlineSet, buildOnlineSet, peerOnline } = require('../src/net.js');
+const { startServer, tokenOk, exportSession, pollPeers, tailscaleOnlineSet, buildOnlineSet, peerOnline, anchorRemote } = require('../src/net.js');
 
 // ---- tokenOk: compare constante, fail-safe ----
 test('tokenOk: token correto → true', () => {
@@ -30,6 +30,23 @@ test('exportSession: remove campos machine-local e seta origin', () => {
     'alienware',
   );
   assert.deepEqual(out, { session_id: 's1', pid: 1, cwd: '/x', model: 'glm-5.2', origin: 'alienware' });
+});
+
+test('exportSession: com nowSec, inclui idleSec (idade relativa do servidor)', () => {
+  const out = exportSession({ session_id: 's1', last_event_ts: 1000 }, 'peer', 1300);
+  assert.equal(out.idleSec, 300, 'idleSec = nowSec - last_event_ts');
+});
+
+test('anchorRemote: reescreve last_event_ts no relógio local via idleSec (sem clock skew)', () => {
+  const s = { session_id: 's1', origin: 'peer', last_event_ts: 999999, idleSec: 120 };
+  const out = anchorRemote(s, 5000);   // receptor: agora=5000 local, idle 120s no peer
+  assert.equal(out.last_event_ts, 4880, '4880 = 5000 - 120 (relógio LOCAL, skew-free)');
+  assert.equal(out.idleSec, undefined, 'idleSec consumido (não vaza p/ o renderer)');
+});
+
+test('anchorRemote: sem idleSec (peer antigo) → sessão intacta', () => {
+  const s = { session_id: 's1', origin: 'peer', last_event_ts: 999999 };
+  assert.equal(anchorRemote(s, 5000), s, 'mesma ref, sem alteração');
 });
 
 // ---- startServer: integração localhost (porta efêmera, fetch real) ----

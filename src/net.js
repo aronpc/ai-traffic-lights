@@ -99,10 +99,30 @@ function bearerOf(req) {
 
 // Sanitiza uma sessão pra sair na rede: remove campos machine-local e marca
 // `origin` com o nome DESTE nó (pra o overlay do peerBadge na máquina remota).
-function exportSession(s, nodeName) {
+function exportSession(s, nodeName, nowSec) {
   const out = { ...s };
   for (const k of LOCAL_ONLY) delete out[k];
   out.origin = nodeName;
+  // Idade RELATIVA (segundos desde last_event) computada no SERVIDOR, no relógio
+  // DELE. O receptor re-ancora no relógio local via anchorRemote → elimina clock
+  // skew na escalada idle de sessões remotas (PR-32 #18).
+  if (typeof nowSec === 'number' && typeof out.last_event_ts === 'number') {
+    out.idleSec = Math.max(0, Math.floor(nowSec) - out.last_event_ts);
+  }
+  return out;
+}
+
+// Reescreve last_event_ts de uma sessão REMOTA p/ o relógio LOCAL do receptor,
+// usando o idleSec (idade relativa computada no peer). Elimina clock skew entre
+// peer e receptor (PR-32 #18): antes, ageSec = nowLocal - last_event_ts_peer
+// misturava relógios → alarme falso (peer atrasado ≥ threshold) ou idle real
+// silenciado (peer adiantado). Sessão sem idleSec (peer antigo) fica intacta.
+function anchorRemote(s, nowSec) {
+  if (!s || s.idleSec == null) return s;
+  const ts = Math.floor(nowSec) - Math.max(0, s.idleSec | 0);
+  const out = { ...s };
+  out.last_event_ts = ts;
+  delete out.idleSec;
   return out;
 }
 
@@ -121,7 +141,7 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
     if (url.pathname === '/sessions') {
       let sessions = [];
       try { sessions = getSessions() || []; } catch {}
-      return respond(200, { node: nodeName, sessions: sessions.map((s) => exportSession(s, nodeName)) });
+      return respond(200, { node: nodeName, sessions: sessions.map((s) => exportSession(s, nodeName, Math.floor(Date.now() / 1000))) });
     }
     if (url.pathname === '/transcript') {
       if (!shareTranscripts) return respond(403, { error: 'transcripts not shared' });
@@ -247,7 +267,7 @@ function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       const origin = data.node || p.name || p.host;
-      onSessions(p.host, (data.sessions || []).map((s) => ({ ...s, origin })));
+      onSessions(p.host, (data.sessions || []).map((s) => anchorRemote({ ...s, origin }, Math.floor(Date.now() / 1000))));   // PR-32 #18: âncora last_event_ts no relógio local (idleSec do peer)
       ok = true;
     } catch { /* offline/erro — vira backoff abaixo */ }
     if (ok) {
@@ -283,4 +303,4 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
   } catch { return []; }
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline };
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline, anchorRemote };
