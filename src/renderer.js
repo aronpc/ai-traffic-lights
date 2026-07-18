@@ -237,6 +237,15 @@ function render() {
   for (const m of [readMarks, prevLevels, lastAlert, snoozed]) {
     for (const k of m.keys()) if (!liveKeys.has(k)) m.delete(k);
   }
+  // Poda seenOrigins das origins que sumiram (sync desligado / peer removido).
+  // Sem isso, ao religar o sync as origins remotas ainda estariam em seenOrigins
+  // → não entravam em newOrigins → prevLevels não era semeado → TODAS as
+  // vermelhas disparavam alertAwaiting() de uma vez (som + notificação nativa),
+  // sem o rate-limit do lastAlert (que também foi podado). A própria proteção
+  // anti-rajada falhava exatamente na reconexão. readMarks volta vermelho ao
+  // religar, mas a RAJADA de alerta — o bug High — some (PR-32 #19).
+  const liveOrigins = new Set(sessions.map((s) => s.origin || 'local'));
+  for (const o of seenOrigins) if (!liveOrigins.has(o)) seenOrigins.delete(o);
 
   // 2. ordena por urgência: 🔴 no topo, depois 🟡, depois 🟢 (state-machine.js).
   const ordered = sortByUrgency(ranked);
