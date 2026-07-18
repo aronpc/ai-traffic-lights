@@ -23,6 +23,30 @@ warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "faltando dependência: $1"; }
 
+# Verifica a integridade (sha512) do .dmg contra o latest-mac.yml que o
+# electron-builder publica no release (paridade com o install.sh Linux — PR-32
+# #07: antes baixava o .dmg sem nenhuma verificação). Best-effort: sem yml/sha512
+# ou openssl, prossegue com aviso (não bloqueia a instalação).
+verify_checksum() {
+  local file="$1" asset_url="$2" yml yml_url base expected actual
+  base="$(basename "${asset_url%%\?*}")"
+  yml_url="${asset_url%/*}/latest-mac.yml"
+  yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
+    || { warn "sem latest-mac.yml — pulei a verificação de integridade"; return 0; }
+  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+  [ -n "$expected" ] || { warn "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
+  if command -v openssl >/dev/null 2>&1; then
+    actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | base64 | tr -d '\n')"
+  else
+    warn "sem openssl — pulei a verificação de integridade"; return 0
+  fi
+  if [ "$actual" = "$expected" ]; then
+    ok "integridade verificada (sha512)"
+  else
+    die "checksum NÃO confere ($base) — download corrompido ou adulterado. Abortei."
+  fi
+}
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 [ "$OS" = "Darwin" ] || die "Este instalador é exclusivo do macOS. SO atual: $OS"
@@ -42,7 +66,7 @@ GH_ERR="$(mktemp)"
 gh_auth=()
 [ -n "${GITHUB_TOKEN:-}" ] && gh_auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
 if ! json="$(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 60 \
-      -H 'Accept: application/vnd.github+json' "${gh_auth[@]}" "$API_URL" 2>"$GH_ERR")"; then
+      -H 'Accept: application/vnd.github+json' "${gh_auth[@]+"${gh_auth[@]}"}" "$API_URL" 2>"$GH_ERR")"; then
   rate=0; grep -qi 'rate limit\|API rate' "$GH_ERR" 2>/dev/null && rate=1
   rm -f "$GH_ERR"
   [ "$rate" = 1 ] && die "rate-limit da API do GitHub (60/h sem token). Rode: GITHUB_TOKEN=ghp_xxx bash install_macos.sh"
@@ -67,6 +91,7 @@ DEST="/Applications/$APP_NAME"
 if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   info "baixando v${version:-?}..."
   curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 -o "$DMG_PATH" "$download_url"
+  verify_checksum "$DMG_PATH" "$download_url"
   ok "download completo"
 
   info "montando e copiando para /Applications..."
