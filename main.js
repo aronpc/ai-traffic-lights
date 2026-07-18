@@ -513,7 +513,7 @@ function launchAgent({ agent, cwd }) {
   // Linux: lança DIRETO numa aba da janela Terminal, dentro de um tmux próprio.
   // Não depende de terminal externo (tilix/Warp) — o ATL controla o spawn e
   // garante o wrap; o hook do agente captura tmux_session (#S) e o overlay mostra.
-  const hasTmux = !!scanPathBin('tmux');
+  const hasTmux = hasBin('tmux');
   const sessionName = launcher.tmuxSessionName(agent) + '-' + Date.now().toString(36);
   ensureTermWin();
   const tabId = addTermSession({ title: (a && a.label) || agent, kind: 'local' });
@@ -1182,12 +1182,28 @@ function applySync() {
 // termSessions) e o renderer (src/term.html) só desenha abas + xterm, falando
 // por IPC (tabId). Assim o overlay fica leve (não cresce, não bloqueia cliques).
 let ptyLib = null;
+// PATH garantido pro pty: electron/Chromium no Linux pode herdar PATH restrito
+// (sem /usr/bin) → tmux/bash não achados → o auto-wrap em tmux falhava silenciosamente.
+// Acrescenta os dirs base no fim (não sobrescreve o que já tá lá).
+function ptyEnv() {
+  const env = Object.assign({}, process.env);
+  const cur = String(env.PATH || '').split(':').filter(Boolean);
+  for (const d of ['/usr/local/bin', '/usr/bin', '/bin']) if (!cur.includes(d)) cur.push(d);
+  env.PATH = cur.join(':');
+  return env;
+}
+// true se o bin existe no PATH do main OU nos dirs base (fallback robusto ao scanPathBin).
+function hasBin(bin) {
+  if (scanPathBin(bin)) return true;
+  for (const d of ['/usr/local/bin', '/usr/bin', '/bin']) { try { if (fs.existsSync(d + '/' + bin)) return true; } catch {} }
+  return false;
+}
 function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
 // factory p/ o SERVIDOR /pty (DI em net.startServer): 1 node-pty por conexão
 // remota (peer attachando em MIM). Devolve handle {write,resize,kill}.
 function createPty(cmd, cols, rows, { onData, onExit }) {
   const p = ptyEnsure(); if (!p) throw new Error('node-pty indisponível');
-  const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: process.env });
+  const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: ptyEnv() });
   proc.onData(onData); proc.onExit(onExit);
   return { write: (d) => { try { proc.write(d); } catch {} }, resize: (c, r) => { try { proc.resize(c, r); } catch {} }, kill: () => { try { proc.kill(); } catch {} } };
 }
@@ -1270,7 +1286,7 @@ function spawnPtyLocal(tabId, cmd, cwd) {
   const p = ptyEnsure(); const s = termSessions.get(tabId);
   if (!p || !s) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mnode-pty indisponível\x1b[0m\r\n' }); return; }
   try {
-    const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: cwd || process.env.HOME, env: process.env });
+    const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: cwd || process.env.HOME, env: ptyEnv() });
     proc.onData((d) => sendTerm('pty-out', { tabId, data: d }));
     proc.onExit(() => sendTerm('pty-exit', { tabId }));
     s.proc = proc;
@@ -1302,7 +1318,7 @@ ipcMain.on('term-new-shell', (_e, host) => {
     openRemotePty(tabId, { host, port: cfg.port, token: cfg.token });   // sem tmux_session → shell novo no peer
   } else {
     const tabId = addTermSession({ title: 'shell', kind: 'local' });
-    const hasTmux = !!scanPathBin('tmux');
+    const hasTmux = hasBin('tmux');
     const cmd = hasTmux ? launcher.tmuxWrap([process.env.SHELL || 'bash'], launcher.tmuxSessionName('shell') + '-' + Date.now().toString(36)) : [process.env.SHELL || 'bash'];
     spawnPtyLocal(tabId, cmd, process.env.HOME);
   }
