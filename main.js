@@ -1134,8 +1134,9 @@ function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || 
 function applySync() {
   const s = (settingsCfg && settingsCfg.sync) || {};
   const tok = typeof s.token === 'string' ? s.token : '';
-  // SERVIDOR (compartilhar minhas sessões): localhost-only; o ingress da tailnet
-  // é o `tailscale serve`. Reinicia só se a config relevante mudou (chave abaixo).
+  // SERVIDOR (compartilhar minhas sessões): binda no IP da tailnet
+  // (detectTailnetIP) — peers alcançam direto em http://<ip>:<porta>; auth por
+  // token + WireGuard E2E (sem tailscale serve). Reinicia só se a config mudou.
   const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${s.allowAttach ? 1 : 0}|${syncNodeName()}` : '';
   if (!srvKey && syncServer) { try { syncServer.close(); } catch {} syncServer = null; syncServerKey = null; }
   if (srvKey && srvKey !== syncServerKey) {

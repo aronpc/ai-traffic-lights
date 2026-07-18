@@ -2,13 +2,16 @@
 // agent.js — modo HEADLESS do sync (fase 4). Node PURO, SEM require('electron').
 //
 // Para um servidor Linux sem display (ex.: loja-mqx) participar do mesh como
-// FONTE: sobe o servidor /sessions (/transcript) na localhost e expõe as sessões
-// locais via o MESMO core da GUI (collect.js/net.js/identity.js/transcript.js) —
-// sem duplicar lógica. Roda como daemon (systemd); logs em stdout (journald).
+// FONTE: sobe o servidor /sessions (/transcript) bindando DIRETO no IP da
+// tailnet e expõe as sessões locais via o MESMO core da GUI
+// (collect.js/net.js/identity.js/transcript.js) — sem duplicar lógica. Roda
+// como daemon (systemd); logs em stdout (journald).
 //
-// O servidor escuta em 127.0.0.1 — o ingress da tailnet é o `tailscale serve`
-// (igual à GUI). Config vem do settings.json do ATL; overrides por env (útil num
-// servidor sem GUI pra editar o JSON): ATL_SYNC_TOKEN / ATL_SYNC_ENABLED=1 /
+// Modelo de rede IGUAL à GUI: bind no IP da tailnet (detectTailnetIP), HTTP puro
+// na porta do app, auth por token + WireGuard E2E — NÃO usa `tailscale serve`
+// (o client fala HTTP na porta do app; o serve expõe HTTPS:443 e quebraria).
+// Config vem do settings.json do ATL; overrides por env (útil num servidor sem
+// GUI pra editar o JSON): ATL_SYNC_TOKEN / ATL_SYNC_ENABLED=1 /
 // ATL_SYNC_SHARE=1 / ATL_SYNC_SHARE_TR=1 / ATL_SYNC_PORT / ATL_SYNC_NODE.
 //
 // Deploy (systemd): ver scripts/atl-agent.service. Rápido (manual):

@@ -1,10 +1,14 @@
 // net.js — transporte do sync P2P (fase 2). Electron-free: só Node http + fetch.
 //
 // Cada nó é simétrico: sobe um SERVIDOR (se sync.share) que expõe /sessions
-// (sempre) e /transcript (só se sync.shareTranscripts) na 127.0.0.1 — nunca na
-// interface da tailnet. O ingress da tailnet é o `tailscale serve` (que injeta
-// identity headers e STRIP spoofados); bindar direto em tailscale0 forjaria os
-// headers. O CLIENTE (se houver sync.peers) faz poll de /sessions a cada 5s.
+// (sempre) e /transcript (só se sync.shareTranscripts) bindando DIRETO no IP da
+// tailnet (100.x via detectTailnetIP — ver abaixo). Os peers alcançam
+// http://<meu-ip-tailnet>:<porta> na MESMA porta, em HTTP puro. NÃO usa
+// `tailscale serve`: o client fala HTTP na porta do app, e o `serve` expõe
+// HTTPS:443 por default (URL não casaria → connection refused). A segurança vem
+// do WireGuard E2E do Tailscale + bearer token (tempo constante). Sem tailscale
+// disponível, o bind cai p/ 127.0.0.1 (degrada p/ só-this-host, sem explodir).
+// O CLIENTE (se houver sync.peers) faz poll de /sessions a cada 5s.
 //
 // Auth: bearer token comparado em tempo constante (hash dos dois lados p/ não
 // vazar length — ver CVE fastify-bearer-auth). Sem token configurado => recusa
@@ -80,7 +84,8 @@ function exportSession(s, nodeName) {
   return out;
 }
 
-// Sobe o servidor em 127.0.0.1 (localhost-only). Retorna o http.Server.
+// Sobe o servidor. Retorna o http.Server. Binda em bindHost (default: IP da
+// tailnet via detectTailnetIP — peers alcançam direto; fallback 127.0.0.1).
 //   getSessions()  → array local de sessões (de collect.readSessions)
 //   getTranscript(key, n) → [{role,text,ts}] (stub em []; parser real é fase 3)
 function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, bindHost }) {
