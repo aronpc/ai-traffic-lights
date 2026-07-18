@@ -63,6 +63,7 @@ const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec
 const USAGE_FILE = path.join(BASE_DIR, 'usage.json'); // último uso conhecido (sobrevive a reinício; mostrado stale até refrescar)
 const CLAUDE_COOLDOWN_FILE = path.join(BASE_DIR, 'claude-cooldown.json'); // {until:<ms>} — cooldown do 429 da API de uso (SÓ o timestamp, nunca o token)
 const SETTINGS_BOUNDS_FILE = path.join(BASE_DIR, 'settings-window.json'); // {x, y, width, height}
+const TERM_BOUNDS_FILE = path.join(BASE_DIR, 'term-window.json'); // {x, y, width, height} da janela Terminal
 const AUTOSTART_FILE = path.join(process.env.HOME, '.config/autostart/ai-traffic-lights.desktop');
 
 // ---- migração da era claude-traffic-light (pré-rename) ----
@@ -1201,13 +1202,34 @@ function sendTerm(ch, payload) {
   if (!termWinReady) { termQueue.push([ch, payload]); return; }
   try { termWin.webContents.send(ch, payload); } catch {}
 }
+let termBoundsTimer = null;
+function loadTermBounds() {
+  try {
+    const b = JSON.parse(fs.readFileSync(TERM_BOUNDS_FILE, 'utf8'));
+    if (b && [b.x, b.y, b.width, b.height].every((n) => typeof n === 'number')) return b;
+  } catch {}
+  return null;
+}
+function saveTermBounds() {
+  if (!termWin || termWin.isDestroyed() || termWin.isMaximized()) return;   // não persiste maximizada (senão reabre do tamanho da tela sem estar max)
+  clearTimeout(termBoundsTimer);
+  termBoundsTimer = setTimeout(() => {
+    try {
+      const b = termWin.getBounds();
+      fs.writeFileSync(TERM_BOUNDS_FILE, JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height }));
+    } catch {}
+  }, 300);
+}
 function ensureTermWin() {
   if (termWin && !termWin.isDestroyed()) { try { termWin.show(); termWin.moveTop(); termWin.focus(); } catch {} return termWin; }
   const wa = screen.getPrimaryDisplay().workArea;
-  const w = Math.min(960, Math.max(640, Math.round(wa.width * 0.6)));
-  const h = Math.min(680, Math.max(380, Math.round(wa.height * 0.7)));
+  const b = loadTermBounds();
+  const w = (b && b.width) || Math.min(960, Math.max(640, Math.round(wa.width * 0.6)));
+  const h = (b && b.height) || Math.min(680, Math.max(380, Math.round(wa.height * 0.7)));
+  const x = (b && b.x >= wa.x && b.x < wa.x + wa.width) ? b.x : undefined;   // só se dentro da work area
+  const y = (b && b.y >= wa.y && b.y < wa.y + wa.height) ? b.y : undefined;
   termWin = new BrowserWindow({
-    width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal',
+    width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal', x, y,
     frame: false, transparent: true, resizable: true, maximizable: true, fullscreenable: true,
     hasShadow: false, backgroundColor: '#00000000',
     alwaysOnTop: false, skipTaskbar: false, autoHideMenuBar: true,
@@ -1221,6 +1243,8 @@ function ensureTermWin() {
   });
   termWin.on('maximize', () => sendTerm('term-maximized', true));
   termWin.on('unmaximize', () => sendTerm('term-maximized', false));
+  termWin.on('resize', saveTermBounds);   // persiste tamanho/posição (debounce; ignora se maximizada)
+  termWin.on('move', saveTermBounds);
   termWin.on('closed', () => { termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear(); });
   return termWin;
 }
