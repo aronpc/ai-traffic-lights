@@ -281,7 +281,7 @@ function render() {
         clickTimer = null;
         // tmux_session (local OU remoto) → attach no terminal EMBUTIDO (xterm+pty
         // dentro do ATL — não abre janela externa). Remoto sem tmux → painel. Local sem tmux → foca.
-        if (s.tmux_session) window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd);
+        if (s.tmux_session) { const _k = sessionKey(s); window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[_k] || '', _k); }
         else if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
         else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
       }, 220);

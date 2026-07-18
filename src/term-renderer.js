@@ -79,6 +79,10 @@ window.trafficLight.onTermTabRemoved(({ tabId }) => {
   }
 });
 window.trafficLight.onTermTabActivated(({ tabId }) => showTab(tabId));
+window.trafficLight.onTermTabTitle(({ tabId, title }) => {
+  const el = $tabs.querySelector('.tab[data-tab="' + tabId + '"] .tab-title');
+  if (el) el.textContent = title;
+});
 
 const $hostMenu = document.getElementById('hostMenu');
 async function toggleHostMenu() {
@@ -98,6 +102,11 @@ async function toggleHostMenu() {
 }
 document.getElementById('newTabBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleHostMenu(); });
 document.addEventListener('click', (e) => { if (!$hostMenu.hidden && !$hostMenu.contains(e.target)) $hostMenu.hidden = true; });
+// ---- chrome custom (frameless): botões de janela + estado maximizado ----
+document.getElementById('winMinBtn').addEventListener('click', () => window.trafficLight.termWinControl('min'));
+document.getElementById('winMaxBtn').addEventListener('click', () => window.trafficLight.termWinControl('max'));
+document.getElementById('winCloseBtn').addEventListener('click', () => window.trafficLight.termWinControl('close'));
+window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').classList.toggle('maximized', !!max));
 
 // resize: refaz fit da aba ativa e avisa o main (pty/ws) do novo tamanho
 if (typeof ResizeObserver !== 'undefined') (new ResizeObserver(fitActive)).observe($area);

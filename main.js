@@ -554,18 +554,18 @@ function openCmdInTerminal(cmdArray, cwd) {
   try { spawn(useTerm, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); }
   catch (e) { notifyUser('Attach failed: ' + e.message); }
 }
-function attachRemote({ origin, tmux_session, cwd }) {
+function attachRemote({ origin, tmux_session, cwd, alias, key }) {
   if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
   const isLocal = !origin || origin === 'local';
-  const key = (isLocal ? 'local' : origin) + '|' + tmux_session;
+  const dupKey = (isLocal ? 'local' : origin) + '|' + tmux_session;
   for (const [id, s] of termSessions) {   // dedupe: aba dessa sessão já existe → só foca
-    if (((s.kind === 'local' ? 'local' : s.origin) + '|' + s.tmux_session) === key) {
+    if (((s.kind === 'local' ? 'local' : s.origin) + '|' + s.tmux_session) === dupKey) {
       ensureTermWin(); sendTerm('term-tab-activated', { tabId: id }); return;
     }
   }
   ensureTermWin();
-  const title = (isLocal ? '' : origin + ' · ') + 'tmux: ' + tmux_session;
-  const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session });
+  const title = alias || ((isLocal ? '' : origin + ' · ') + 'tmux: ' + tmux_session);
+  const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session, sessionKey: key });
   if (isLocal) {
     spawnPtyLocal(tabId, ['tmux', 'attach', '-t', tmux_session], cwd);
   } else {
@@ -996,6 +996,13 @@ ipcMain.on('set-alias', (_e, { key, alias }) => {
   if (alias != null && (typeof alias !== 'string' || alias.length > 256)) return;
   saveAlias(key, alias);
   sendSessions();
+  // atualiza o título da aba correspondente na janela Terminal (alias é o nome da aba)
+  for (const [id, s] of termSessions) {
+    if (s.sessionKey === key) {
+      const t = alias || ((s.kind === 'local' ? '' : (s.origin || '') + ' · ') + 'tmux: ' + (s.tmux_session || 'shell'));
+      s.title = t; sendTerm('term-tab-title', { tabId: id, title: t });
+    }
+  }
 });
 
 // Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
@@ -1201,16 +1208,19 @@ function ensureTermWin() {
   const h = Math.min(680, Math.max(380, Math.round(wa.height * 0.7)));
   termWin = new BrowserWindow({
     width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal',
-    frame: true, transparent: false, resizable: true, maximizable: true, fullscreenable: true,
-    alwaysOnTop: false, skipTaskbar: false, backgroundColor: '#0e1117', autoHideMenuBar: true,
+    frame: false, transparent: true, resizable: true, maximizable: true, fullscreenable: true,
+    hasShadow: false, backgroundColor: '#00000000',
+    alwaysOnTop: false, skipTaskbar: false, autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
-  try { termWin.setMenuBarVisibility(false); } catch {}   // menu bar nativa oculta
   termWin.loadFile(path.join(__dirname, 'src/term.html'));
   termWin.webContents.once('did-finish-load', () => {
     termWinReady = true;
     for (const [ch, p] of termQueue.splice(0)) { try { termWin.webContents.send(ch, p); } catch {} }
+    sendTerm('term-maximized', !!termWin.isMaximized());   // estado inicial: renderer tira o radius se maximizada
   });
+  termWin.on('maximize', () => sendTerm('term-maximized', true));
+  termWin.on('unmaximize', () => sendTerm('term-maximized', false));
   termWin.on('closed', () => { termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear(); });
   return termWin;
 }
@@ -1220,9 +1230,9 @@ function destroyTermSession(tabId) {
   if (s.ws) { try { s.ws.close(); } catch {} }
   termSessions.delete(tabId);
 }
-function addTermSession({ title, kind, origin, tmux_session }) {
+function addTermSession({ title, kind, origin, tmux_session, sessionKey }) {
   const tabId = ++tabSeq;
-  termSessions.set(tabId, { title, kind, origin, tmux_session, proc: null, ws: null, cols: 80, rows: 24 });
+  termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, proc: null, ws: null, cols: 80, rows: 24 });
   sendTerm('term-tab-added', { tabId, title });
   return tabId;
 }
@@ -1274,6 +1284,14 @@ ipcMain.on('term-new-shell', (_e, host) => {
 ipcMain.handle('term-hosts', () => {
   const peers = ((settingsCfg && settingsCfg.sync) || {}).peers || [];
   return [{ id: 'local', label: 'local' }, ...peers.map((p) => ({ id: p.host, label: p.name || p.host }))];
+});
+ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/max/close
+  if (!termWin || termWin.isDestroyed()) return;
+  try {
+    if (op === 'min') termWin.minimize();
+    else if (op === 'max') termWin.isMaximized() ? termWin.unmaximize() : termWin.maximize();
+    else if (op === 'close') termWin.hide();
+  } catch {}
 });
 ipcMain.on('term-switch-tab', () => { /* roteamento é por tabId (vem no input/resize); ativação é visual no renderer */ });
 ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });
