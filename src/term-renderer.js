@@ -55,7 +55,7 @@ window.trafficLight.onTermTabAdded(({ tabId, title }) => {
   btn.dataset.tab = String(tabId);
   btn.innerHTML = '<span class="tab-title"></span><span class="tab-close" title="fechar">×</span>';
   btn.querySelector('.tab-title').textContent = title;
-  btn.addEventListener('click', (e) => { if (e.target.classList.contains('tab-close')) return; window.trafficLight.switchTab(tabId); });
+  btn.addEventListener('click', (e) => { if (e.target.classList.contains('tab-close')) return; showTab(tabId); window.trafficLight.switchTab(tabId); });
   btn.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.closeTab(tabId); });
   $tabs.appendChild(btn);
   showTab(tabId);
