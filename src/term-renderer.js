@@ -111,3 +111,11 @@ window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').
 // resize: refaz fit da aba ativa e avisa o main (pty/ws) do novo tamanho
 if (typeof ResizeObserver !== 'undefined') (new ResizeObserver(fitActive)).observe($area);
 window.addEventListener('resize', fitActive);
+// ---- grip de resize (canto inferior direito) — janela frameless não tem resize nativo ----
+const $grip = document.getElementById('termGrip');
+let resizing = null;
+if ($grip) {
+  $grip.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); resizing = { sx: e.screenX, sy: e.screenY }; window.trafficLight.resizeStartTerm(); });
+  window.addEventListener('mousemove', (e) => { if (!resizing) return; window.trafficLight.resizeMoveTerm(e.screenX - resizing.sx, e.screenY - resizing.sy); });
+  window.addEventListener('mouseup', () => { resizing = null; });
+}

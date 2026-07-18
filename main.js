@@ -1338,6 +1338,14 @@ ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/m
     else if (op === 'close') termWin.hide();
   } catch {}
 });
+// ---- resize via grip (frameless+transparent não tem resize nativo no Linux) ----
+let termResizeStart = null;
+ipcMain.on('resize-term-start', () => { if (termWin && !termWin.isDestroyed()) termResizeStart = termWin.getSize(); });
+ipcMain.on('resize-term-move', (_e, { dw, dh }) => {
+  if (!termWin || termWin.isDestroyed() || !termResizeStart) return;
+  try { termWin.setSize(Math.max(560, Math.round(termResizeStart[0] + dw)), Math.max(320, Math.round(termResizeStart[1] + dh)), false); } catch {}
+});
+ipcMain.on('resize-term-end', () => { termResizeStart = null; });
 ipcMain.on('term-switch-tab', () => { /* roteamento é por tabId (vem no input/resize); ativação é visual no renderer */ });
 ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });
 ipcMain.on('term-input', (_e, { tabId, data }) => {

@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('trafficLight', {
   newShell: (host) => ipcRenderer.send('term-new-shell', host),         // host=undefined|'local' → local; senão abre shell num peer
   termHosts: () => ipcRenderer.invoke('term-hosts'),                    // [{id,label}] local + peers p/ o menu do botão +
   termWinControl: (op) => ipcRenderer.send('term-win-control', op),     // 'min' | 'max' | 'close' (chrome custom frameless)
+  resizeStartTerm: () => ipcRenderer.send('resize-term-start'),
+  resizeMoveTerm: (dw, dh) => ipcRenderer.send('resize-term-move', { dw, dh }),
+  resizeEndTerm: () => ipcRenderer.send('resize-term-end'),
   switchTab: (tabId) => ipcRenderer.send('term-switch-tab', tabId),
   closeTab: (tabId) => ipcRenderer.send('term-close-tab', tabId),
   ptyInput: (tabId, data) => ipcRenderer.send('term-input', { tabId, data }),

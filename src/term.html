@@ -20,7 +20,7 @@
     html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     /* mesmo chrome do overlay: card arredondado translúcido, header arrastável */
-    .term-app { height: 100%; background: var(--bg); backdrop-filter: blur(8px);
+    .term-app { position: relative; height: 100%; background: var(--bg); backdrop-filter: blur(8px);
       border: 1px solid var(--border-bright); border-radius: 14px; overflow: hidden;
       display: flex; flex-direction: column; color: var(--ink); }
     .term-app.maximized { border-radius: 0; border-color: transparent; }
@@ -63,6 +63,10 @@
     .term-holder[hidden] { display: none; }
     .term-holder .xterm { height: 100%; }
     .term-holder .xterm-viewport { background-color: transparent !important; }
+    .term-grip { position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; cursor: nwse-resize;
+      -webkit-app-region: no-drag; z-index: 30; }
+    .term-grip::after { content: ''; position: absolute; right: 4px; bottom: 4px; width: 9px; height: 9px;
+      border-right: 2px solid var(--ink-dim); border-bottom: 2px solid var(--ink-dim); opacity: .55; }
   </style>
 </head>
 <body>
@@ -79,6 +83,7 @@
       <div class="host-menu" id="hostMenu" hidden></div>
     </header>
     <div class="term-area" id="termArea"></div>
+    <div class="term-grip" id="termGrip" title="arraste para redimensionar"></div>
   </div>
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
