@@ -16,6 +16,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const sessions = require('./sessions.js');
 const { AGENTS } = require('./agents.js');
+const validate = require('./validate.js');
 
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(process.env.HOME, '.local/share');
 const STATE_DIR = path.join(DATA_HOME, 'ai-traffic-lights', 'state');
@@ -51,6 +52,10 @@ function readSessions() {
 
 // Acha o transcript de uma sessão pelo session_id (procura em .claude e .zclaude).
 function findTranscript(sid) {
+  // sid chega do peer via /transcript?key= (controlado pela rede). Sem validação,
+  // "../foo" vira path traversal (path.join) e lê qualquer .jsonl do host.
+  // Rejeita antes de virar path — mesmo validador dos adapters (validate.js).
+  if (!validate.validSessionId(sid)) return null;
   for (const root of [
     path.join(process.env.HOME, '.claude/projects'),
     path.join(process.env.HOME, '.zclaude/projects'),
