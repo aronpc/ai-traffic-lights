@@ -2,7 +2,7 @@
 // localhost de verdade (porta efêmera, fetch real) cobrindo /sessions e /transcript.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, tokenOk, exportSession, pollPeers, tailscaleOnlineSet } = require('../src/net.js');
+const { startServer, tokenOk, exportSession, pollPeers, tailscaleOnlineSet, buildOnlineSet, peerOnline } = require('../src/net.js');
 
 // ---- tokenOk: compare constante, fail-safe ----
 test('tokenOk: token correto → true', () => {
@@ -142,6 +142,40 @@ test('tailscaleOnlineSet: null (sem tailscale) ou Set de hosts online', () => {
   if (s instanceof Set) {
     for (const h of s) assert.equal(typeof h, 'string');   // hostnames/IPs lowercase
   }
+});
+
+// ---- buildOnlineSet: formas canônicas (HostName + FQDN + IPs) ----
+test('buildOnlineSet: inclui HostName curto + FQDN (DNSName sem dot) + IPs', () => {
+  const set = buildOnlineSet({
+    Peer: {
+      p1: { Online: true, HostName: 'Alienware', DNSName: 'alienware.tailXXXX.ts.net.', TailscaleIPs: ['100.64.0.1', 'fd7a:115c::1'] },
+      p2: { Online: false, HostName: 'offline', TailscaleIPs: ['100.64.0.2'] },   // offline → fora
+    },
+  });
+  assert.ok(set.has('alienware'), 'hostname curto lowercased');
+  assert.ok(set.has('alienware.tailxxxx.ts.net'), 'FQDN lowercased sem trailing dot');
+  assert.ok(set.has('100.64.0.1'), 'IPv4');
+  assert.ok(set.has('fd7a:115c::1'), 'IPv6');
+  assert.ok(!set.has('offline'), 'peer offline não entra');
+  assert.ok(!set.has('alienware.tailXXXX.ts.net.'), 'trailing dot removido');
+});
+
+// ---- peerOnline: casa hostname / FQDN / host:porta / IP (PR-32 #16) ----
+test('peerOnline: hostname curto, FQDN, host:porta e IP casam; offline não', () => {
+  const set = buildOnlineSet({ Peer: { p: { Online: true, HostName: 'notebook-hg', DNSName: 'notebook-hg.tailAB.ts.net.', TailscaleIPs: ['100.64.0.9'] } } });
+  assert.equal(peerOnline(set, 'notebook-hg'), true);
+  assert.equal(peerOnline(set, 'NOTEBOOK-HG'), true);                       // case-insensitive
+  assert.equal(peerOnline(set, 'notebook-hg.tailab.ts.net'), true);         // FQDN (MagicDNS)
+  assert.equal(peerOnline(set, 'notebook-hg:47474'), true);                 // host:porta (UI sugere)
+  assert.equal(peerOnline(set, '100.64.0.9'), true);                        // IP
+  assert.equal(peerOnline(set, '100.64.0.9:47474'), true);                  // IP:porta
+  assert.equal(peerOnline(set, 'outro-host'), false);                       // não configurado
+  assert.equal(peerOnline(null, 'qualquer'), true);                         // sem gate => online
+});
+
+test('peerOnline: IPv6 não é tratado como porta (preserva o host)', () => {
+  const set = buildOnlineSet({ Peer: { p: { Online: true, HostName: 'n6', TailscaleIPs: ['fd7a:115c:a1e0:b1a:0:0:0:1234'] } } });
+  assert.equal(peerOnline(set, 'fd7a:115c:a1e0:b1a:0:0:0:1234'), true);    // IPv6 intacto
 });
 
 test('pollPeers: peer offline → onPeerState(false) UMA vez (backoff, sem spam)', async () => {

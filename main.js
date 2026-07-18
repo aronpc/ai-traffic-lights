@@ -1167,7 +1167,7 @@ function applySync() {
     onlineTimer = setInterval(() => { onlineSet = net.tailscaleOnlineSet(); }, 10000);
     stopPoll = net.pollPeers({
       peers: s.peers, port: s.port, token: tok,
-      isOnline: (h) => { if (!onlineSet) return true; const lc = String(h).toLowerCase(); return onlineSet.has(h) || onlineSet.has(lc); },
+      isOnline: (h) => net.peerOnline(onlineSet, h),   // PR-32 #16: casa hostname curto / FQDN / host:porta / IP
       onSessions: (host, sessions) => {
         remoteSessions.set(host, sessions);
         livePeers.add(host);   // ATL ligado no peer → habilita no menu + da termWin

@@ -44,22 +44,38 @@ function detectTailnetIP() {
   return _tsIP || null;
 }
 
-// Set de peers ONLINE segundo o Tailscale (HostName + IPs, lowercased). O poller
-// usa p/ SÓ tentar rede quem tá online (zero fetch em offline; detecta "ficou
-// online" assim que o Tailscale marca — ~cadência de refresh do main). null se
-// tailscale ausente (aí o poller cai pro backoff puro, sem gate).
+// Constrói o set de hosts online a partir do JSON de `tailscale status --json`.
+// PURA (sem I/O) → testável. Formas canônicas no set: HostName curto + FQDN
+// (DNSName sem trailing dot) + IPs — assim o gate casa peer configurado como
+// hostname curto, MagicDNS FQDN ou host:porta (PR-32 #16: antes só HostName+IP,
+// e o FQDN nunca casava → peer tratado como offline pra sempre).
+function buildOnlineSet(j) {
+  const set = new Set();
+  for (const peer of Object.values((j && j.Peer) || {})) {
+    if (!peer || !peer.Online) continue;
+    if (peer.HostName) set.add(String(peer.HostName).toLowerCase());
+    for (const ip of peer.TailscaleIPs || []) set.add(String(ip));
+    if (peer.DNSName) set.add(String(peer.DNSName).toLowerCase().replace(/\.$/, ''));
+  }
+  return set;
+}
+// Set de peers ONLINE segundo o Tailscale, p/ o poller SÓ tentar rede quem tá
+// online (zero fetch em offline; detecta "ficou online" ~cadência de refresh do
+// main). null se tailscale ausente (aí o poller cai pro backoff puro, sem gate).
 function tailscaleOnlineSet() {
   try {
     const j = JSON.parse(execFileSync('tailscale', ['status', '--json'], { encoding: 'utf8', timeout: 3000 }));
-    const set = new Set();
-    for (const peer of Object.values(j.Peer || {})) {
-      if (peer && peer.Online) {
-        if (peer.HostName) set.add(String(peer.HostName).toLowerCase());
-        for (const ip of peer.TailscaleIPs || []) set.add(String(ip));
-      }
-    }
-    return set;
+    return buildOnlineSet(j);
   } catch { return null; }
+}
+// Diz se um host configurado (hostname curto, FQDN, host:porta ou IP) está no
+// set de online. Normaliza (tira :porta do fim — não IPv6 — e lowercase) e checa
+// as formas canônicas do set (PR-32 #16). set null => assume online (sem gate).
+function peerOnline(set, host) {
+  if (!set) return true;
+  if (!host) return false;
+  const m = String(host).toLowerCase().match(/^([^:]+):(\d{1,5})$/);   // host:porta → host (IPv6 intacto)
+  return set.has(m ? m[1] : String(host).toLowerCase());
 }
 
 // Campos machine-local que NÃO atravessam a rede (só fazem sentido neste host).
@@ -237,4 +253,4 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
   } catch { return []; }
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet };
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline };
