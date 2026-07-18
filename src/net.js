@@ -134,7 +134,7 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
           if (sess && !/^[A-Za-z0-9._-]+$/.test(sess)) return ws.close(4400, 'bad session');  // inválido rejeita; ausente = shell novo
           cleanup();
           try {
-            const cmd = sess ? ['tmux', 'attach', '-t', sess] : [process.env.SHELL || 'bash'];   // sem sess → shell novo no peer
+            const cmd = sess ? ['tmux', 'attach', '-t', sess] : ['tmux', 'new-session', '-s', 'atl-shell-' + Date.now().toString(36), process.env.SHELL || 'bash'];   // sem sess → novo shell DENTRO de um tmux (attachável, igual ao local)
             pty = ptySpawn(cmd, m.cols | 0 || 80, m.rows | 0 || 24, {
               onData: (d) => { try { ws.send(JSON.stringify({ type: 'out', data: d })); } catch {} },
               onExit: () => { try { ws.send(JSON.stringify({ type: 'exit' })); } catch {} },

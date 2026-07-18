@@ -1278,7 +1278,9 @@ ipcMain.on('term-new-shell', (_e, host) => {
     openRemotePty(tabId, { host, port: cfg.port, token: cfg.token });   // sem tmux_session → shell novo no peer
   } else {
     const tabId = addTermSession({ title: 'shell', kind: 'local' });
-    spawnPtyLocal(tabId, [process.env.SHELL || 'bash'], process.env.HOME);
+    const hasTmux = !!scanPathBin('tmux');
+    const cmd = hasTmux ? launcher.tmuxWrap([process.env.SHELL || 'bash'], launcher.tmuxSessionName('shell') + '-' + Date.now().toString(36)) : [process.env.SHELL || 'bash'];
+    spawnPtyLocal(tabId, cmd, process.env.HOME);
   }
 });
 ipcMain.handle('term-hosts', () => {
