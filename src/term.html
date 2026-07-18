@@ -27,6 +27,10 @@
     .term-tabs { position: relative; -webkit-app-region: drag; display: flex; align-items: center;
       gap: 4px; padding: 6px 8px; background: rgba(255,255,255,.03);
       border-bottom: 1px solid var(--border); min-height: 38px; flex: 0 0 auto; }
+    .term-drag { -webkit-app-region: drag; flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+      padding: 0 12px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .03em; color: var(--ink-dim);
+      cursor: default; user-select: none; }
+    .term-drag-logo { width: 14px; height: 14px; border-radius: 3px; background: linear-gradient(135deg, var(--accent), #8a5cff); }
     .term-tabs-list { display: flex; align-items: center; gap: 4px; flex: 1; overflow-x: auto;
       -webkit-app-region: no-drag; }
     .term-tabs-list::-webkit-scrollbar { height: 6px; }
@@ -65,6 +69,7 @@
 <body>
   <div class="term-app" id="termApp">
     <header class="term-tabs">
+      <span class="term-drag" title="arraste para mover a janela"><span class="term-drag-logo"></span>ATL</span>
       <div class="term-tabs-list" id="tabs"></div>
       <button class="tab-new" id="newTabBtn" title="novo terminal (local ou servidor)">+</button>
       <div class="win-ctrls">
