@@ -305,20 +305,8 @@ function focusSession(target) {
   }
 }
 
-// ---- aliases (apelido manual por SESSÃO) ----
-// Chave = identidade da sessão (session_id, fallback pid) — a MESMA linha do
-// overlay, calculada em renderer.aliasKey. Antes era o cwd, o que fazia dois
-// terminais no mesmo diretório compartilharem o apelido (renomear um renomeava
-// todos). O main só persiste a chave opaca que o renderer manda.
-function loadAliases() {
-  try { return JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8')) || {}; } catch { return {}; }
-}
-function saveAlias(key, alias) {
-  const a = loadAliases();
-  if (alias && alias.trim()) a[key] = alias.trim();
-  else delete a[key];
-  try { fs.writeFileSync(ALIASES_FILE, JSON.stringify(a)); } catch {}
-}
+// aliases (loadAliases/saveAlias + handlers get-aliases/set-alias): extraídos
+// para src/ipc/aliases.js (REF passo 7). Registrados no boot via setupAliasesIpc.
 
 // ---- idioma (i18n) ----
 // Prioridade: escolha manual nas Preferências (settings.lang ≠ 'auto') >
@@ -988,23 +976,7 @@ ipcMain.on('quit', () => app.quit());
 // Click-to-focus: ativa o terminal da sessão ({pid, windowid}).
 ipcMain.on('focus', (_e, target) => focusSession(target));
 
-// Aliases (apelido por sessão — chave = session_id|pid, ver renderer.aliasKey).
-ipcMain.handle('get-aliases', () => loadAliases());
-ipcMain.on('set-alias', (_e, { key, alias }) => {
-  // valida no limite IPC: key é a identidade da sessão (session_id ou pid),
-  // alias é string curta. Ignora payload malformado em vez de gravar lixo.
-  if (typeof key !== 'string' || !key || key.length > 512) return;
-  if (alias != null && (typeof alias !== 'string' || alias.length > 256)) return;
-  saveAlias(key, alias);
-  sendSessions();
-  // atualiza o título da aba correspondente na janela Terminal (alias é o nome da aba)
-  for (const [id, s] of termSessions) {
-    if (s.sessionKey === key) {
-      const t = alias || ((s.kind === 'local' ? '' : (s.origin || '') + ' · ') + 'tmux: ' + (s.tmux_session || 'shell'));
-      s.title = t; sendTerm('term-tab-title', { tabId: id, title: t });
-    }
-  }
-});
+// (handlers get-aliases/set-alias movidos para src/ipc/aliases.js — REF passo 7)
 
 // Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
 // e abertura da janela a partir do renderer (caso queira botão no overlay um dia).
@@ -1390,6 +1362,17 @@ app.whenReady().then(() => {
   updateIpc = require('./src/ipc/update').setupUpdateIpc({   // auto-update extraído (REF passo 1)
     getMainWindow: () => win, getSettings: () => settingsCfg,
     T, revealIfHidden, REPO_URL, APP_VERSION, AUTOSTART_FILE,
+  });
+  require('./src/ipc/aliases').setupAliasesIpc({   // aliases extraído (REF passo 7)
+    ipcMain, ALIASES_FILE, sendSessions,
+    onAliasSaved: (key, alias) => {   // atualiza o título da aba Terminal (alias é o nome da aba)
+      for (const [id, s] of termSessions) {
+        if (s.sessionKey === key) {
+          const t = alias || ((s.kind === 'local' ? '' : (s.origin || '') + ' · ') + 'tmux: ' + (s.tmux_session || 'shell'));
+          s.title = t; sendTerm('term-tab-title', { tabId: id, title: t });
+        }
+      }
+    },
   });
   applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
