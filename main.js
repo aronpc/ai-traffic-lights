@@ -1297,9 +1297,9 @@ function spawnPtyLocal(tabId, cmd, cwd) {
 // cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
 function openRemotePty(tabId, { host, port, token, tmux_session }) {
   const s = termSessions.get(tabId); if (!s) return;
-  const url = 'ws://' + host + ':' + (port || 47474) + '/pty?token=' + encodeURIComponent(token);
+  const url = 'ws://' + host + ':' + (port || 47474) + '/pty';
   let ws;
-  try { ws = new (require('ws'))(url); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
+  try { ws = new (require('ws'))(url, { headers: { Authorization: 'Bearer ' + token } }); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
   s.ws = ws;
   ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: s.cols, rows: s.rows })); } catch {} });
   ws.on('message', (raw) => {

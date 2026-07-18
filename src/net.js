@@ -110,15 +110,17 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
 
   // /pty — terminal remoto via WebSocket (attach remoto ao vivo). Opt-in
   // (allowAttach) + ptySpawn INJETADO (DI): net.js não conhece node-pty →
-  // módulo puro/testável. Auth pelo mesmo token (query ?token=); tmux_session
-  // sanitizado (anti-injeção no shell do peer). Protocolo JSON por frame:
+  // módulo puro/testável. Auth pelo mesmo token via header Authorization: Bearer
+  // (igual a /sessions e /transcript) — token NUNCA na URL, p/ não vazar em
+  // access-logs do tailscale. tmux_session sanitizado (anti-injeção no shell do
+  // peer). Protocolo JSON por frame:
   // c→s {start|in|resize} · s→c {out|exit|error}.
   if (allowAttach && typeof ptySpawn === 'function' && WebSocketServer) {
     const wss = new WebSocketServer({ noServer: true });
     server.on('upgrade', (req, socket, head) => {
       const url = new URL(req.url, 'http://127.0.0.1');
       if (url.pathname !== '/pty') return socket.destroy();
-      if (!tokenOk(url.searchParams.get('token') || '', token)) {
+      if (!tokenOk(bearerOf(req), token)) {
         try { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); } catch {}
         return socket.destroy();
       }

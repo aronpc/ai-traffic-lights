@@ -87,7 +87,8 @@ test('server: rota desconhecida → 404', async () => {
 const WebSocket = require('ws');
 function fakePty() { return { write() {}, resize() {}, kill() {} }; }
 async function wsOpen(port, token) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/pty${token != null ? '?token=' + token : ''}`);
+  // token via header Authorization: Bearer (igual ao cliente real) — nunca na URL.
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/pty`, token != null ? { headers: { Authorization: 'Bearer ' + token } } : {});
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); ws.once('unexpected-response', rej); });
   return ws;
 }
