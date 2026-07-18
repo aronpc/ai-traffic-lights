@@ -111,7 +111,10 @@ ensure_runtime_deps() {
         || warn "não instalei tudo — instale fuse-libs/mesa-libgbm/nss/gtk3 se o app não abrir."
       ;;
     pacman)
-      $SUDO pacman -Sy --noconfirm --needed fuse2 mesa nss alsa-lib gtk3 wmctrl xdotool jq tmux \
+      # -S --needed (sem -Sy): -Sy isolado é partial upgrade (sincroniza índice sem
+      # atualizar o sistema), anti-pattern documentado pela própria Arch como capaz
+      # de instalar libs incompatíveis. Assumimos índice já atualizado (PR-32 #31).
+      $SUDO pacman -S --noconfirm --needed fuse2 mesa nss alsa-lib gtk3 wmctrl xdotool jq tmux \
         || warn "não instalei tudo — instale fuse2/mesa/nss/gtk3 se o app não abrir."
       ;;
     zypper)
@@ -187,6 +190,17 @@ install_via_deb() {
 # ----------------------------- uninstall -----------------------------
 if [ "$ACTION" = "uninstall" ]; then
   info "removendo $APP_TITLE..."
+  # Instalado via .deb (ATL_PKG=deb)? O pacote deb NÃO é coberto pela remoção dos
+  # artefatos AppImage abaixo — sem isto, --uninstall deixava o pacote dpkg
+  # instalado e mesmo assim imprimia "removido" (PR-32 #32).
+  if command -v dpkg >/dev/null 2>&1; then
+    DEB_PKG="$(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -iE 'ai-traffic-lights|aitrafficlights' | head -1 || true)"
+    if [ -n "$DEB_PKG" ]; then
+      info "instalação via .deb detectada (pacote $DEB_PKG) — removendo via apt..."
+      $SUDO apt-get remove --purge -y "$DEB_PKG" 2>/dev/null || $SUDO dpkg -r "$DEB_PKG" 2>/dev/null \
+        || warn "não consegui remover o pacote deb $DEB_PKG (faça: sudo apt-get remove $DEB_PKG)"
+    fi
+  fi
   rm -f "$APPIMAGE_PATH" "$DESKTOP_PATH" "$LAUNCHER_PATH" "$VERSION_FILE"
   rm -f "$HOME/.config/autostart/$BIN_NAME.desktop"        # autostart criado pelo próprio app
   for sz in $ICON_SIZES; do rm -f "$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps/$BIN_NAME.png"; done
