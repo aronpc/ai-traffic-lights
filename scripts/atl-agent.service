@@ -1,29 +1,49 @@
 # atl-agent.service — unit do systemd para o modo headless do sync (fase 4).
-# Expõe as sessões DESTE servidor no mesh P2P (servidor /sessions em localhost,
-# atrás do `tailscale serve`). Sem GUI, sem Electron.
+# Expõe as sessões DESTE servidor no mesh P2P (servidor /sessions + /transcript
+# bindando DIRETO no IP da tailnet — mesmo modelo da GUI). Sem GUI, sem Electron.
+#
+# SEGURANÇA (PR-32 #04/#29):
+#   - Roda como o DONO das sessões (User=/Group=), NUNCA como root. Sem isso, o
+#     /pty (se allowAttach) daria shell root e o agent leria ~root/.local/share.
+#   - O token NÃO vive nesta unit (arquivos de unit costumam ser 0644, legíveis
+#     por qualquer usuário local e expostos por `systemctl show`). Ele vem de um
+#     EnvironmentFile= em arquivo 0600 que só o root (e o systemd no start) lê.
+#   - Sobe DEPOIS do tailscaled (After=/Wants=). Sem isso, após reboot o agent
+#     sobe antes do Tailscale, detectTailnetIP falha e cacheia null pra sempre.
 #
 # Instalar:
 #   1) sudo cp scripts/atl-agent.service /etc/systemd/system/
-#   2) edite ExecStart/Environment (token, node, paths) conforme o host
-#   3) sudo systemctl daemon-reload && sudo systemctl enable --now atl-agent
-#
-# O servidor escuta em 127.0.0.1:<porta>; exponha à tailnet com:
-#   tailscale serve --bg 47474    # mesma porta do ATL em cada nó
+#   2) edite User=/Group=/ExecStart conforme o host (dono das sessões + paths)
+#   3) crie o arquivo de env (0600, fora desta unit):
+#        sudo install -d -m755 /etc/ai-traffic-lights
+#        sudo install -m600 /dev/null /etc/ai-traffic-lights/sync.env
+#        sudo tee /etc/ai-traffic-lights/sync.env >/dev/null <<'EOF'
+#        ATL_SYNC_TOKEN=<seu-token-aqui>
+#        ATL_SYNC_ENABLED=1
+#        ATL_SYNC_SHARE=1
+#        ATL_SYNC_NODE=%H
+#        EOF
+#      (# chown do arquivo não importa: o systemd lê como root antes do setuid.
+#       O 0600 impede outros usuários locais de lerem o token.)
+#   4) sudo systemctl daemon-reload && sudo systemctl enable --now atl-agent
 
 [Unit]
 Description=AI Traffic Lights — sync agent (headless, P2P over Tailscale)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
 
 [Service]
 Type=simple
+# Roda como o DONO das sessões (nunca root): /pty + leitura de state files
+# precisam do usuário certo. TROQUE pelo usuário/grupo dono dos terminais com
+# agentes NESTE host.
+User=aron
+Group=aron
 # ajuste o caminho do node e do agent.js para o seu host:
 ExecStart=/usr/bin/node /opt/ai-traffic-lights/agent.js
-# overrides por env (servidor sem GUI pra editar settings.json):
-Environment="ATL_SYNC_ENABLED=1"
-Environment="ATL_SYNC_SHARE=1"
-Environment="ATL_SYNC_TOKEN=COLOQUE-O-TOKEN-AQUI"
-Environment="ATL_SYNC_NODE=%H"
+# Token e config sensível vêm de um arquivo 0600 (NÃO inline nesta unit 0644).
+# Sem o arquivo, a unit falha ao subir (fail-safe: sem token => sem sync).
+EnvironmentFile=/etc/ai-traffic-lights/sync.env
 # XDG_DATA_HOME aponta onde os hooks do ATL gravam os state files (default ~/.local/share):
 # Environment="XDG_DATA_HOME=/var/lib/ai-traffic-lights"
 Restart=on-failure
