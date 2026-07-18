@@ -157,9 +157,33 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
       }
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     });
+    // HEARTBEAT (PR-32 #12): conexão meio-aberta (peer sumiu sem FIN) nunca
+    // dispara 'close' → o pty/tmux ficava vivo indefinidamente. ping/pong a cada
+    // 30s; quem não responde é terminate() (libera o pty via cleanup).
+    const hb = setInterval(() => {
+      wss.clients.forEach((ws) => {
+        if (ws.isAlive === false) return ws.terminate();
+        ws.isAlive = false;
+        try { ws.ping(); } catch {}
+      });
+    }, 30000);
+    hb.unref();
+    // BACKPRESSURE (PR-32 #25): output massivo (cat/yes/tail -f) sem checar
+    // bufferedAmount derrubava o main por OOM — cada chunk virava ws.send na
+    // hora. Histerese: pausa o pty em HIGH (1 MiB), retoma em LOW (256 KiB).
+    const HIGH = 1 << 20, LOW = 1 << 18;
+    const bp = setInterval(() => {
+      wss.clients.forEach((ws) => {
+        if (ws._pty && ws._paused && ws.bufferedAmount < LOW) { ws._paused = false; try { ws._pty.resume(); } catch {} }
+      });
+    }, 250);
+    bp.unref();
+    wss.on('close', () => { clearInterval(hb); clearInterval(bp); });
     wss.on('connection', (ws) => {
+      ws.isAlive = true;
+      ws.on('pong', () => { ws.isAlive = true; });
       let pty = null;
-      const cleanup = () => { try { if (pty) pty.kill(); } catch {} pty = null; };
+      const cleanup = () => { try { if (pty) pty.kill(); } catch {} pty = null; ws._pty = null; };
       ws.on('message', (raw) => {
         let m; try { m = JSON.parse(raw); } catch { return; }
         if (m.type === 'start') {
@@ -169,9 +193,15 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
           try {
             const cmd = sess ? ['tmux', 'attach', '-t', sess] : ['tmux', 'new-session', '-s', 'atl-shell-' + Date.now().toString(36), process.env.SHELL || 'bash'];   // sem sess → novo shell DENTRO de um tmux (attachável, igual ao local)
             pty = ptySpawn(cmd, m.cols | 0 || 80, m.rows | 0 || 24, {
-              onData: (d) => { try { ws.send(JSON.stringify({ type: 'out', data: d })); } catch {} },
+              onData: (d) => {
+                try {
+                  ws.send(JSON.stringify({ type: 'out', data: d }));
+                  if (pty && !ws._paused && ws.bufferedAmount > HIGH) { ws._paused = true; try { pty.pause(); } catch {} }   // WS entupindo → pausa o pty (bp retoma ao drenar)
+                } catch {}
+              },
               onExit: () => { try { ws.send(JSON.stringify({ type: 'exit' })); } catch {} },
             });
+            ws._pty = pty;
           } catch (e) { try { ws.send(JSON.stringify({ type: 'error', msg: String((e && e.message) || e) })); } catch {} }
         } else if (pty && m.type === 'in') { try { pty.write(m.data); } catch {} }
         else if (pty && m.type === 'resize') { try { pty.resize(m.cols | 0 || 80, m.rows | 0 || 24); } catch {} }
