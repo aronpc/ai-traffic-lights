@@ -528,7 +528,7 @@ function buildTrayMenu() {
     { label: T('tray_install_hooks'), click: installHookFromApp },
     { label: T('tray_remove_hooks'), click: removeHookFromApp },
     { type: 'separator' },
-    { label: T('tray_preferences'), click: createSettingsWindow },
+    { label: T('tray_preferences'), click: () => settingsIpc && settingsIpc.createSettingsWindow() },
     { label: T('tray_check_updates'), click: () => updateIpc && updateIpc.checkUpdatesManual() },
     { label: T('tray_quit'), click: () => app.quit() },
   ]);
@@ -540,21 +540,6 @@ function buildTrayMenu() {
 // ---- janela de Preferências (threshold de idle + atalho) ----
 let settingsWin = null;
 let settingsBoundsTimer = null;
-function loadSettingsBounds() {
-  try { return JSON.parse(fs.readFileSync(SETTINGS_BOUNDS_FILE, 'utf8')); } catch { return null; }
-}
-function saveSettingsBounds() {
-  if (!settingsWin || settingsWin.isDestroyed()) return;
-  clearTimeout(settingsBoundsTimer);
-  settingsBoundsTimer = setTimeout(() => {
-    try {
-      const [x, y] = settingsWin.getPosition();
-      // Só a posição: o tamanho é fixo (SETTINGS_W/H) e ignorado no load —
-      // gravá-lo só persistiria dados mortos e confundiria versões futuras.
-      fs.writeFileSync(SETTINGS_BOUNDS_FILE, JSON.stringify({ x, y }));
-    } catch {}
-  }, 300);
-}
 // Tamanho FIXO da janela de Preferências (não redimensionável): travado na
 // altura da aba mais alta (Geral), medido no conteúdo real a 420px de largura.
 // As abas mais curtas (Integração) ficam com espaço vazio; nenhuma rola.
@@ -564,47 +549,8 @@ function saveSettingsBounds() {
 // com espaço vazio; nenhuma rola. Em telas baixas (768px) o winH clampa à work
 // area e a aba rola (header/rodapé ficam fixos).
 const SETTINGS_W = 420, SETTINGS_H = 770;
-function createSettingsWindow() {
-  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
-  const b = loadSettingsBounds() || {};
-  // Clampa à altura da área útil do display: em telas baixas (ex.: 1366×768,
-  // work area ~728px) a altura ideal (761) não cabe e, com resizable:false, o
-  // rodapé/Fechar + o fim da aba Geral ficariam abaixo da tela, inalcançáveis.
-  // O .tab-body (overflow-y:auto) rola; header/abas/.actions (flex:0 0 auto)
-  // ficam fixos — o "Fechar" nunca some. Display mais próximo da posição salva
-  // cobre multi-monitor; sem posição, cai no primário.
-  const disp = (typeof b.x === 'number' && typeof b.y === 'number')
-    ? screen.getDisplayNearestPoint({ x: b.x, y: b.y })
-    : screen.getPrimaryDisplay();
-  const winH = Math.min(SETTINGS_H, disp.workAreaSize.height - 24); // 24 = respiro
-  settingsWin = new BrowserWindow({
-    width: SETTINGS_W, height: winH,
-    useContentSize: true,               // width/height = área web (o .prefs preenche)
-    resizable: false,                   // tamanho travado na maior aba (pedido do usuário)
-    maximizable: false, fullscreenable: false,
-    x: typeof b.x === 'number' ? b.x : undefined,   // posição é lembrada; tamanho não
-    y: typeof b.y === 'number' ? b.y : undefined,
-    title: T('prefs_title'),
-    icon: path.join(__dirname, 'build/icon.png'),
-    // Mesmo chrome custom do overlay (ver createWindow acima): sem moldura
-    // nativa + fundo transparente — o .prefs (settings.css) desenha o painel
-    // arredondado com borda e sombra, e o header .bar é arrastável.
-    frame: false,
-    transparent: true,
-    hasShadow: false,
-    backgroundColor: '#00000000',
-    autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
-  });
-  // O overlay é always-on-top nível 'screen-saver' — sem elevar as Preferências
-  // ao MESMO nível, elas abrem ATRÁS dele quando as janelas se sobrepõem.
-  // Mesmo nível + criada depois = fica na frente.
-  settingsWin.setAlwaysOnTop(true, 'screen-saver');
-  settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
-  settingsWin.on('move', saveSettingsBounds);          // só posição (tamanho é fixo)
-  settingsWin.on('closed', () => { settingsWin = null; });
-}
 
+// settings (loadSettingsBounds/saveSettingsBounds/createSettingsWindow): extraído p/ src/ipc/settings.js (REF passo 9). save-settings fica (aplicador).
 // ---- IPC ----
 ipcMain.on('request-sessions', sendSessions);
 
@@ -659,18 +605,7 @@ ipcMain.on('quit', () => app.quit());
 // (handlers get-aliases/set-alias movidos para src/ipc/aliases.js — REF passo 7)
 
 // Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
-// e abertura da janela a partir do renderer (caso queira botão no overlay um dia).
-ipcMain.handle('get-settings', () => settingsCfg);
-ipcMain.handle('get-lang', () => LANG);
-ipcMain.handle('get-version', () => APP_VERSION);              // rodapé das Preferências
-// Abre URL externa no navegador padrão. Só aceita http(s) — o renderer passa
-// só o link do repo, mas o guarda evita que qualquer string vire comando/protocolo.
-ipcMain.on('open-external', (_e, url) => {
-  if (typeof url === 'string' && /^https?:\/\//.test(url)) {
-    try { shell.openExternal(url); } catch {}
-  }
-});
-ipcMain.handle('get-repo-url', () => REPO_URL);
+// (handlers get-settings/get-lang/get-version/open-external/get-repo-url movidos p/ src/ipc/settings.js — REF passo 9)
 ipcMain.on('save-settings', (_e, cfg) => {
   // No live-apply isto dispara a CADA mudança nas Preferências. Só refaz o
   // trabalho caro quando o valor relevante mudou de fato (evita re-registrar o
@@ -685,7 +620,7 @@ ipcMain.on('save-settings', (_e, cfg) => {
   }
   sendToRenderer('settings-changed', settingsCfg);
 });
-ipcMain.on('open-settings', () => createSettingsWindow());
+// (handler 'open-settings' movido p/ src/ipc/settings.js — REF passo 9)
 
 // Sync multi-máquina: lê/gravar SÓ o sub-objeto sync (validado em persistSettings).
 ipcMain.handle('get-sync', () => (settingsCfg && settingsCfg.sync) || null);
@@ -717,44 +652,7 @@ ipcMain.on('remove-hooks', () => removeHookFromApp());
 // Notificação no vermelho.
 // (handler 'notify' movido para src/ipc/tray.js — REF passo 8)
 
-// ---- som de alerta customizado ----
-// Escolher um arquivo de áudio: abre o diálogo nativo e COPIA o arquivo pra
-// BASE_DIR/sounds/alert.<ext> (sobrevive a mover/apagar o original). Devolve o
-// caminho da cópia (o que fica salvo em settings.soundFile) ou null se cancelou.
-ipcMain.handle('pick-sound-file', async () => {
-  try {
-    const r = await dialog.showOpenDialog({
-      title: 'Escolher som de alerta',
-      properties: ['openFile'],
-      filters: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus'] }],
-    });
-    if (r.canceled || !r.filePaths || !r.filePaths[0]) return null;
-    const src = r.filePaths[0];
-    const dir = path.join(BASE_DIR, 'sounds');
-    fs.mkdirSync(dir, { recursive: true });
-    const ext = (path.extname(src).toLowerCase().match(/^\.[a-z0-9]{1,8}$/) || ['.snd'])[0];
-    const dest = path.join(dir, 'alert' + ext);
-    // limpa cópias antigas (alert.*) pra não acumular formatos
-    for (const f of fs.readdirSync(dir)) {
-      const p = path.join(dir, f);
-      if (/^alert\./.test(f) && p !== dest) { try { fs.unlinkSync(p); } catch { /* ignore */ } }
-    }
-    fs.copyFileSync(src, dest);
-    return dest;
-  } catch { return null; }
-});
-// Ler os bytes do som custom pro renderer decodificar (Web Audio). TRAVA DE
-// SEGURANÇA: só lê de dentro de BASE_DIR/sounds (nunca um caminho arbitrário),
-// pra que uma config podre não vire leitura de arquivo qualquer do disco.
-ipcMain.handle('get-sound-bytes', (_e, file) => {
-  try {
-    if (typeof file !== 'string') return null;
-    const soundsDir = path.join(BASE_DIR, 'sounds');
-    const resolved = path.resolve(file);
-    if (resolved !== soundsDir && !resolved.startsWith(soundsDir + path.sep)) return null;
-    return new Uint8Array(fs.readFileSync(resolved));
-  } catch { return null; }
-});
+// (handlers pick-sound-file/get-sound-bytes movidos p/ src/ipc/settings.js — REF passo 9)
 
 // Tray: mostrar/ocultar, autostart, sair.
 ipcMain.on('toggle-visibility', toggleWin);
@@ -778,6 +676,7 @@ let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcri
 const livePeers = new Set();      // hosts que responderam /sessions (ATL ligado) — o menu + só mostra vivos
 let syncServer = null, syncServerKey = null;
 let stopPoll = null, pollKey = null;
+let settingsIpc = null;   // settings window module (src/ipc/settings.js) — setado no boot, lido no tray
 let trayIpc = null;   // tray+notify module (src/ipc/tray.js) — setado no boot PRIMEIRO (fornece notifyUser)
 let updateIpc = null;   // auto-update module (src/ipc/update.js) — setado no boot, lido no tray
 let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no boot, lido no tray
@@ -1064,7 +963,11 @@ app.whenReady().then(() => {
     ipcMain, getSettings: () => settingsCfg, notifyUser, T, scanPathBin, hasBin, lastSessionCwd,
     ensureTermWin, addTermSession, spawnPtyLocal,
   });
-  trayIpc.createTray();   // DEPOIS de launcherIpc/updateIpc: buildTrayMenu os referencia
+  settingsIpc = require('./src/ipc/settings').setupSettingsIpc({   // settings extraído (REF passo 9) — antes do createTray (tray referencia createSettingsWindow)
+    ipcMain, getSettings: () => settingsCfg, getLang: () => LANG, T, APP_VERSION, REPO_URL,
+    SETTINGS_BOUNDS_FILE, BASE_DIR, appDir: __dirname,
+  });
+  trayIpc.createTray();   // DEPOIS de launcherIpc/updateIpc/settingsIpc: buildTrayMenu os referencia
   applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
 
