@@ -28,6 +28,14 @@ const $soundTest = document.getElementById('soundTest');
 const $terminal = document.getElementById('terminal');
 const $terminalCmd = document.getElementById('terminalCmd');
 const $terminalCmdField = document.getElementById('terminalCmdField');
+const $syncEnabled = document.getElementById('syncEnabled');
+const $syncToken = document.getElementById('syncToken');
+const $syncNode = document.getElementById('syncNode');
+const $syncPort = document.getElementById('syncPort');
+const $syncShare = document.getElementById('syncShare');
+const $syncShareTr = document.getElementById('syncShareTr');
+const $syncAttach = document.getElementById('syncAttach');
+const $syncPeers = document.getElementById('syncPeers');
 
 let captured = null;        // accelerator capturado (string) ou null
 let capturing = false;
@@ -102,6 +110,36 @@ function buildCfg() {
 function pushLive() {
   if (!ready) return;                        // ignora enquanto os campos são populados no load
   window.trafficLight.saveSettings(buildCfg());
+}
+
+// Sync (P2P): grava SÓ o sub-objeto sync (via setSync — validado e applySync'd
+// no main). Parser do textarea: 1 peer/linha, "host" ou "nome host".
+function buildSyncCfg() {
+  const peers = [];
+  for (const raw of ($syncPeers.value || '').split('\n')) {
+    const parts = raw.trim().split(/\s+/);
+    if (!parts[0]) continue;
+    const host = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+    const name = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+    peers.push({ name: name || host, host });
+  }
+  return {
+    enabled: $syncEnabled.checked,
+    token: $syncToken.value,
+    node: $syncNode.value.trim(),
+    port: parseInt($syncPort.value, 10) || 47474,
+    share: $syncShare.checked,
+    shareTranscripts: $syncShareTr.checked,
+    allowAttach: $syncAttach.checked,
+    peers,
+  };
+}
+function pushSync() { if (ready) window.trafficLight.setSync(buildSyncCfg()); }
+// Sub-toggles do sync ficam desabilitados (e meio-apagados) enquanto o mestre
+// `enabled` estiver desligado — sinaliza visualmente que nada está ativo.
+function syncFieldState() {
+  const on = $syncEnabled.checked;
+  for (const $e of [$syncShare, $syncShareTr, $syncAttach, $syncToken, $syncNode, $syncPort, $syncPeers]) $e.disabled = !on;
 }
 
 // ---- captura do atalho ----
@@ -189,6 +227,15 @@ $opacity.addEventListener('input', () => {
 $opacity.addEventListener('change', () => { clearTimeout(opTimer); pushLive(); });
 $terminal.addEventListener('change', () => { syncTerminalCmdField(); pushLive(); });
 $terminalCmd.addEventListener('change', pushLive);
+// ---- sync multi-máquina (cada controle aplica na hora) ----
+$syncEnabled.addEventListener('change', () => { syncFieldState(); pushSync(); });
+$syncShare.addEventListener('change', pushSync);
+$syncShareTr.addEventListener('change', pushSync);
+$syncAttach.addEventListener('change', pushSync);
+$syncToken.addEventListener('change', pushSync);
+$syncNode.addEventListener('change', pushSync);
+$syncPort.addEventListener('change', pushSync);
+$syncPeers.addEventListener('change', pushSync);
 
 // ---- abas: troca de painel (client-side) ----
 const $tabs = document.querySelectorAll('.tab');
@@ -265,3 +312,17 @@ window.trafficLight.getSettings().then((c) => {
   ready = true;                                      // libera o live-apply só após popular tudo
 });
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });
+// Sync (P2P): popula os campos do sub-objeto sync. Population programática não
+// dispara 'change', então não empurra nada — e pushSync() ainda assim respeita `ready`.
+window.trafficLight.getSync().then((s) => {
+  s = s || {};
+  $syncEnabled.checked = s.enabled === true;
+  $syncToken.value = s.token || '';
+  $syncNode.value = s.node || '';
+  $syncPort.value = String(s.port || 47474);
+  $syncShare.checked = s.share === true;
+  $syncShareTr.checked = s.shareTranscripts === true;
+  $syncAttach.checked = s.allowAttach === true;
+  $syncPeers.value = (s.peers || []).map((p) => (p.name && p.name !== p.host ? `${p.name} ${p.host}` : p.host)).join('\n');
+  syncFieldState();   // reflete o estado enabled → sub-toggles on/off
+});

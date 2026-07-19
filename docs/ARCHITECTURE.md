@@ -1,5 +1,10 @@
 # Architecture
 
+> Implementation status changes faster than this architectural overview. The
+> [feature and roadmap catalog](FUNCIONALIDADES.md) distinguishes released,
+> branch-only, partial, and planned behavior, and records known documentation
+> gaps such as the incomplete Gemini product integration.
+
 AI Traffic Lights is a translucent, always-on-top Electron overlay that renders
 one traffic light (🟢 done · 🟡 working · 🔴 needs you) per **terminal AI agent
 session** — Claude Code, Gemini CLI, Codex and OpenCode today. Agents never talk

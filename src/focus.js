@@ -34,7 +34,7 @@ function pickWindow(windowid, wins, ancestorPids) {
 // NUL). É a fonte VIVA — usada no clique pra enriquecer sessões cujo state
 // ainda não tem o hint (evento anterior ao hook novo, ou sessão só-/proc).
 function parseEnviron(text) {
-  const out = { focus_url: null, tilix_id: null };
+  const out = { focus_url: null, tilix_id: null, tmux_pane: null };
   if (!text) return out;
   for (const line of text.split('\0')) {
     const eq = line.indexOf('=');
@@ -42,6 +42,7 @@ function parseEnviron(text) {
     const k = line.slice(0, eq);
     if (k === 'WARP_FOCUS_URL') out.focus_url = line.slice(eq + 1);
     else if (k === 'TILIX_ID') out.tilix_id = line.slice(eq + 1);
+    else if (k === 'TMUX_PANE') out.tmux_pane = line.slice(eq + 1);
   }
   return out;
 }
@@ -59,6 +60,17 @@ function tabChannel(state) {
   return null;
 }
 
+// tmux: foca o PAINEL do agente dentro do multiplexador. É COMPLEMENTAR ao
+// raise de janela e ao tabChannel — o agente pode estar num pane tmux dentro
+// do Warp/Tilix/qualquer terminal, então isto roda ALÉM deles. O pane id
+// ($TMUX_PANE, ex "%3") é global no server tmux; validamos o formato pra ele
+// nunca virar um argumento inesperado do `tmux`.
+function tmuxTarget(state) {
+  if (!state || !state.tmux_pane) return null;
+  const p = String(state.tmux_pane);
+  return /^%[0-9]+$/.test(p) ? p : null;
+}
+
 // Decide se o clique virou no-op (foco inviável): Wayland + não raiseou a
 // janela (wmctrl é cego pra apps Wayland-nativos) + sem canal de aba. O main
 // coleta hasTab (tabChannel != null) e raised (raiseWindow devolveu true) e
@@ -70,4 +82,4 @@ function isFocusUnsupported(state) {
   return !!state && !!state.wayland && !state.raised && !state.hasTab;
 }
 
-if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, parseEnviron, isFocusUnsupported };
+if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, tmuxTarget, parseEnviron, isFocusUnsupported };

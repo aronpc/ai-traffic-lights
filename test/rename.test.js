@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const SRC = path.join(__dirname, '..', 'src');
-const CODE = ['agents.js', 'state-machine.js', 'i18n.js', 'renderer.js']
+const CODE = ['agents.js', 'identity.js', 'state-machine.js', 'i18n.js', 'renderer.js']
   .map((f) => fs.readFileSync(path.join(SRC, f), 'utf8')).join('\n');
 
 function mkEl() {

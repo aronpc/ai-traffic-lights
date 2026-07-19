@@ -8,8 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sincronização P2P multi-máquina via Tailscale (opt-in).** Nós podem
+  compartilhar sessões por HTTP autenticado com Bearer token, observar peers,
+  identificar a origem de cada linha e evitar colisões de PID entre máquinas.
+  O poller usa o status local do Tailscale, backoff exponencial e ordenação
+  estável por origem/sessão.
+- **Painel “ver prompt” sob demanda.** Exibe as últimas mensagens de transcripts
+  locais ou remotos; compartilhamento remoto é uma permissão separada e
+  desligada por padrão. O leitor processa apenas o final do JSONL em chunks e
+  agrega blocos de streaming por `message.id`.
+- **Agente headless (`agent.js`).** Servidores sem display podem participar como
+  fonte do mesh sem Electron, com overrides `ATL_SYNC_*` e unit systemd de
+  exemplo.
+- **Captura de `tmux_session`** nos adapters como fundação para um futuro fluxo
+  de attach remoto.
+- **Foco de painel tmux.** Clicar no semáforo foca o painel exato do agente
+  dentro do tmux (via `$TMUX_PANE`), por cima do foco de janela e do canal de
+  aba (Warp/Tilix). O pane é validado (`/^%[0-9]+$/`) antes de virar argumento
+  do `tmux` e não cruza a rede (local-only).
+
 ### Changed
+- **Identidade de sessão agora inclui a origem** no merge, alertas, snooze e
+  marca de lido. Sessões remotas não podem ser renomeadas/focadas localmente e
+  a primeira hidratação de um peer não dispara alertas em massa.
+- **Ordem estável dentro do mesmo nível de urgência.** Tool calls deixam de
+  fazer as linhas pularem continuamente; local vem antes dos peers e a chave
+  de sessão decide a ordem.
+
 ### Fixed
+- **Instaladores garantem o primeiro arranque ("instala e não abre").** Linux:
+  runtime AppImage estático (dispensa `libfuse2`) + preflight que instala
+  `libfuse2`/`libfuse2t64` e as libs do Electron por distro + launcher com
+  fallback sem FUSE (`--appimage-extract-and-run`) + verificação de checksum
+  (sha512) + opção `ATL_PKG=deb` (apt resolve as dependências). macOS: `xattr`
+  + `codesign` ad-hoc destravam o Gatekeeper de app não-notarizado, sem depender
+  de Homebrew/`jq`.
 
 ## [0.7.2] - 2026-07-16
 

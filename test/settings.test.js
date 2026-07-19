@@ -156,3 +156,61 @@ test('mergeWithDefaults: launchers filtra pares chave/string válidos', () => {
   assert.deepEqual(mergeWithDefaults({ launchers: [] }).launchers, {});            // array, não objeto
   assert.deepEqual(mergeWithDefaults({ launchers: 'nope' }).launchers, {});
 });
+
+// ---- sync multi-máquina (P2P): OPT-IN TOTAL, tudo OFF por padrão ----
+test('sync: default é TUDO off/seguro (enabled/share/shareTranscripts false)', () => {
+  const s = DEFAULTS.sync;
+  assert.equal(s.enabled, false, 'enabled off por padrão');
+  assert.equal(s.share, false, 'share off por padrão');
+  assert.equal(s.shareTranscripts, false, 'shareTranscripts off por padrão');
+  assert.deepEqual(s.peers, [], 'sem peers por padrão');
+  assert.equal(s.token, '', 'token vazio por padrão');
+  assert.equal(typeof s.port, 'number', 'porta numérica');
+});
+
+test('sync: input vazio/podre → defaults (não vira undefined)', () => {
+  assert.deepEqual(mergeWithDefaults({}).sync, DEFAULTS.sync);
+  assert.deepEqual(mergeWithDefaults({ sync: 'lixo' }).sync, DEFAULTS.sync);
+  assert.deepEqual(mergeWithDefaults({ sync: [] }).sync, DEFAULTS.sync);
+});
+
+test('sync: aceita campos válidos', () => {
+  const s = mergeWithDefaults({
+    sync: { enabled: true, share: true, shareTranscripts: true, port: 8080, token: 'sekret', node: 'alienware', peers: [{ name: 'srv', host: '100.64.0.2' }] },
+  }).sync;
+  assert.equal(s.enabled, true);
+  assert.equal(s.share, true);
+  assert.equal(s.shareTranscripts, true);
+  assert.equal(s.port, 8080);
+  assert.equal(s.token, 'sekret');
+  assert.equal(s.node, 'alienware');
+  assert.deepEqual(s.peers, [{ name: 'srv', host: '100.64.0.2' }]);
+});
+
+test('sync: booleanos inválidos → default false; porta clampada [1,65535]', () => {
+  const s = mergeWithDefaults({ sync: { enabled: 'x', share: 1, port: 99999, port2: 0 } }).sync;
+  assert.equal(s.enabled, false);
+  assert.equal(s.share, false);
+  assert.equal(s.port, 65535);          // acima → clampa
+  assert.equal(mergeWithDefaults({ sync: { port: 0 } }).sync.port, 1); // abaixo → clampa
+  assert.equal(mergeWithDefaults({ sync: { port: 'x' } }).sync.port, DEFAULTS.sync.port);
+});
+
+test('sync: peers saneados (sem host descarta; name fallback = host; teto 32)', () => {
+  const s = mergeWithDefaults({ sync: { peers: [
+    { name: 'ok', host: 'h1' },
+    { name: 'semhost' },                  // descartado (sem host)
+    { host: 'h2' },                       // name fallback = host
+    'nao-objeto',                         // descartado
+    { name: 9, host: 123 },               // host não-string → descartado
+  ] } }).sync;
+  assert.deepEqual(s.peers, [{ name: 'ok', host: 'h1' }, { name: 'h2', host: 'h2' }]);
+  const many = mergeWithDefaults({ sync: { peers: Array.from({ length: 40 }, (_, i) => ({ host: 'h' + i })) } }).sync;
+  assert.equal(many.peers.length, 32, 'teto de 32 peers');
+});
+
+test('sync.allowAttach: default false + coerce boolean', () => {
+  assert.equal(DEFAULTS.sync.allowAttach, false);
+  assert.equal(mergeWithDefaults({ sync: { allowAttach: true } }).sync.allowAttach, true);
+  assert.equal(mergeWithDefaults({ sync: { allowAttach: 'yes' } }).sync.allowAttach, false, 'não-boolean → default false');
+});

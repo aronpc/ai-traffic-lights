@@ -9,6 +9,7 @@ let settingsCfg = null;                    // {idleThresholdSec, escalateIdle} d
 let lastLangPref = null;                    // pref de idioma aplicada ('auto'|'en'|'pt') — evita re-resolver o idioma a cada settings-changed (live-apply)
 let T = makeT('en');                       // i18n — troca pro idioma do sistema via get-lang
 let firstRender = true;                    // hidrata prevLevels sem alertar no boot
+const seenOrigins = new Set();             // origins já vistas (peer novo = hidrata sem apitar)
 const prevLevels = new Map();              // pid -> level (detecção de transição p/ vermelho)
 const lastAlert = new Map();               // pid -> ms (rate-limit do alerta)
 const snoozed = new Map();                 // key -> ms (silencia o ALERTA até então; a cor fica)
@@ -19,7 +20,7 @@ let usageEntries = [];                     // consumo/reset: [{agent,title,usedP
 let appVersion = '';                       // versão do app (rodapé direito)
 let updateInfo = null;                     // {current,method,latest,hasUpdate,url,error} do GitHub
 const SNOOZE_MS = 60 * 60 * 1000;          // 1h
-function snoozeKey(s) { return s.pid || s.session_id; }
+function snoozeKey(s) { return sessionKey(s); }
 // Identidade da LINHA p/ o apelido persistido — nunca o cwd. Dois terminais no
 // mesmo diretório são linhas distintas (session_id/pid diferentes) e devem
 // poder ter nomes distintos; indexar por cwd fazia renomear um renomear todos.
@@ -153,6 +154,7 @@ function applyStaticI18n() {
 function startRename(s, labelEl) {
   const key = aliasKey(s);
   if (!key || renaming) return;
+  if (s.origin && s.origin !== 'local') return;   // linha remota: rename é local-only (não sincroniza)
   renaming = true;
   const input = document.createElement('input');
   input.className = 'row-input';
@@ -190,9 +192,15 @@ function render() {
   const tally = { processing: 0, done: 0, awaiting: 0, read: 0 };
   const markRead = !settingsCfg || settingsCfg.markReadOnClick !== false;
 
+  // Origins que aparecem pela 1ª vez neste render (origens novas = peer acabou
+  // de conectar). Suas sessões são HIDRATADAS (prevLevels semeado) — não apita
+  // tudo de uma vez quando um peer entra; só transições futuras disparam alerta.
+  const newOrigins = new Set();
+  for (const s of sessions) { const o = s.origin || 'local'; if (!seenOrigins.has(o)) newOrigins.add(o); }
+
   // 1. computa estado de cada sessão (+ tally/worst no mesmo passo).
   const ranked = sessions.map((s) => {
-    const key = s.pid || s.session_id;
+    const key = sessionKey(s);
     // readAt só conta se a feature está ligada; senão computeState ignora.
     const readAt = markRead ? readMarks.get(key) : undefined;
     const st = computeState(s, nowSec, settingsCfg, readAt);
@@ -205,6 +213,9 @@ function render() {
     // não deve apitar (só transições reais disparam alerta). Sessão marcada
     // lida está em 'read' (não 'awaiting'), então não apita — reacende só com
     // evento vermelho novo (que volta pra 'awaiting' e passa por aqui).
+    // 1ª aparição da ORIGEM (peer novo, ou o boot): semeia prevLevels p/ não
+    // estourar alerta em sessões que JÁ estavam vermelhas quando chegaram.
+    if (newOrigins.has(s.origin || 'local')) prevLevels.set(key, st.level);
     const was = prevLevels.get(key);
     if (!firstRender && st.level === 'awaiting' && was !== 'awaiting' && !isSnoozed(key)) {
       const nowMs = Date.now();
@@ -217,14 +228,24 @@ function render() {
     prevLevels.set(key, st.level);
     return { s, st };
   });
+  for (const s of sessions) seenOrigins.add(s.origin || 'local'); // registra as origins vistas
 
   // Limpa estado por-sessão de sessões que morreram (evita crescer sem limite
   // em uso longo). readMarks/prevLevels/lastAlert/snoozed são chaveados por
   // pid||session_id; qualquer chave fora do conjunto vivo é lixo.
-  const liveKeys = new Set(sessions.map((s) => s.pid || s.session_id));
+  const liveKeys = new Set(sessions.map((s) => sessionKey(s)));
   for (const m of [readMarks, prevLevels, lastAlert, snoozed]) {
     for (const k of m.keys()) if (!liveKeys.has(k)) m.delete(k);
   }
+  // Poda seenOrigins das origins que sumiram (sync desligado / peer removido).
+  // Sem isso, ao religar o sync as origins remotas ainda estariam em seenOrigins
+  // → não entravam em newOrigins → prevLevels não era semeado → TODAS as
+  // vermelhas disparavam alertAwaiting() de uma vez (som + notificação nativa),
+  // sem o rate-limit do lastAlert (que também foi podado). A própria proteção
+  // anti-rajada falhava exatamente na reconexão. readMarks volta vermelho ao
+  // religar, mas a RAJADA de alerta — o bug High — some (PR-32 #19).
+  const liveOrigins = new Set(sessions.map((s) => s.origin || 'local'));
+  for (const o of seenOrigins) if (!liveOrigins.has(o)) seenOrigins.delete(o);
 
   // 2. ordena por urgência: 🔴 no topo, depois 🟡, depois 🟢 (state-machine.js).
   const ordered = sortByUrgency(ranked);
@@ -232,7 +253,7 @@ function render() {
   // 3. monta as linhas na ordem ordenada.
   const rows = ordered.map(({ s, st }) => {
     const label = labelFor(s);
-    const key = s.pid || s.session_id;     // p/ marcar como lido no clique
+    const key = sessionKey(s);     // p/ marcar como lido no clique
     const agent = AGENTS[agentOf(s)];
     // O ícone da LLM (à esquerda) já mostra QUAL agente — então o texto não
     // repete o nome do agente. Normal: modelo · ferramenta · tempo.
@@ -267,7 +288,11 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+        // tmux_session (local OU remoto) → attach no terminal EMBUTIDO (xterm+pty
+        // dentro do ATL — não abre janela externa). Remoto sem tmux → painel. Local sem tmux → foca.
+        if (s.tmux_session) { const _k = sessionKey(s); window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[_k] || '', _k); }
+        else if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
+        else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
       }, 220);
     });
 
@@ -306,7 +331,25 @@ function render() {
     const subInline = document.createElement('span');
     subInline.className = 'row__sub-inline'; // compacto: na mesma linha do nome
     subInline.textContent = subCompact;
+    // Clique no sub-texto (modelo · ferramenta · tempo) abre o painel "ver prompt"
+    // SÓ pra remota (local: deixa o clique subir e foca o terminal de verdade —
+    // painel só faz sentido onde não dá pra focar).
+    const openTs = (e) => {
+      if (!(s.origin && s.origin !== 'local')) return;   // local: clique sobe → focus
+      e.stopPropagation();
+      openTranscriptPanel(s);
+    };
+    subEl.addEventListener('click', openTs);
+    subInline.addEventListener('click', openTs);
+    subEl.title = subInline.title = T('ts_see_prompt');
 
+    // Badge de origem em sessão REMOTA (de qual máquina/peer veio).
+    if (s.origin && s.origin !== 'local') {
+      const badge = document.createElement('span');
+      badge.className = 'row__origin';
+      badge.textContent = s.origin;
+      main.append(badge);
+    }
     main.append(labelEl, subEl, subInline);
     li.append(led, reason, llm, main);
 
@@ -757,3 +800,42 @@ if (typeof setupTooltips === 'function') {
 // sobrescreve assim que chega). Sem isso o 1º paint fica sem dimensão definida.
 setExpanded(true);
 render();
+
+// ---- painel "ver prompt" (transcript) — fase 3 ----
+// Abre num clique no sub-texto da linha. Busca as últimas N mensagens sob
+// demanda (local lê disco; remoto via /transcript no peer) — nunca no poll.
+// textContent p/ o texto da mensagem (sem injeção de HTML vindo do prompt).
+let $tsPanel = null;
+function openTranscriptPanel(s) {
+  const $ov = document.getElementById('overlay');
+  if (!$ov) return;
+  if (!$tsPanel) {
+    $tsPanel = document.createElement('div');
+    $tsPanel.className = 'ts-panel';
+    $tsPanel.innerHTML = '<div class="ts-head"><span class="ts-title"></span><button class="ts-close" aria-label="fechar">×</button></div><div class="ts-body"></div>';
+    $tsPanel.querySelector('.ts-close').addEventListener('click', () => $tsPanel.remove());
+  }
+  $ov.appendChild($tsPanel);
+  $tsPanel.querySelector('.ts-title').textContent =
+    labelFor(s) + (s.origin && s.origin !== 'local' ? ' · ' + s.origin : '');
+  const body = $tsPanel.querySelector('.ts-body');
+  body.innerHTML = '<div class="ts-loading">' + T('ts_loading') + '…</div>';
+  window.trafficLight.fetchTranscript(s.origin || 'local', s.session_id, 20)
+    .then((msgs) => {
+      if (!Array.isArray(msgs) || !msgs.length) { body.innerHTML = '<div class="ts-empty">' + T('ts_empty') + '</div>'; return; }
+      body.innerHTML = '';   // limpa o "loading"
+      for (const m of msgs) {
+        const row = document.createElement('div');
+        row.className = 'ts-msg ts-' + m.role;
+        const role = document.createElement('span'); role.className = 'ts-role'; role.textContent = m.role;
+        const text = document.createElement('span'); text.className = 'ts-text'; text.textContent = m.text;
+        row.append(role, text);
+        body.appendChild(row);
+      }
+    })
+    .catch(() => { body.innerHTML = '<div class="ts-empty">' + T('ts_error') + '</div>'; });
+}
+
+// (o terminal embutido mudou-se para src/term.html + src/term-renderer.js —
+// aberto numa janela própria maximizável por ensureTermWin() no main. O clique
+// numa sessão segue chamando window.trafficLight.attachRemote em :284.)

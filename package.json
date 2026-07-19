@@ -9,7 +9,8 @@
     "remove-hook": "node scripts/setup-hook.js --remove",
     "hook:test": "bash hooks/traffic-hook.sh",
     "test": "node --test",
-    "dist": "electron-builder --linux"
+    "dist": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac"
   },
   "author": "Aron Peyroteo <aronpeyroteo@gmail.com>",
   "license": "MIT",
@@ -22,6 +23,9 @@
     "url": "https://github.com/aronpc/ai-traffic-lights/issues"
   },
   "build": {
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "appId": "dev.aitrafficlights.app",
     "productName": "AI Traffic Lights",
     "files": [
@@ -50,7 +54,8 @@
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--ozone-platform=x11"
-      ]
+      ],
+      "syncDesktopName": true
     },
     "appImage": {
       "artifactName": "${name}-${version}.${ext}"
@@ -61,15 +66,21 @@
         "zip"
       ],
       "category": "public.app-category.utilities",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "hardenedRuntime": false
     }
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "chokidar": "^3.6.0",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.1"
   }
 }

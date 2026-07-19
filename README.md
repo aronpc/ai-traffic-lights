@@ -29,6 +29,10 @@ terminal — **window _and_ tab**.
 
 ## Features
 
+> For the exhaustive implementation inventory — including known limitations,
+> features implemented on the sync branch, and the roadmap — see the
+> [feature and roadmap catalog (pt-BR)](docs/FUNCIONALIDADES.md).
+
 - 🟢🟡🔴 One light per session, plus an aggregate light in the header
 - 🤖 **Four agents, one overlay**: Claude Code, Antigravity, Codex and OpenCode
 - 🌐 UI in English & Portuguese — follows the system locale, switchable in
@@ -127,8 +131,11 @@ chmod +x AI-Traffic-Lights-*.AppImage
 Download the `.deb` from the [latest release](https://github.com/aronpc/ai-traffic-lights/releases/latest) and install it:
 
 ```bash
-sudo dpkg -i ai-traffic-lights_*.deb
+sudo apt install ./ai-traffic-lights_*.deb
 ```
+
+> Use `apt install ./file.deb` (not `dpkg -i`) so dependencies are resolved
+> automatically.
 
 ---
 
@@ -292,8 +299,10 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [x] Test suite (`node:test`) + CI
 - [x] Reliable click-to-focus: window-id validation + exact tab in Warp
   (`focus_url`) and Tilix (`TILIX_ID` via D-Bus)
+- [x] Tmux pane focus — focuses the agent's pane inside tmux, layered on top
+  of the Warp tab / Tilix channel (via `$TMUX_PANE`)
 - [ ] Tab focus for terminals without a native channel (GNOME Terminal,
-  zellij/tmux)
+  zellij)
 - [ ] Full native-Wayland window focus (today: XWayland + Warp focus URI +
   relaunch-to-toggle)
 - [x] Configurable idle threshold & shortcut (tray → Preferences — stored in

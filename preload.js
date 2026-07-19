@@ -37,6 +37,29 @@ contextBridge.exposeInMainWorld('trafficLight', {
   openExternal: (url) => ipcRenderer.send('open-external', url), // abre no navegador (http/s só)
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),
+  getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
+  setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
+  fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
+  attachRemote: (origin, tmuxSession, cwd, alias, key) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd, alias, key }), // abre na janela Terminal (título = alias)
+  // janela Terminal (abas): o estado dos pty/ws vive no main; o renderer só desenha.
+  // Cada método carrega tabId p/ rotear input/output/resize à aba certa.
+  newShell: (host) => ipcRenderer.send('term-new-shell', host),         // host=undefined|'local' → local; senão abre shell num peer
+  termHosts: () => ipcRenderer.invoke('term-hosts'),                    // [{id,label}] local + peers p/ o menu do botão +
+  termWinControl: (op) => ipcRenderer.send('term-win-control', op),     // 'min' | 'max' | 'close' (chrome custom frameless)
+  resizeStartTerm: () => ipcRenderer.send('resize-term-start'),
+  resizeMoveTerm: (dw, dh) => ipcRenderer.send('resize-term-move', { dw, dh }),
+  resizeEndTerm: () => ipcRenderer.send('resize-term-end'),
+  switchTab: (tabId) => ipcRenderer.send('term-switch-tab', tabId),
+  closeTab: (tabId) => ipcRenderer.send('term-close-tab', tabId),
+  ptyInput: (tabId, data) => ipcRenderer.send('term-input', { tabId, data }),
+  ptyResize: (tabId, cols, rows) => ipcRenderer.send('term-resize', { tabId, cols, rows }),
+  onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, p) => cb(p)),            // p = { tabId, data }
+  onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, p) => cb(p)),          // p = { tabId }
+  onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
+  onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
+  onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente
+  onTermMaximized: (cb) => ipcRenderer.on('term-maximized', (_e, v) => cb(v)),        // bool — alterna classe .maximized (tira o radius)
+  onTermTabTitle: (cb) => ipcRenderer.on('term-tab-title', (_e, p) => cb(p)),        // { tabId, title } — rename da aba (sincroniza c/ o alias)
   pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
   getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),
