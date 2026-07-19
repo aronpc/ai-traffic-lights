@@ -506,11 +506,9 @@ function removeHookFromApp() {
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
   } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
 }
-function notifyUser(body) {
-  try { new Notification({ title: 'AI Traffic Lights', body, silent: true }).show(); } catch {}
-}
-
-let tray = null;
+// notifyUser: implementação em src/ipc/tray.js (REF passo 8). Stub reatribuído
+// no boot p/ trayIpc.notifyUser (DI p/ update/focus/launcher).
+let notifyUser = () => {};
 // Menu reconstruível fora do createTray: os labels dependem do idioma, e a
 // troca nas Preferências re-renderiza o menu ao vivo (save-settings).
 function buildTrayMenu() {
@@ -535,39 +533,9 @@ function buildTrayMenu() {
     { label: T('tray_quit'), click: () => app.quit() },
   ]);
 }
-// ---- tray dinâmico: ícone pinta com a pior cor + tooltip com a contagem ----
-// Variante por nível (bolinha colorida no canto do ícone-base). Sem sessões,
-// cai no ícone neutro (não dá "tudo verde" com nada rodando).
-const TRAY_ICON_FILE = {
-  awaiting: 'tray-icon-r.png',
-  processing: 'tray-icon-y.png',
-  done: 'tray-icon-g.png',
-};
-const trayIcons = {};
-for (const [lvl, file] of Object.entries(TRAY_ICON_FILE)) {
-  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', file));
-  trayIcons[lvl] = img.isEmpty() ? null : img;
-}
-const trayIconBase = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
-function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
-  if (!tray || tray.isDestroyed()) return;
-  const total = awaiting + processing + done;
-  const img = total > 0 ? trayIcons[level] : null;
-  tray.setImage(img || trayIconBase);
-  const parts = [];
-  if (awaiting) parts.push(`🔴${awaiting}`);
-  if (processing) parts.push(`🟡${processing}`);
-  if (done) parts.push(`🟢${done}`);
-  tray.setToolTip(total > 0 ? `AI Traffic Lights v${APP_VERSION}  ${parts.join(' ')}` : `AI Traffic Lights v${APP_VERSION}`);
-}
-
-function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip(`AI Traffic Lights v${APP_VERSION}`);
-  tray.setContextMenu(buildTrayMenu());
-  tray.on('click', toggleWin);
-}
+// (notifyUser/setTrayLevel/createTray/ícones tray + handlers notify/set-tray-level
+//  movidos para src/ipc/tray.js — REF passo 8. buildTrayMenu fica aqui: é o
+//  compositor do menu, injetado em createTray via callback.)
 
 // ---- janela de Preferências (threshold de idle + atalho) ----
 let settingsWin = null;
@@ -747,9 +715,7 @@ ipcMain.on('install-hooks', () => installHookFromApp());
 ipcMain.on('remove-hooks', () => removeHookFromApp());
 
 // Notificação no vermelho.
-ipcMain.on('notify', (_e, { title, body }) => {
-  try { new Notification({ title, body, silent: true }).show(); } catch {}
-});
+// (handler 'notify' movido para src/ipc/tray.js — REF passo 8)
 
 // ---- som de alerta customizado ----
 // Escolher um arquivo de áudio: abre o diálogo nativo e COPIA o arquivo pra
@@ -796,7 +762,7 @@ ipcMain.on('toggle-visibility', toggleWin);
 ipcMain.on('reveal-overlay', () => { if (settingsCfg.revealOnRed) revealIfHidden(); });
 
 // Tray dinâmico: renderer manda a pior cor + contagem a cada render.
-ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
+// (handler 'set-tray-level' movido para src/ipc/tray.js — REF passo 8)
 
 // Quick Launcher: lista de agentes detectados + sobe um agente num terminal.
 // (handlers get-launchers/launch-agent movidos para src/ipc/launcher.js — REF passo 5)
@@ -812,6 +778,7 @@ let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcri
 const livePeers = new Set();      // hosts que responderam /sessions (ATL ligado) — o menu + só mostra vivos
 let syncServer = null, syncServerKey = null;
 let stopPoll = null, pollKey = null;
+let trayIpc = null;   // tray+notify module (src/ipc/tray.js) — setado no boot PRIMEIRO (fornece notifyUser)
 let updateIpc = null;   // auto-update module (src/ipc/update.js) — setado no boot, lido no tray
 let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no boot, lido no tray
 let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
@@ -1057,7 +1024,6 @@ app.whenReady().then(() => {
   settingsCfg = loadSettings();                      // threshold/atalho/idioma do usuário
   applyLang();                                       // Preferências (lang) > locale do sistema
   createWindow();
-  createTray();
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
   chokidar
@@ -1069,7 +1035,12 @@ app.whenReady().then(() => {
   // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
   // O Claude é LAZY: o loop de fundo NÃO bate na API dele (limite agregado do
   // 429); só o boot e os gatilhos de UI (abrir/revelar overlay, ⟳) buscam o %.
-  collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o %
+  trayIpc = require('./src/ipc/tray').setupTrayIpc({   // tray extraído (REF passo 8) — PRIMEIRO: notifyUser p/ collectAndSendUsage e os demais
+    ipcMain, APP_VERSION, toggleWin, assetsDir: path.join(__dirname, 'assets'),
+    buildMenu: () => buildTrayMenu(),   // compositor (main): refs launcherIpc/updateIpc resolvidas só no call (createTray)
+  });
+  notifyUser = trayIpc.notifyUser;   // alias p/ update/focus/launcher (recebem por DI)
+  collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o % (notifyUser já resolvido)
   setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
   updateIpc = require('./src/ipc/update').setupUpdateIpc({   // auto-update extraído (REF passo 1)
     getMainWindow: () => win, getSettings: () => settingsCfg,
@@ -1093,6 +1064,7 @@ app.whenReady().then(() => {
     ipcMain, getSettings: () => settingsCfg, notifyUser, T, scanPathBin, hasBin, lastSessionCwd,
     ensureTermWin, addTermSession, spawnPtyLocal,
   });
+  trayIpc.createTray();   // DEPOIS de launcherIpc/updateIpc: buildTrayMenu os referencia
   applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
 
