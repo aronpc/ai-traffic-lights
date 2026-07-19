@@ -141,10 +141,6 @@ function parseMacOSEnviron(content) {
   return envVars.join('\0');
 }
 
-function escapeAppleScriptString(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
 
 function getProcessEnviron(pid) {
   if (!pid) return '';
@@ -216,6 +212,7 @@ function applyShortcut() {
 // Detecção por PATH scan (fork-free: só fs.access nos dirs do PATH). O Electron
 // roda fora do shell interativo, então não vê aliases — acha o binário real.
 // CLIs só-alias (sem bin no PATH) entram via override settings.launchers[id].
+// launcher (detectLaunchers/availableTerminals/launchAgent/openInWarp/openCmdInTerminal/escapeAppleScriptString): extraído para src/ipc/launcher.js (REF passo 5)
 function scanPathBin(bin) {
   const path = process.env.PATH || '';
   for (const dir of path.split(':')) {
@@ -231,50 +228,8 @@ function path_join(dir, bin) { // path.join local (sem sobrescrever o require)
 
 // Quais agentes têm CLI disponível? Override do settings tem precedência sobre PATH.
 let _launchers = null, _launchersAt = 0;
-function detectLaunchers() {
-  if (_launchers && Date.now() - _launchersAt < 10000) return _launchers; // cache 10s
-  const out = [];
-  for (const [id, a] of Object.entries(AGENTS)) {
-    if (!a.bin) continue;
-    const override = settingsCfg.launchers && settingsCfg.launchers[id];
-    const path = (typeof override === 'string' && override) ? override : scanPathBin(a.bin);
-    if (path) out.push({ id, path, overridden: !!override });
-  }
-  _launchers = out;
-  _launchersAt = Date.now();
-  return out;
-}
 
 // Quais terminais suportados estão no PATH? (pra 'auto' e pra validar o seletor)
-function availableTerminals() {
-  if (process.platform === 'darwin') {
-    const list = [];
-    const homeApps = path.join(process.env.HOME || '/', 'Applications');
-    
-    if (fs.existsSync('/Applications/iTerm.app') || 
-        fs.existsSync(path.join(homeApps, 'iTerm.app')) || 
-        !!scanPathBin('iterm')) {
-      list.push('iterm2');
-    }
-    if (fs.existsSync('/System/Applications/Utilities/Terminal.app') || 
-        fs.existsSync('/Applications/Utilities/Terminal.app') || 
-        fs.existsSync(path.join(homeApps, 'Utilities/Terminal.app'))) {
-      list.push('terminal');
-    }
-    if (fs.existsSync('/Applications/Warp.app') || 
-        fs.existsSync(path.join(homeApps, 'Warp.app')) ||
-        !!scanPathBin('warp')) {
-      list.push('warp');
-    }
-    if (fs.existsSync('/Applications/Ghostty.app') || 
-        fs.existsSync(path.join(homeApps, 'Ghostty.app')) || 
-        !!scanPathBin('ghostty')) {
-      list.push('ghostty');
-    }
-    return list;
-  }
-  return launcher.TERMINAL_ORDER.filter((t) => !!scanPathBin(t));
-}
 
 // Cwd mais recente entre as sessões (pra onde o "+ agente" abre por padrão).
 function lastSessionCwd() {
@@ -292,83 +247,6 @@ function lastSessionCwd() {
 
 // Sobe o agente num terminal no cwd dado. Detached + unref: o overlay não é pai
 // do processo — a sessão entra no semáforo pelo caminho normal (hooks → state).
-function launchAgent({ agent, cwd }) {
-  const a = AGENTS[agent];
-  if (!a) return;
-  const entry = detectLaunchers().find((l) => l.id === agent);
-  if (!entry) { notifyUser(T('ntf_no_launcher', { agent: a.label })); return; }
-  const dir = (cwd && typeof cwd === 'string') ? cwd : (lastSessionCwd() || process.env.HOME || '/');
-
-  if (process.platform === 'darwin') {
-    const term = settingsCfg.terminal === 'auto' ? (availableTerminals()[0] || 'terminal') : settingsCfg.terminal;
-    
-    if (term === 'terminal') {
-      const escDir = escapeAppleScriptString(dir);
-      const escPath = escapeAppleScriptString(entry.path);
-      const appleScript = `
-        tell application "Terminal"
-          do script "cd " & quoted form of "${escDir}" & " && " & quoted form of "${escPath}"
-          activate
-        end tell
-      `;
-      try { spawn('osascript', ['-e', appleScript], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-      return;
-    }
-    
-    if (term === 'iterm2') {
-      const escDir = escapeAppleScriptString(dir);
-      const escPath = escapeAppleScriptString(entry.path);
-      const appleScript = `
-        tell application "iTerm"
-          create window with default profile
-          tell current session of current window
-            write text "cd " & quoted form of "${escDir}" & " && " & quoted form of "${escPath}"
-          end tell
-          activate
-        end tell
-      `;
-      try { spawn('osascript', ['-e', appleScript], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-      return;
-    }
-    
-    if (term === 'warp') {
-      const warpDir = path.join(process.env.HOME || '/', '.warp', 'launch_configurations');
-      try {
-        fs.mkdirSync(warpDir, { recursive: true });
-        const configName = `ai-traffic-lights-${agent}`;
-        const yamlPath = path.join(warpDir, `${configName}.yaml`);
-        const yamlContent = [
-          `name: AI Traffic Lights - ${agent}`,
-          `windows:`,
-          `  - tabs:`,
-          `      - panes:`,
-          `          - cwd: ${JSON.stringify(dir)}`,
-          `            commands:`,
-          `              - ${JSON.stringify(entry.path)}`
-        ].join('\n') + '\n';
-        fs.writeFileSync(yamlPath, yamlContent, 'utf8');
-        spawn('open', [`warp://launch/${configName}`], { detached: true, stdio: 'ignore' }).unref();
-      } catch (e) {
-        notifyUser(`Launch failed: ${e.message}`);
-      }
-      return;
-    }
-    
-    if (term === 'ghostty') {
-      try { spawn('open', ['-a', 'Ghostty', '--args', `--working-directory=${dir}`, `--initial-command=${entry.path}`], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-      return;
-    }
-  }
-
-  // Linux: lança DIRETO numa aba da janela Terminal, dentro de um tmux próprio.
-  // Não depende de terminal externo (tilix/Warp) — o ATL controla o spawn e
-  // garante o wrap; o hook do agente captura tmux_session (#S) e o overlay mostra.
-  const hasTmux = hasBin('tmux');
-  const sessionName = launcher.tmuxSessionName(agent) + '-' + Date.now().toString(36);
-  ensureTermWin();
-  const tabId = addTermSession({ title: (a && a.label) || agent, kind: 'local' });
-  spawnPtyLocal(tabId, hasTmux ? launcher.tmuxWrap([entry.path], sessionName) : [entry.path], dir);
-}
 
 // ---- attach remoto (tmux): abre um terminal LOCAL attachado a uma sessão tmux
 // (local direto, ou remota via SSH/Tailscale). Vivo e compartilhado (multi-
@@ -377,34 +255,6 @@ function launchAgent({ agent, cwd }) {
 // Warp: launch-config YAML + warp://launch. O scheme warp:// costuma estar
 // registrado (dev.warp.Warp.desktop) MESMO quando o binário `warp` não está no
 // PATH — então xdg-open abre o app e roda o comando do config.
-function openInWarp(cmdArray, dir) {
-  const warpDir = path.join(process.env.HOME || '/', '.warp', 'launch_configurations');
-  try {
-    fs.mkdirSync(warpDir, { recursive: true });
-    const yamlPath = path.join(warpDir, 'atl-attach.yaml');
-    const cmdStr = cmdArray.map(shellQuote).join(' ');   // cada arg shell-quoted → cmd shell seguro
-    const yaml = [
-      'name: ATL Attach', 'windows:', '  - tabs:', '      - panes:',
-      `          - cwd: ${JSON.stringify(dir)}`,
-      '            commands:',
-      `              - ${JSON.stringify(cmdStr)}`,
-    ].join('\n') + '\n';
-    fs.writeFileSync(yamlPath, yaml, 'utf8');
-    const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-    spawn(opener, ['warp://launch/atl-attach'], { detached: true, stdio: 'ignore' }).unref();
-    return true;
-  } catch { return false; }
-}
-function openCmdInTerminal(cmdArray, cwd) {
-  const dir = (cwd && typeof cwd === 'string') ? cwd : (process.env.HOME || '/');
-  if (settingsCfg.terminal === 'warp') { if (openInWarp(cmdArray, dir)) return; }   // pref Warp
-  const avail = availableTerminals();
-  const term = launcher.pickTerminal(settingsCfg.terminal, avail);
-  const useTerm = term || (avail.includes('gnome-terminal') ? 'gnome-terminal' : 'x-terminal-emulator');
-  const args = launcher.terminalArgs(useTerm, dir, cmdArray) || ['-e', ...cmdArray];
-  try { spawn(useTerm, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); }
-  catch (e) { notifyUser('Attach failed: ' + e.message); }
-}
 function attachRemote({ origin, tmux_session, cwd, alias, key }) {
   if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
   const isLocal = !origin || origin === 'local';
@@ -669,11 +519,11 @@ function buildTrayMenu() {
     { type: 'checkbox', label: T('tray_autostart'), checked: autostartEnabled(),
       click: (it) => { setAutostart(it.checked); } },
     // Quick Launcher: submenu com cada CLI detectado (abre o terminal e sobe).
-    ...(detectLaunchers().length ? [{
+    ...(launcherIpc.detectLaunchers().length ? [{
       label: T('launch_section'),
-      submenu: detectLaunchers().map((l) => ({
+      submenu: launcherIpc.detectLaunchers().map((l) => ({
         label: '+ ' + AGENTS[l.id].label,
-        click: () => launchAgent({ agent: l.id }),
+        click: () => launcherIpc.launchAgent({ agent: l.id }),
       })),
     }] : []),
     { type: 'separator' },
@@ -949,8 +799,7 @@ ipcMain.on('reveal-overlay', () => { if (settingsCfg.revealOnRed) revealIfHidden
 ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
 
 // Quick Launcher: lista de agentes detectados + sobe um agente num terminal.
-ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
-ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));
+// (handlers get-launchers/launch-agent movidos para src/ipc/launcher.js — REF passo 5)
 ipcMain.on('attach-remote', (_e, t) => attachRemote(t || {}));   // attach tmux (local ou via peer)
 
 // ---- sync multi-máquina (P2P): servidor + poller, OPT-IN (fase 2) ----
@@ -964,6 +813,7 @@ const livePeers = new Set();      // hosts que responderam /sessions (ATL ligado
 let syncServer = null, syncServerKey = null;
 let stopPoll = null, pollKey = null;
 let updateIpc = null;   // auto-update module (src/ipc/update.js) — setado no boot, lido no tray
+let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no boot, lido no tray
 let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
 function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
 function applySync() {
@@ -1238,6 +1088,10 @@ app.whenReady().then(() => {
   });
   require('./src/ipc/focus').setupFocusIpc({   // focus extraído (REF passo 4)
     ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND,
+  });
+  launcherIpc = require('./src/ipc/launcher').setupLauncherIpc({   // launcher extraído (REF passo 5)
+    ipcMain, getSettings: () => settingsCfg, notifyUser, T, scanPathBin, hasBin, lastSessionCwd,
+    ensureTermWin, addTermSession, spawnPtyLocal,
   });
   applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
