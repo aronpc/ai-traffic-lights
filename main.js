@@ -845,6 +845,11 @@ function ensureTermWin() {
     for (const [ch, p] of termQueue.splice(0)) { try { termWin.webContents.send(ch, p); } catch {} }
     sendTerm('term-maximized', !!termWin.isMaximized());   // estado inicial: renderer tira o radius se maximizada
   });
+  // Janela reapareceu (show do ensureTermWin, restore do WM): o renderer precisa
+  // REPINTAR o xterm — enquanto esteve oculta o canvas foi descartado e o buffer
+  // não. Sem isso a aba reabre em branco com o tmux vivo do outro lado.
+  termWin.on('show', () => sendTerm('term-shown'));
+  termWin.on('restore', () => sendTerm('term-shown'));
   termWin.on('maximize', () => sendTerm('term-maximized', true));
   termWin.on('unmaximize', () => sendTerm('term-maximized', false));
   termWin.on('resize', saveTermBounds);   // persiste tamanho/posição (debounce; ignora se maximizada)

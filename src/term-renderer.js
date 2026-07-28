@@ -32,21 +32,51 @@ function showTab(tabId) {
   for (const b of $tabs.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.tab === String(tabId));
   const t = terms.get(tabId);
   if (t) {
-    try { t.fit.fit(); } catch {}
+    if (areaVisible()) { try { t.fit.fit(); } catch {} }
     t.term.focus();
     // 2º fit após o paint: o holder acabou de ficar visível, o layout final só
     // vem depois do frame; refaz fit + repassa o tamanho ao pty/tmux (senão o
-    // tmux ficava com o tamanho antigo e não preenchia a janela).
-    requestAnimationFrame(() => { try { t.fit.fit(); } catch {} try { t.term.focus(); } catch {} try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {} });
+    // tmux ficava com o tamanho antigo e não preenchia a janela). Só quando há
+    // área de verdade — com a janela oculta o fit colapsaria pra 2x1.
+    requestAnimationFrame(() => {
+      try { t.term.focus(); } catch {}
+      if (!areaVisible()) return;
+      try { t.fit.fit(); } catch {}
+      if (t.term.cols > 2 && t.term.rows > 1) {
+        try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {}
+      }
+      repaint(t);   // reexibir a janela apaga o canvas; o buffer sobrevive → repinta
+    });
   }
 }
 
+// Guarda contra fit/resize com o layout zerado (janela oculta/minimizada): o
+// FitAddon clampa no MÍNIMO (2 cols x 1 row) e mandaríamos esse tamanho pro
+// tmux. Medido: esconder a termWin nem sempre zera o layout, mas minimizar e
+// trocar de workspace zeram — então a checagem fica.
+function areaVisible() {
+  const r = $area.getBoundingClientRect();
+  return r.width > 1 && r.height > 1;
+}
+
+// Força o xterm a REDESENHAR o que já está no buffer. Esconder e reabrir a
+// janela (termWin.hide()/show()) descarta as texturas do canvas do xterm, mas
+// NÃO o buffer — medido: as linhas continuam todas lá, a tela é que fica em
+// branco. Sem nada que invalide o render, o xterm não repinta sozinho: ele só
+// desenha o que MUDA, e nada mudou. refresh() marca todas as linhas como sujas.
+function repaint(t) {
+  if (!t) return;
+  try { t.term.refresh(0, t.term.rows - 1); } catch {}
+}
+
 function fitActive() {
-  if (activeTabId == null) return;
+  if (activeTabId == null || !areaVisible()) return;
   const t = terms.get(activeTabId);
   if (!t) return;
   try { t.fit.fit(); } catch {}
-  try { window.trafficLight.ptyResize(activeTabId, t.term.cols, t.term.rows); } catch {}
+  if (t.term.cols > 2 && t.term.rows > 1) {
+    try { window.trafficLight.ptyResize(activeTabId, t.term.cols, t.term.rows); } catch {}
+  }
 }
 
 // ---- eventos do main ----
@@ -107,10 +137,27 @@ document.getElementById('winMinBtn').addEventListener('click', () => window.traf
 document.getElementById('winMaxBtn').addEventListener('click', () => window.trafficLight.termWinControl('max'));
 document.getElementById('winCloseBtn').addEventListener('click', () => window.trafficLight.termWinControl('close'));
 window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').classList.toggle('maximized', !!max));
+// Sinal do main (show/restore da janela) — mais confiável que visibilitychange,
+// que nem sempre dispara no hide/show de uma BrowserWindow no Linux.
+window.trafficLight.onTermShown(() => {
+  requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
+});
 
 // resize: refaz fit da aba ativa e avisa o main (pty/ws) do novo tamanho
 if (typeof ResizeObserver !== 'undefined') (new ResizeObserver(fitActive)).observe($area);
 window.addEventListener('resize', fitActive);
+// A janela VOLTOU a aparecer (× esconde, ⧉ mostra de novo; minimizar/restaurar;
+// troca de workspace). O canvas do xterm foi descartado enquanto ela estava
+// oculta, mas o buffer não — sem repintar, a aba reabre em BRANCO mesmo com o
+// tmux vivo do outro lado. 'visibilitychange' cobre o hide/show da BrowserWindow;
+// 'focus' cobre o restore do WM.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
+});
+window.addEventListener('focus', () => {
+  requestAnimationFrame(() => repaint(terms.get(activeTabId)));
+});
 // ---- grip de resize (canto inferior direito) — janela frameless não tem resize nativo ----
 const $grip = document.getElementById('termGrip');
 let resizing = null;
