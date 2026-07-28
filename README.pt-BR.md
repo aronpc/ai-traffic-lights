@@ -52,8 +52,8 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
   da sessão) e **GLM Coding Plan** (tokens 5h + MCP mensal). Linhas ficam âmbar
   ≥70%, vermelhas ≥90%; o último valor persiste (fica cinza quando velho) e
   sobrevive a reinícios. Alterne entre os medidores e o Quick Launcher no cabeçalho
-- 🎚️ **Aparência**: slider de transparência da janela + modo de lista compacta
-  (uma linha densa por sessão), ambos ao vivo e lembrados
+- 🎚️ **Aparência**: slider de transparência da janela, ao vivo e lembrado. A
+  lista de sessões é sempre compacta (uma linha densa por sessão)
 - ⚙️ **Janela de Preferências** (ícone de engrenagem): threshold de idle,
   atalho global, autostart, instalar/remover hooks, aparência, mostrar/ocultar,
   sair — com a versão do app e um link do repo no rodapé

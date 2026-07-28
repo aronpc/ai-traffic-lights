@@ -34,7 +34,7 @@ function mkEl() {
 // Monta um renderer isolado com uma sessão renomeável já na lista.
 async function setup() {
   const els = {};
-  for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'toggleListBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
+  for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
   const calls = { setAlias: [] };
   let sessionsCb = null;
   const window = {

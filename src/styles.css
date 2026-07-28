@@ -268,7 +268,7 @@ html, body {
 .list {
   list-style: none;
   overflow-y: auto;
-  padding: 8px 10px 10px;
+  padding: 5px 10px 6px;
   scrollbar-width: none;               /* sem barra visível; wheel continua rolando */
 }
 .list::-webkit-scrollbar { display: none; }
@@ -333,21 +333,19 @@ html, body {
   font-weight: 700; cursor: pointer;
 }
 .btn-ver.has-update:hover { background: rgba(63,185,107,0.26); }
-/* toggle da lista no header: destaca quando o modo compacto está ativo */
-#toggleListBtn.is-on { color: var(--ink); background: rgba(255,255,255,0.08); }
-
-/* Colunas fixas p/ alinhar entre linhas: [led] [motivo] [LLM] [nome…] [sino].
-   O nome (main) é a única coluna elástica; as demais têm largura fixa. */
+/* Colunas fixas p/ alinhar entre linhas: [led] [motivo] [LLM] [nome…] [texto] [sino].
+   Uma linha só por sessão: [led] [motivo] [LLM] [nome] — [modelo · ferramenta · tempo].
+   O texto migra pra a MESMA linha do nome, alinhado à direita — mais sessões no mesmo espaço. */
 .row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 12px;
+  gap: 8px;
+  padding: 6px 12px;
   border-radius: 9px;
   cursor: pointer;
   transition: background 0.12s;
 }
-.row + .row { margin-top: 3px; } /* respiro entre linhas */
+.row + .row { margin-top: 1px; } /* respiro entre linhas */
 .row:hover { background: var(--row-hover); }
 .row .led { width: 11px; height: 11px; flex: none; }
 
@@ -358,47 +356,28 @@ html, body {
 .row__llm svg { width: 15px; height: 15px; display: block; }
 .row__llm:empty { display: none; }
 
-.row__main { min-width: 0; flex: 1; }
+.row__main { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
 .row__label {
   display: block;
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 600;
   line-height: 1.3;
   color: var(--ink);
+  flex: none; max-width: 55%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-shadow: var(--shadow-txt);
 }
-.row__sub {
-  display: block;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--ink-dim);
-  margin-top: 3px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-variant-numeric: tabular-nums;
-}
-.row__sub-inline { display: none; } /* só no compacto */
-
-/* coluna do sino: SEMPRE reservada (largura fixa) — aparecer/sumir o sino não
-   muda mais a largura/altura da linha. */
-.row__snooze-col { flex: none; width: 24px; display: inline-flex; align-items: center; justify-content: center; }
-
-/* ---------- modo compacto (Preferências) ----------
-   Uma linha só por sessão: [led] [motivo] [LLM] [nome] — [ferramenta · tempo].
-   Padding apertado, o texto (sub) migra pra MESMA linha do nome, alinhado à
-   direita. Mais sessões visíveis no mesmo espaço. */
-.overlay.compact .row { padding: 6px 12px; gap: 8px; }
-.overlay.compact .row + .row { margin-top: 1px; }
-.overlay.compact .row__main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.overlay.compact .row__label { font-size: 12.5px; flex: none; max-width: 55%; }
-.overlay.compact .row__sub { display: none; }              /* a de 2 linhas some */
-.overlay.compact .row__sub-inline {
+/* texto à direita do nome (modelo · ferramenta · tempo) — única sub-linha, inline */
+.row__sub-inline {
   display: block; flex: 1; min-width: 0; text-align: right;
   font-size: 11px; line-height: 1.3; color: var(--ink-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
-.overlay.compact .list { padding: 5px 10px 6px; }
+
+/* coluna do sino: SEMPRE reservada (largura fixa) — aparecer/sumir o sino não
+   muda mais a largura/altura da linha. */
+.row__snooze-col { flex: none; width: 24px; display: inline-flex; align-items: center; justify-content: center; }
 
 /* rename in-place */
 .row-input {

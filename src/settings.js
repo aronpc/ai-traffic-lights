@@ -15,7 +15,6 @@ const DEFAULTS = Object.freeze({
   showUsage: true,              // footer: true = barras de uso | false = ícones do launcher
   collapsed: false,             // estado da janela: recolhido (só header+rodapé) | expandido
   opacity: 0.97,               // transparência do painel (0.6–1.0; alpha do fundo do overlay)
-  compact: false,              // lista de sessões densa (esconde a sub-linha, aperta o padding)
   markReadOnClick: true,       // clicar num terminal vermelho marca como lido (cinza) até a próxima notificação
   notifyOnReset: true,         // notifica quando um limite ESGOTADO reseta a cota (voltou a liberar)
   resetNotifyThresholdPct: 90, // % de uso que "arma" o aviso de reset — só avisa se passou disto antes de resetar
@@ -63,7 +62,6 @@ function mergeWithDefaults(raw) {
     if (typeof raw.opacity === 'number' && Number.isFinite(raw.opacity)) {
       out.opacity = Math.max(0.6, Math.min(1.0, raw.opacity));
     }
-    if (typeof raw.compact === 'boolean') out.compact = raw.compact;
     if (typeof raw.markReadOnClick === 'boolean') out.markReadOnClick = raw.markReadOnClick;
     if (typeof raw.notifyOnReset === 'boolean') out.notifyOnReset = raw.notifyOnReset;
     if (typeof raw.revealOnRed === 'boolean') out.revealOnRed = raw.revealOnRed;

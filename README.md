@@ -53,8 +53,8 @@ terminal — **window _and_ tab**.
   rollout) and **GLM Coding Plan** (5h tokens + monthly MCP). Rows go amber
   ≥70%, red ≥90%; the last value sticks (greys out when stale) and survives
   restarts. Toggle between the meters and the Quick Launcher in the header
-- 🎚️ **Appearance**: window transparency slider + compact list mode
-  (single dense row per session), both live and remembered
+- 🎚️ **Appearance**: window transparency slider, live and remembered. The
+  session list is always compact (a single dense row per session)
 - ⚙️ **Preferences window** (gear icon): idle threshold, global shortcut,
   autostart, install/remove hooks, appearance, show/hide, quit — with the app
   version and a link to the repo in the footer
