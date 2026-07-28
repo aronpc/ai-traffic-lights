@@ -266,14 +266,40 @@ function termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal }) {
   return (isLocal ? '' : (origin || '') + ' · ') + base;
 }
 
+// Religa uma aba cuja conexão morreu (pty encerrado / WS caído). Reusa o que a
+// sessão já guarda — não depende de nada vir da linha clicada, então funciona
+// mesmo quando o revive parte de um clique na aba, não na lista. Limpa a tela
+// antes: o buffer velho é de uma conexão que não existe mais.
+function reviveTermSession(tabId, s) {
+  sendTerm('pty-out', { tabId, data: '\x1b[2J\x1b[H\x1b[90m[reconectando…]\x1b[0m\r\n' });
+  if (s.kind === 'local') {
+    spawnPtyLocal(tabId, ['tmux', 'attach', '-t', s.tmux_session], s.cwd);
+    return;
+  }
+  const host = originToHost.get(s.origin) || '';
+  const cfg = (settingsCfg && settingsCfg.sync) || {};
+  if (!host || !cfg.token) {
+    sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem host/token para ' + (s.origin || '?') + '\x1b[0m\r\n' });
+    return;
+  }
+  openRemotePty(tabId, { host, port: cfg.port, token: cfg.token, tmux_session: s.tmux_session });
+}
+
 function attachRemote({ origin, tmux_session, cwd, alias, key, label }) {
   if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
   const isLocal = !origin || origin === 'local';
   const dupKey = (isLocal ? 'local' : origin) + '|' + tmux_session;
-  for (const [id, s] of termSessions) {   // dedupe: aba dessa sessão já existe → só foca
-    if (((s.kind === 'local' ? 'local' : s.origin) + '|' + s.tmux_session) === dupKey) {
-      ensureTermWin(); sendTerm('term-tab-activated', { tabId: id }); return;
-    }
+  // dedupe: aba dessa sessão já existe → foca. Mas se a conexão MORREU (peer
+  // reiniciou, wifi caiu, sync desligado do outro lado), a aba fica órfã no Map
+  // com ws/proc null: focar sem religar deixava a aba VAZIA pra sempre, sem
+  // nenhuma forma de recuperar além de fechá-la na mão. Então reconecta.
+  for (const [id, s] of termSessions) {
+    if (((s.kind === 'local' ? 'local' : s.origin) + '|' + s.tmux_session) !== dupKey) continue;
+    ensureTermWin();
+    const dead = !s.ws && !s.proc;
+    if (dead) reviveTermSession(id, s);
+    sendTerm('term-tab-activated', { tabId: id });
+    return;
   }
   ensureTermWin();
   const title = termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal });
@@ -957,7 +983,14 @@ ipcMain.on('resize-term-move', (_e, { dw, dh }) => {
   try { termWin.setSize(Math.max(560, Math.round(termResizeStart[0] + dw)), Math.max(320, Math.round(termResizeStart[1] + dh)), false); } catch {}
 });
 ipcMain.on('resize-term-end', () => { termResizeStart = null; });
-ipcMain.on('term-switch-tab', () => { /* roteamento é por tabId (vem no input/resize); ativação é visual no renderer */ });
+// Ativação é visual no renderer (roteamento é por tabId, que vem no input/resize),
+// mas aproveitamos pra RELIGAR a aba se a conexão dela tiver morrido — quem clica
+// numa aba vazia quer o conteúdo de volta, e sem isto o único caminho era fechar
+// e reabrir pela lista.
+ipcMain.on('term-switch-tab', (_e, tabId) => {
+  const s = termSessions.get(tabId);
+  if (s && !s.ws && !s.proc) reviveTermSession(tabId, s);
+});
 ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });
 ipcMain.on('term-input', (_e, { tabId, data }) => {
   const s = termSessions.get(tabId); if (!s) return;
