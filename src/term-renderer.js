@@ -66,6 +66,14 @@ function areaVisible() {
 // desenha o que MUDA, e nada mudou. refresh() marca todas as linhas como sujas.
 function repaint(t) {
   if (!t) return;
+  // clearTextureAtlas() ANTES do refresh: o refresh sozinho remarca as linhas
+  // como sujas, mas o renderer redesenha usando o ATLAS DE GLIFOS em cache —
+  // e é ele que se corrompe quando a janela é ocultada/reexibida (o próprio
+  // xterm documenta esse método como workaround pra textura corrompida, ex.
+  // Chromium/Nvidia ao retomar da suspensão). Sem limpar o atlas o texto volta
+  // "apagado"/fantasma em vez de nítido. Descartar o atlas força o redesenho
+  // de cada glifo do zero.
+  try { t.term.clearTextureAtlas(); } catch {}
   try { t.term.refresh(0, t.term.rows - 1); } catch {}
 }
 
