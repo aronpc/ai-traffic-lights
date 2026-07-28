@@ -450,7 +450,7 @@ html, body {
    Só aparecem no hover: a linha inteira já é clicável (faz o padrão), estes são
    o atalho pra escolher o OUTRO caminho. Sem largura reservada — ao contrário do
    sino, some por completo quando o mouse sai, então não desalinha nada. */
-.row__actions { flex: none; display: inline-flex; gap: 2px; align-items: center; }
+.row__actions { flex: none; display: inline-flex; gap: 2px; align-items: center; margin-right: -4px; }
 .row__action {
   -webkit-app-region: no-drag;
   background: transparent; border: none;
@@ -462,6 +462,9 @@ html, body {
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 .row:hover .row__action { opacity: 0.75; pointer-events: auto; }
+/* há os DOIS caminhos → a escolha fica sempre à vista, não só no hover */
+.row__actions.is-choice .row__action { opacity: 0.55; pointer-events: auto; }
+.row:hover .row__actions.is-choice .row__action { opacity: 0.75; }
 .row__action:hover { background: rgba(255,255,255,0.10); color: var(--ink); opacity: 1; }
 
 .row:hover .row__snooze { opacity: 1; }

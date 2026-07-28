@@ -376,9 +376,11 @@ function render() {
 
     // Coluna de ações: as duas formas de abrir a sessão, explícitas. O clique na
     // linha faz o padrão (externo p/ local), mas quem decide é o usuário — daí
-    // os botões. Aparecem no hover (o CSS controla), como o sino.
+    // os botões. Quando HÁ escolha real (os dois caminhos disponíveis) ficam
+    // sempre visíveis (.is-choice) — esconder no hover deixaria a alternativa
+    // invisível justo onde ela importa. Com um caminho só, seguem no hover.
     const actions = document.createElement('span');
-    actions.className = 'row__actions';
+    actions.className = 'row__actions' + ((isLocal(s) && s.tmux_session) ? ' is-choice' : '');
     const mkAction = (glyph, tipKey, fn) => {
       const b = document.createElement('button');
       b.className = 'row__action';
