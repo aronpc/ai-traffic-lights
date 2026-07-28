@@ -396,8 +396,8 @@ function render() {
     li.append(actions);
 
     // Snooze do alerta (só em vermelho): não apaga a cor, só cala o beep/notif.
-    // A coluna do sino é SEMPRE reservada (placeholder invisível quando não-red)
-    // para não empurrar a altura/largura da linha ao aparecer/sumir.
+    // A coluna só existe quando HÁ sino: o wrap fica vazio nas demais linhas e
+    // o CSS (:empty) a remove — reservá-la deixava um vão morto à direita.
     const snoozeWrap = document.createElement('span');
     snoozeWrap.className = 'row__snooze-col';
     if (st.level === 'awaiting') {

@@ -399,6 +399,10 @@ html, body {
 /* coluna do sino: SEMPRE reservada (largura fixa) — aparecer/sumir o sino não
    muda mais a largura/altura da linha. */
 .row__snooze-col { flex: none; width: 24px; display: inline-flex; align-items: center; justify-content: center; }
+/* sem sino (linha não-vermelha) → a coluna SOME, não fica reservada: o vão de
+   24px+gap à direita era espaço morto na maioria das linhas. As ações (↗/⧉)
+   já ancoram a borda direita, então nada dança quando o sino aparece. */
+.row__snooze-col:empty { display: none; }
 
 /* ---------- modo compacto (Preferências) ----------
    Uma linha só por sessão: [led] [motivo] [LLM] [nome] — [ferramenta · tempo].
