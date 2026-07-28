@@ -101,7 +101,7 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
         execFileSync(cmd, [ch.value], { timeout: 2000 });
       } else if (ch.kind === 'tilix') {
         execFileSync('gdbus', ['call', '--session', '--dest', 'com.gexperts.Tilix',
-          '--object-path', '/com/gexpencers.Tilix', '--method', 'org.gtk.Actions.Activate',
+          '--object-path', '/com/gexperts/Tilix', '--method', 'org.gtk.Actions.Activate',
           'activate-terminal', `[<'${ch.value}'>]`, '{}'], { timeout: 2000 });
       }
     } catch {}
@@ -118,6 +118,32 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
       execFileSync('tmux', ['select-window', '-t', pane], { timeout: 2000 });
       execFileSync('tmux', ['select-pane', '-t', pane], { timeout: 2000 });
     } catch {}
+  }
+
+  // Resolve o PID do tmux CLIENT anexado à sessão do pane do agente. É o elo
+  // que falta sob tmux: o server é um daemon reparentado pro init, então o PID
+  // do agente NUNCA alcança o terminal — mas o client é filho direto dele.
+  // Duas chamadas ao tmux (list-panes/list-clients); a escolha é pura e testada
+  // em focus.tmuxClientPid. null quando não há tmux/pane/client anexado.
+  function tmuxClientPidOf(state) {
+    const pane = focus.tmuxTarget(state);
+    if (!pane) return null;
+    try {
+      const panes = execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{session_name}'],
+        { encoding: 'utf8', timeout: 2000 })
+        .split('\n').map((l) => l.trim()).filter(Boolean)
+        .map((l) => { const [p, ...s] = l.split(' '); return { pane: p, session: s.join(' ') }; });
+      const clients = execFileSync('tmux', ['list-clients', '-F', '#{client_session} #{client_pid} #{client_activity}'],
+        { encoding: 'utf8', timeout: 2000 })
+        .split('\n').map((l) => l.trim()).filter(Boolean)
+        .map((l) => {
+          const parts = l.split(' ');
+          const activity = parseInt(parts.pop(), 10);
+          const pid = parseInt(parts.pop(), 10);
+          return { session: parts.join(' '), pid, activity: Number.isNaN(activity) ? 0 : activity };
+        });
+      return focus.tmuxClientPid(pane, panes, clients);
+    } catch { return null; }
   }
 
   // Enriquece o alvo com os hints de foco lidos AO VIVO do processo.
@@ -138,13 +164,34 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     } catch { return target; }
   }
 
+  // Sob tmux, reancora o alvo no tmux CLIENT da sessão do agente:
+  //  • anchorPid — o client É filho do emulador, então ancestorPidsOf(anchorPid)
+  //    alcança a janela; a do agente morre no `tmux server → systemd`.
+  //  • focus_url — o do state veio do environ CONGELADO do server tmux (idêntico
+  //    em TODAS as abas → xdg-open focava sempre a mesma aba errada). O environ
+  //    do client é por-aba e vivo, então tem precedência aqui.
+  //  • windowid — descartado junto: foi gravado pelo xdotool do hook e aponta pra
+  //    janela que estava ativa no prompt, não necessariamente a do agente.
+  function anchorOnTmuxClient(t) {
+    const cpid = tmuxClientPidOf(t);
+    if (!cpid) return t;
+    const live = focus.parseEnviron(getProcessEnviron(cpid));
+    return {
+      ...t,
+      anchorPid: cpid,
+      windowid: live.focus_url ? null : t.windowid,
+      focus_url: live.focus_url || t.focus_url,
+    };
+  }
+
   function focusSession(target) {
     if (!target) return;
-    const t = enrichTarget(target);
+    const t = anchorOnTmuxClient(enrichTarget(target));
+    const pid = t.anchorPid || t.pid;
     const hasTab = !!focus.tabChannel(t) || !!focus.tmuxTarget(t);
     let raised = false;
-    if (IS_WAYLAND) { focusTab(t); raised = raiseWindow(t.windowid, t.pid); }
-    else { raised = raiseWindow(t.windowid, t.pid); focusTab(t); }
+    if (IS_WAYLAND) { focusTab(t); raised = raiseWindow(t.windowid, pid); }
+    else { raised = raiseWindow(t.windowid, pid); focusTab(t); }
     focusTmuxPane(t);   // complementar: foca o pane do agente dentro do tmux
     // Wayland + sem canal de aba + sem janela alcançável pelo wmctrl (ex.: GNOME
     // Terminal nativo) → o clique vira no-op silencioso. Avisamos em vez de parecer
