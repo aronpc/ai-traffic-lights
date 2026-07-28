@@ -22,6 +22,11 @@ function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, ha
     return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
+  // Quais agentes têm CLI disponível? Override do settings tem precedência sobre PATH.
+  // Cache do scan de PATH — veio junto do main no REF passo 5 (as vars tinham
+  // ficado lá, fora do escopo deste módulo → ReferenceError no 1º get-launchers).
+  let _launchers = null, _launchersAt = 0;
+
   function detectLaunchers() {
     if (_launchers && Date.now() - _launchersAt < 10000) return _launchers; // cache 10s
     const out = [];

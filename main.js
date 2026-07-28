@@ -226,10 +226,8 @@ function path_join(dir, bin) { // path.join local (sem sobrescrever o require)
   return dir.replace(/\/+$/, '') + '/' + bin;
 }
 
-// Quais agentes têm CLI disponível? Override do settings tem precedência sobre PATH.
-let _launchers = null, _launchersAt = 0;
-
-// Quais terminais suportados estão no PATH? (pra 'auto' e pra validar o seletor)
+// detectLaunchers + o cache (_launchers/_launchersAt): extraídos para
+// src/ipc/launcher.js (REF passo 5), junto com availableTerminals.
 
 // Cwd mais recente entre as sessões (pra onde o "+ agente" abre por padrão).
 function lastSessionCwd() {
