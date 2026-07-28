@@ -735,7 +735,18 @@ function applySync() {
         for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto
         sendSessions();
       },
-      onPeerState: (host, online) => { try { console.log('[sync] peer ' + host + ' ' + (online ? 'online' : 'offline (backoff)')); } catch {} if (online) livePeers.add(host); else livePeers.delete(host); },
+      // Peer caiu → DESCARTA as sessões dele. Antes só saía de livePeers (menu
+      // da termWin) e remoteSessions ficava intacto: as sessões do peer morto
+      // seguiam na lista indefinidamente, com o idle crescendo — viravam
+      // fantasmas que escalam pra vermelho e apitam alerta falso. remoteSessions
+      // só era limpo no teardown global do sync (PR-32 #10; o fix anterior
+      // cobria só o desligar-o-sync, não a queda de um peer).
+      onPeerState: (host, online) => {
+        try { console.log('[sync] peer ' + host + ' ' + (online ? 'online' : 'offline (backoff)')); } catch {}
+        if (online) { livePeers.add(host); return; }
+        livePeers.delete(host);
+        if (remoteSessions.delete(host)) sendSessions();   // some da lista na hora
+      },
     });
     pollKey = pKey;
   }
