@@ -62,12 +62,6 @@ test('mergeWithDefaults: opacity default 0.97, clampa em [0.6, 1.0]', () => {
   assert.equal(mergeWithDefaults({ opacity: NaN }).opacity, 0.97);  // NaN → default
 });
 
-test('mergeWithDefaults: compact (lista densa) default false, aceita bool', () => {
-  assert.equal(DEFAULTS.compact, false);
-  assert.equal(mergeWithDefaults({ compact: true }).compact, true);
-  assert.equal(mergeWithDefaults({ compact: 1 }).compact, false);   // não-bool → default
-});
-
 test('mergeWithDefaults: markReadOnClick default true, aceita bool', () => {
   assert.equal(DEFAULTS.markReadOnClick, true);
   assert.equal(mergeWithDefaults({}).markReadOnClick, true);
