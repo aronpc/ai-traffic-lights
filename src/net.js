@@ -229,6 +229,13 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
       ws.on('close', cleanup);
       ws.on('error', cleanup);
     });
+    // Exposto pro caller poder DERRUBAR os shells em curso ao desligar o sync /
+    // trocar o token: server.close() só para de ACEITAR conexões novas, as já
+    // estabelecidas seguem vivas (PR-32 #07). Ver closeSyncServer no main.
+    server.closeAllPty = () => {
+      try { wss.clients.forEach((ws) => { try { ws.terminate(); } catch {} }); } catch {}
+      try { wss.close(); } catch {}   // dispara o wss 'close' → limpa hb/bp
+    };
   }
   return server;
 }

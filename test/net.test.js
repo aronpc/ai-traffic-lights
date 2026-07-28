@@ -152,6 +152,31 @@ test('/pty: start c/ session inválido → close 4400; válido → ptySpawn rece
   } finally { server.close(); }
 });
 
+// PR-32 #07: desligar o sync / trocar o token tem que DERRUBAR os shells já
+// conectados. server.close() sozinho só para de aceitar conexões novas — o
+// attach em curso sobrevivia, contrariando o que o toggle promete.
+test('/pty: closeAllPty derruba conexões ATIVAS e mata o pty (não só recusa novas)', async () => {
+  let killed = 0;
+  const { server, port } = await up({ allowAttach: true, ptySpawn: () => ({ write() {}, resize() {}, kill() { killed++; } }) });
+  try {
+    const ws = await wsOpen(port, 'tok');
+    const closed = new Promise((res) => ws.once('close', res));
+    ws.send(JSON.stringify({ type: 'start', tmux_session: 'work' }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    server.closeAllPty();                       // = desligar o sync no toggle
+    await closed;                               // a conexão viva CAI
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(killed, 1, 'o pty do shell remoto foi morto');
+  } finally { server.close(); }
+});
+
+test('/pty: closeAllPty só existe quando allowAttach está ligado', async () => {
+  const { server } = await up({});              // sem allowAttach → sem /pty
+  try { assert.equal(typeof server.closeAllPty, 'undefined'); }
+  finally { server.close(); }
+});
+
 // ---- pollPeers: backoff por peer + loga só a transição ----
 test('tailscaleOnlineSet: null (sem tailscale) ou Set de hosts online', () => {
   const s = tailscaleOnlineSet();   // CI sem tailscale => null; máquina c/ tailscale => Set

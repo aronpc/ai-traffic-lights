@@ -673,6 +673,16 @@ let remoteSessions = new Map();   // peerHost -> sessions[] (já com origin)
 let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcript remoto)
 const livePeers = new Set();      // hosts que responderam /sessions (ATL ligado) — o menu + só mostra vivos
 let syncServer = null, syncServerKey = null;
+// Derruba o servidor de sync E os shells /pty JÁ conectados. server.close()
+// sozinho só para de aceitar conexões novas: desligar o sync (ou revogar o
+// token) deixava um shell remoto em curso vivo indefinidamente — o oposto do
+// que o toggle promete (PR-32 #07). closeAllPty só existe com allowAttach.
+function closeSyncServer() {
+  if (!syncServer) return;
+  try { if (syncServer.closeAllPty) syncServer.closeAllPty(); } catch {}
+  try { syncServer.close(); } catch {}
+  syncServer = null; syncServerKey = null;
+}
 let stopPoll = null, pollKey = null;
 let settingsIpc = null;   // settings window module (src/ipc/settings.js) — setado no boot, lido no tray
 let trayIpc = null;   // tray+notify module (src/ipc/tray.js) — setado no boot PRIMEIRO (fornece notifyUser)
@@ -686,10 +696,12 @@ function applySync() {
   // SERVIDOR (compartilhar minhas sessões): binda no IP da tailnet
   // (detectTailnetIP) — peers alcançam direto em http://<ip>:<porta>; auth por
   // token + WireGuard E2E (sem tailscale serve). Reinicia só se a config mudou.
+  // O desligamento passa por closeSyncServer, que derruba TAMBÉM os shells /pty
+  // já conectados (PR-32 #07).
   const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${s.allowAttach ? 1 : 0}|${syncNodeName()}` : '';
-  if (!srvKey && syncServer) { try { syncServer.close(); } catch {} syncServer = null; syncServerKey = null; }
+  if (!srvKey && syncServer) { closeSyncServer(); }
   if (srvKey && srvKey !== syncServerKey) {
-    if (syncServer) { try { syncServer.close(); } catch {} }
+    if (syncServer) { closeSyncServer(); }
     const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
     try {
       syncServer = net.startServer({
@@ -813,7 +825,14 @@ function ensureTermWin() {
   termWin.on('unmaximize', () => sendTerm('term-maximized', false));
   termWin.on('resize', saveTermBounds);   // persiste tamanho/posição (debounce; ignora se maximizada)
   termWin.on('move', saveTermBounds);
-  termWin.on('closed', () => { termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear(); });
+  // Fechar a janela (Alt+F4, X do WM, "Sair" no tray) MATA os ptys/WS antes de
+  // zerar o Map. Sem isso o clear() apagava as referências e o will-quit não
+  // tinha mais o que matar → vazava um node-pty + tmux por aba, a cada
+  // abre/fecha (PR-32 #08).
+  termWin.on('closed', () => {
+    for (const id of [...termSessions.keys()]) destroyTermSession(id);
+    termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear();
+  });
   return termWin;
 }
 function destroyTermSession(tabId) {
@@ -859,6 +878,17 @@ function openRemotePty(tabId, { host, port, token, tmux_session }) {
     else if (m.type === 'error') sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + m.msg + '\x1b[0m\r\n' });
   });
   ws.on('error', (e) => sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n' }));
+  // Queda de conexão (peer dorme, wifi cai, sync desligado do outro lado) é o
+  // modo de falha MAIS comum e não emite 'error' — só 'close'. Sem tratar, a
+  // aba ficava "assombrada": parecia viva, não respondia, sem aviso nenhum
+  // (PR-32 #17). Avisa e encerra a aba, como no fim de um pty local.
+  ws.on('close', () => {
+    const cur = termSessions.get(tabId);
+    if (!cur || cur.ws !== ws) return;   // aba já fechada/reconectada — não polui a nova
+    cur.ws = null;
+    sendTerm('pty-out', { tabId, data: '\r\n\x1b[33m[remoto] conexão encerrada\x1b[0m\r\n' });
+    sendTerm('pty-exit', { tabId });
+  });
 }
 // ---- handlers IPC da janela Terminal (abas) ----
 ipcMain.on('term-new-shell', (_e, host) => {
@@ -912,6 +942,15 @@ ipcMain.on('term-resize', (_e, { tabId, cols, rows }) => {
 });
 
 app.whenReady().then(() => {
+  // Sem menu de aplicação: o menu default do Electron registra aceleradores
+  // globais (Ctrl+W fecha a janela, Ctrl+R recarrega o renderer, Ctrl+Q mata o
+  // app) que são teclas ORDINÁRIAS dentro de um shell na janela Terminal —
+  // digitá-las destruía a janela/sessão. autoHideMenuBar só ESCONDE a barra, os
+  // aceleradores seguem ativos; remover o menu é o que os desliga (PR-32 #15).
+  // NÃO no macOS: lá o menu é do sistema e carrega Cmd+C/V/Q/W — removê-lo
+  // quebraria o colar no campo de token das Preferências (Cmd+W/R/Q também não
+  // colidem com o shell, que usa Ctrl).
+  if (process.platform !== 'darwin') { try { Menu.setApplicationMenu(null); } catch {} }
   migrateOldBase();                              // dados da era claude-traffic-light
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch {}
   // mantém a cópia estável do hook em dia (o settings.json aponta pra ela)
