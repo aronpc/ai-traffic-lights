@@ -68,6 +68,24 @@ function labelFor(s) {
   return AGENTS[agentOf(s)].label.toLowerCase() + ' · ' + s.pid;
 }
 
+// Sessão desta máquina? (remota vem do sync P2P e carrega origin do peer)
+function isLocal(s) { return !s.origin || s.origin === 'local'; }
+
+// As DUAS formas de abrir uma sessão — expostas como botões na linha porque a
+// escolha é do usuário, não do app:
+//   externo  → foca o terminal onde a sessão JÁ roda (Warp/Tilix/…). Só local:
+//              não há como focar a janela de outra máquina.
+//   embutido → attacha o tmux numa aba do terminal do ATL (xterm+pty). Exige
+//              tmux_session; pra remota é o ÚNICO caminho (via WebSocket /pty).
+function openExternal(s) {
+  window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+}
+
+function openEmbedded(s) {
+  const k = sessionKey(s);
+  window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[k] || '', k);
+}
+
 function setExpanded(v) {
   expanded = v;
   // Lista some quando recolhido (vira só header + rodapé). Também some com 0
@@ -288,11 +306,14 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        // tmux_session (local OU remoto) → attach no terminal EMBUTIDO (xterm+pty
-        // dentro do ATL — não abre janela externa). Remoto sem tmux → painel. Local sem tmux → foca.
-        if (s.tmux_session) { const _k = sessionKey(s); window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[_k] || '', _k); }
-        else if (s.origin && s.origin !== 'local') openTranscriptPanel(s);
-        else window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+        // Sessão LOCAL: o clique foca o terminal ONDE ELA JÁ RODA (Warp/Tilix/…).
+        // Antes qualquer sessão com tmux_session era attachada no terminal embutido
+        // — o clique deixava de focar o terminal original, que é o comportamento
+        // esperado. Abrir no terminal do ATL virou opção explícita (botão ⧉).
+        // REMOTA: não há janela local pra focar → attach embutido (ou painel).
+        if (isLocal(s)) openExternal(s);
+        else if (s.tmux_session) openEmbedded(s);
+        else openTranscriptPanel(s);
       }, 220);
     });
 
@@ -352,6 +373,25 @@ function render() {
     }
     main.append(labelEl, subEl, subInline);
     li.append(led, reason, llm, main);
+
+    // Coluna de ações: as duas formas de abrir a sessão, explícitas. O clique na
+    // linha faz o padrão (externo p/ local), mas quem decide é o usuário — daí
+    // os botões. Aparecem no hover (o CSS controla), como o sino.
+    const actions = document.createElement('span');
+    actions.className = 'row__actions';
+    const mkAction = (glyph, tipKey, fn) => {
+      const b = document.createElement('button');
+      b.className = 'row__action';
+      b.textContent = glyph;
+      b.setAttribute('data-tip', T(tipKey));
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(s); });
+      return b;
+    };
+    // ↗ terminal original: só local (não dá pra focar janela de outra máquina).
+    if (isLocal(s)) actions.append(mkAction('↗', 'row_open_external', openExternal));
+    // ⧉ terminal do ATL: precisa de tmux (o attach é `tmux attach -t <sessão>`).
+    if (s.tmux_session) actions.append(mkAction('⧉', 'row_open_embedded', openEmbedded));
+    li.append(actions);
 
     // Snooze do alerta (só em vermelho): não apaga a cor, só cala o beep/notif.
     // A coluna do sino é SEMPRE reservada (placeholder invisível quando não-red)

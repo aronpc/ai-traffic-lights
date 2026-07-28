@@ -32,7 +32,9 @@ const STRINGS = {
     tooltip_close: 'hide',
     tooltip_grip: 'drag to resize',
     tooltip_summary: 'overall state',
-    row_tooltip: 'click: focus terminal · double-click: rename',
+    row_tooltip: 'click: open session · double-click: rename',
+    row_open_external: 'Open in the original terminal',
+    row_open_embedded: 'Open in the ATL terminal',
     needs_you: '{agent} needs you',
     doc_sessions: 'sessions',
     // tray
@@ -164,7 +166,9 @@ const STRINGS = {
     tooltip_close: 'ocultar',
     tooltip_grip: 'arraste para redimensionar',
     tooltip_summary: 'estado agregado',
-    row_tooltip: 'clique: focar terminal · duplo-clique: renomear',
+    row_tooltip: 'clique: abrir sessão · duplo-clique: renomear',
+    row_open_external: 'Abrir no terminal original',
+    row_open_embedded: 'Abrir no terminal do ATL',
     needs_you: '{agent} precisa de você',
     doc_sessions: 'sessões',
     // tray
