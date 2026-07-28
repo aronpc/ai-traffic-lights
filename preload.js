@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
   setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
   fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
-  attachRemote: (origin, tmuxSession, cwd, alias, key) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd, alias, key }), // abre na janela Terminal (título = alias)
+  attachRemote: (origin, tmuxSession, cwd, alias, key, label) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd, alias, key, label }), // abre na janela Terminal (título = o mesmo label da linha)
   // janela Terminal (abas): o estado dos pty/ws vive no main; o renderer só desenha.
   // Cada método carrega tabId p/ rotear input/output/resize à aba certa.
   newShell: (host) => ipcRenderer.send('term-new-shell', host),         // host=undefined|'local' → local; senão abre shell num peer

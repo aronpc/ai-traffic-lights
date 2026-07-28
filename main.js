@@ -253,7 +253,20 @@ function lastSessionCwd() {
 // Warp: launch-config YAML + warp://launch. O scheme warp:// costuma estar
 // registrado (dev.warp.Warp.desktop) MESMO quando o binário `warp` não está no
 // PATH — então xdg-open abre o app e roda o comando do config.
-function attachRemote({ origin, tmux_session, cwd, alias, key }) {
+// Nome da aba do Terminal. Ordem: alias > label da linha (o renderer manda o
+// MESMO labelFor que desenha na lista) > basename do cwd > 'tmux: <sessão>'.
+// O fallback pro nome tmux é último recurso: é id interno do multiplexador
+// ("41"), não diz nada pro usuário e não batia com o nome da lista.
+// Sessão remota leva o prefixo da máquina de origem.
+function termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal }) {
+  const base = alias
+    || label
+    || (cwd ? String(cwd).replace(/\/+$/, '').split('/').pop() : '')
+    || ('tmux: ' + (tmux_session || 'shell'));
+  return (isLocal ? '' : (origin || '') + ' · ') + base;
+}
+
+function attachRemote({ origin, tmux_session, cwd, alias, key, label }) {
   if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
   const isLocal = !origin || origin === 'local';
   const dupKey = (isLocal ? 'local' : origin) + '|' + tmux_session;
@@ -263,8 +276,8 @@ function attachRemote({ origin, tmux_session, cwd, alias, key }) {
     }
   }
   ensureTermWin();
-  const title = alias || ((isLocal ? '' : origin + ' · ') + 'tmux: ' + tmux_session);
-  const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session, sessionKey: key });
+  const title = termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal });
+  const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session, sessionKey: key, label, cwd });
   if (isLocal) {
     spawnPtyLocal(tabId, ['tmux', 'attach', '-t', tmux_session], cwd);
   } else {
@@ -852,9 +865,11 @@ function destroyTermSession(tabId) {
   if (s.ws) { try { s.ws.close(); } catch {} }
   termSessions.delete(tabId);
 }
-function addTermSession({ title, kind, origin, tmux_session, sessionKey }) {
+function addTermSession({ title, kind, origin, tmux_session, sessionKey, label, cwd }) {
   const tabId = ++tabSeq;
-  termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, proc: null, ws: null, cols: 80, rows: 24 });
+  // label/cwd ficam guardados p/ RECONSTRUIR o título quando o alias é removido
+  // (rename pra vazio) — sem eles a aba cairia no 'tmux: <sessão>'.
+  termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, label: label || null, cwd: cwd || null, proc: null, ws: null, cols: 80, rows: 24 });
   sendTerm('term-tab-added', { tabId, title });
   return tabId;
 }
@@ -998,7 +1013,7 @@ app.whenReady().then(() => {
     onAliasSaved: (key, alias) => {   // atualiza o título da aba Terminal (alias é o nome da aba)
       for (const [id, s] of termSessions) {
         if (s.sessionKey === key) {
-          const t = alias || ((s.kind === 'local' ? '' : (s.origin || '') + ' · ') + 'tmux: ' + (s.tmux_session || 'shell'));
+          const t = termTabTitle({ alias, label: s.label, cwd: s.cwd, tmux_session: s.tmux_session, origin: s.origin, isLocal: s.kind === 'local' });
           s.title = t; sendTerm('term-tab-title', { tabId: id, title: t });
         }
       }

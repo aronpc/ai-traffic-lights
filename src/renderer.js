@@ -83,7 +83,10 @@ function openExternal(s) {
 
 function openEmbedded(s) {
   const k = sessionKey(s);
-  window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[k] || '', k);
+  // labelFor = o MESMO nome que a linha mostra (alias > basename do cwd > agente·pid).
+  // A aba herda esse nome; antes ela mostrava 'tmux: <sessão>' — um id interno do
+  // multiplexador que não diz nada e não batia com a lista.
+  window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[k] || '', k, labelFor(s));
 }
 
 function setExpanded(v) {
