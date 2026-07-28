@@ -87,6 +87,23 @@ function fitActive() {
   }
 }
 
+// Re-fit uma aba específica e re-envia o tamanho ao pty/ws. Usado quando a
+// CONEXÃO (re)estabelece (revive): o `start` foi mandado com o tamanho que
+// estava em s.cols/s.rows, que pode estar defasado do xterm atual — o tmux
+// remoto então desenhava no tamanho errado e o conteúdo vinha "mal
+// posicionado". Re-fit pega o tamanho real da janela e re-envia.
+function refitTab(tabId) {
+  const t = terms.get(tabId);
+  if (!t) return;
+  // garante que o holder dessa aba está visível antes de medir
+  if (t.holder.hidden) { for (const [id, x] of terms) x.holder.hidden = (id !== tabId); }
+  if (!areaVisible()) return;
+  try { t.fit.fit(); } catch {}
+  if (t.term.cols > 2 && t.term.rows > 1) {
+    try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {}
+  }
+}
+
 // ---- eventos do main ----
 window.trafficLight.onPtyOut(({ tabId, data }) => { const t = terms.get(tabId); if (t) t.term.write(data); });
 window.trafficLight.onPtyExit(({ tabId }) => {
@@ -149,6 +166,11 @@ window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').
 // que nem sempre dispara no hide/show de uma BrowserWindow no Linux.
 window.trafficLight.onTermShown(() => {
   requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
+});
+// Conexão (re)estabelecida (revive): re-fit + re-envia o tamanho p/ a aba certa,
+// senão o tmux remoto desenha no tamanho defasado e o conteúdo fica mal posicionado.
+window.trafficLight.onTermRefit(({ tabId }) => {
+  requestAnimationFrame(() => { refitTab(tabId); });
 });
 
 // resize: refaz fit da aba ativa e avisa o main (pty/ws) do novo tamanho

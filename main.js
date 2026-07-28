@@ -477,10 +477,11 @@ function createWindow() {
   win.on('move', saveBounds);
 
   // Log do renderer só com ATL_DEBUG=1 (debug off em produção).
-  if (process.env.ATL_DEBUG) {
-    win.webContents.on('console-message', (_e, level, message) =>
-      fs.appendFileSync('/tmp/atl-renderer.log', `[${level}] ${message}\n`));
-  }
+  win.webContents.on('console-message', (_e, level, message) => {
+    if (process.env.ATL_DEBUG) {
+      try { fs.appendFileSync('/tmp/atl-renderer.log', `[${level}] ${message}\n`); } catch {}
+    }
+  });
 }
 
 // Mostrar/ocultar centralizado. No show, re-afirma skipTaskbar — alguns WMs
@@ -850,8 +851,26 @@ function saveTermBounds() {
     } catch {}
   }, 300);
 }
+// Reexibe a janela Terminal depois de um hide(). No Linux/X11 uma janela
+// `frame:false` + `transparent:true` costuma ficar presa em WM_STATE=Withdrawn:
+// o show() do Electron pede o mapeamento, mas o WM ignora e a janela some da
+// lista de janelas — o app parecia "não reabrir", ou reabrir vazio, quando na
+// verdade o conteúdo estava intacto e a JANELA é que nunca voltou.
+// showInactive()+show() força o remapeamento; o restore() cobre o caso de ela
+// ter sido minimizada antes de esconder.
+function revealTermWin() {
+  if (!termWin || termWin.isDestroyed()) return;
+  try {
+    if (termWin.isMinimized()) termWin.restore();
+    termWin.showInactive();
+    termWin.show();
+    termWin.moveTop();
+    termWin.focus();
+  } catch {}
+}
+
 function ensureTermWin() {
-  if (termWin && !termWin.isDestroyed()) { try { termWin.show(); termWin.moveTop(); termWin.focus(); } catch {} return termWin; }
+  if (termWin && !termWin.isDestroyed()) { revealTermWin(); return termWin; }
   const wa = screen.getPrimaryDisplay().workArea;
   const b = loadTermBounds();
   const w = (b && b.width) || Math.min(960, Math.max(640, Math.round(wa.width * 0.6)));
@@ -874,7 +893,6 @@ function ensureTermWin() {
   // Janela reapareceu (show do ensureTermWin, restore do WM): o renderer precisa
   // REPINTAR o xterm — enquanto esteve oculta o canvas foi descartado e o buffer
   // não. Sem isso a aba reabre em branco com o tmux vivo do outro lado.
-  termWin.on('show', () => sendTerm('term-shown'));
   termWin.on('restore', () => sendTerm('term-shown'));
   termWin.on('maximize', () => sendTerm('term-maximized', true));
   termWin.on('unmaximize', () => sendTerm('term-maximized', false));
@@ -916,8 +934,13 @@ function spawnPtyLocal(tabId, cmd, cwd) {
   try { console.log('[term] spawn tabId=' + tabId + ' cmd=' + JSON.stringify(cmd));
     const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: cwd || process.env.HOME, env: ptyEnv() });
     proc.onData((d) => sendTerm('pty-out', { tabId, data: d }));
-    proc.onExit(() => sendTerm('pty-exit', { tabId }));
+    // Zera s.proc no exit: sem isso a aba fica com uma referência a um processo
+    // MORTO e o teste de "conexão caiu" (!ws && !proc) nunca dispara — o revive
+    // não acontecia e a aba reabria vazia.
+    proc.onExit(() => { const cur = termSessions.get(tabId); if (cur && cur.proc === proc) cur.proc = null; sendTerm('pty-exit', { tabId }); });
     s.proc = proc;
+    // mesma razão do remoto: o spawn usou s.cols/s.rows; re-fit pega o tamanho real.
+    sendTerm('term-refit', { tabId });
   } catch (e) { console.log('[term] spawn FAIL tabId=' + tabId + ': ' + (e.message || e)); sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m' + (e.message || e) + '\x1b[0m\r\n' }); }
 }
 // cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
@@ -927,7 +950,12 @@ function openRemotePty(tabId, { host, port, token, tmux_session }) {
   let ws;
   try { ws = new (require('ws'))(url, { headers: { Authorization: 'Bearer ' + token } }); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
   s.ws = ws;
-  ws.on('open', () => { try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: s.cols, rows: s.rows })); } catch {} });
+  ws.on('open', () => {
+    try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: s.cols, rows: s.rows })); } catch {}
+    // o `start` usa s.cols/s.rows (possivelmente defasados). Pede ao renderer
+    // o tamanho REAL da janela e re-envia → tmux remoto desenha no tamanho certo.
+    sendTerm('term-refit', { tabId });
+  });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'out') sendTerm('pty-out', { tabId, data: m.data });

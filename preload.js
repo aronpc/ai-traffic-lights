@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente
   onTermMaximized: (cb) => ipcRenderer.on('term-maximized', (_e, v) => cb(v)),        // bool — alterna classe .maximized (tira o radius)
   onTermShown: (cb) => ipcRenderer.on('term-shown', () => cb()),                      // janela reapareceu → repintar (canvas do xterm foi descartado)
+  onTermRefit: (cb) => ipcRenderer.on('term-refit', (_e, p) => cb(p)),                // {tabId} — conexão (re)estabeleceu: re-fit + re-envia o tamanho ao pty/ws
   onTermTabTitle: (cb) => ipcRenderer.on('term-tab-title', (_e, p) => cb(p)),        // { tabId, title } — rename da aba (sincroniza c/ o alias)
   pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
   getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
