@@ -189,9 +189,17 @@ release_beta() {
     echo '```'
     echo "</details>"
     if [ -n "$STABLE_BEFORE" ]; then
+      local total=0
+      total="$(git log --no-merges --oneline "$STABLE_BEFORE..HEAD" 2>/dev/null | wc -l)"
       echo
-      echo "### Commits desde \`$STABLE_BEFORE\`"
+      echo "### Commits desde \`$STABLE_BEFORE\` ($total)"
       git log --no-merges --pretty='- %s' "$STABLE_BEFORE..HEAD" 2>/dev/null | head -40 || true
+      # Truncar em silêncio faria a lista PARECER completa. Diz quantos ficaram
+      # de fora e aponta para o compare, que tem todos.
+      if [ "$total" -gt 40 ]; then
+        echo
+        echo "_… e mais $((total - 40)). Lista completa: [\`$STABLE_BEFORE...$tag\`](https://github.com/$REPO/compare/$STABLE_BEFORE...$tag)_"
+      fi
     fi
   } > "$notes"
 
