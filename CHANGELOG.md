@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 ### Changed
+- **A lista de sessões é sempre compacta.** O toggle normal/compacta do header e
+  a configuração `compact` deixaram de existir; a linha densa
+  (modelo · ferramenta · tempo) virou o único modo.
+
 ### Fixed
 
 ## [0.7.2] - 2026-07-16
