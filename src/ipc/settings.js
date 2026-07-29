@@ -8,10 +8,15 @@
 // Retorna { createSettingsWindow } p/ o tray (item "Preferências") e o handler
 // open-settings.
 
-function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_URL, SETTINGS_BOUNDS_FILE, BASE_DIR, appDir }) {
+function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_URL, SETTINGS_BOUNDS_FILE, BASE_DIR, appDir, SETTINGS_W, SETTINGS_H }) {
   const fs = require('fs');
   const path = require('path');
   const { BrowserWindow, screen, dialog, shell } = require('electron');
+
+  // Estado da janela — privado do módulo. Estava declarado no main.js e o
+  // módulo o referenciava sem alcance (ReferenceError ao abrir Preferências).
+  let settingsWin = null;
+  let settingsBoundsTimer = null;
 
   function loadSettingsBounds() {
     try { return JSON.parse(fs.readFileSync(SETTINGS_BOUNDS_FILE, 'utf8')); } catch { return null; }

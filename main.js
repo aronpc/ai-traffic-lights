@@ -576,8 +576,10 @@ function buildTrayMenu() {
 //  compositor do menu, injetado em createTray via callback.)
 
 // ---- janela de Preferências (threshold de idle + atalho) ----
-let settingsWin = null;
-let settingsBoundsTimer = null;
+// (settingsWin/settingsBoundsTimer vivem em src/ipc/settings.js — REF passo 9.
+//  Ficaram órfãos aqui quando createSettingsWindow foi extraído: o módulo os
+//  referenciava sem enxergá-los, e abrir Preferências jogava
+//  "ReferenceError: settingsWin is not defined" na cara do usuário.)
 // Tamanho FIXO da janela de Preferências (não redimensionável): travado na
 // altura da aba mais alta (Geral), medido no conteúdo real a 420px de largura.
 // As abas mais curtas (Integração) ficam com espaço vazio; nenhuma rola.
@@ -1102,7 +1104,7 @@ app.whenReady().then(() => {
   });
   settingsIpc = require('./src/ipc/settings').setupSettingsIpc({   // settings extraído (REF passo 9) — antes do createTray (tray referencia createSettingsWindow)
     ipcMain, getSettings: () => settingsCfg, getLang: () => LANG, T, APP_VERSION, REPO_URL,
-    SETTINGS_BOUNDS_FILE, BASE_DIR, appDir: __dirname,
+    SETTINGS_BOUNDS_FILE, BASE_DIR, appDir: __dirname, SETTINGS_W, SETTINGS_H,
   });
   trayIpc.createTray();   // DEPOIS de launcherIpc/updateIpc/settingsIpc: buildTrayMenu os referencia
   applySync();                                   // sync P2P: sobe servidor/poller se habilitado
