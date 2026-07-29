@@ -3,9 +3,9 @@
 # scripts/release.sh — publica releases no GitHub em DOIS CANAIS ISOLADOS.
 #
 # Uso:
-#   scripts/release.sh dev                     # publica X.Y.Z-dev.N como PRE-RELEASE
-#   scripts/release.sh dev --base 0.8.0        # força a base (default: patch+1 do package.json)
-#   scripts/release.sh promote                 # promove o último dev pra stable
+#   scripts/release.sh beta                     # publica X.Y.Z-beta.N como PRE-RELEASE
+#   scripts/release.sh beta --base 0.8.0        # força a base (default: patch+1 do package.json)
+#   scripts/release.sh promote                 # promove a última beta pra stable
 #   scripts/release.sh promote --version 0.7.3
 #   scripts/release.sh <modo> --dry-run        # mostra o que faria, não publica
 #   scripts/release.sh <modo> --skip-tests     # pula o gate `npm test` (use com consciência)
@@ -20,12 +20,12 @@
 #      (getLatestTagName) — logo, nunca enxerga uma pre-release.
 #   3. O electron-updater LIGA `allowPrerelease` sozinho quando a versão do app
 #      tem componente de pre-release (AppUpdater: hasPrereleaseComponents) —
-#      então um build `-dev.N` varre o feed atom e só aceita tags do mesmo canal.
+#      então um build `-beta.N` varre o feed atom e só aceita tags do mesmo canal.
 #   4. O fallback GitHub-API do app (src/ipc/update.js, usado por deb/npm/source)
 #      também consulta /releases/latest → igualmente protegido.
 #
 #   O build em si é IDÊNTICO ao estável: só a versão muda. O electron-builder
-#   grava `latest-linux.yml` nos dois casos, mas o do canal dev vive DENTRO da
+#   grava `latest-linux.yml` nos dois casos, mas o do canal beta vive DENTRO da
 #   tag da pre-release — inalcançável para quem resolve a tag por /releases/latest.
 #
 # Referência do fluxo manual estável: .omc/RELEASE_RULE.md (local) e docs/RELEASE.md.
@@ -61,8 +61,8 @@ while [ $# -gt 0 ]; do
 done
 
 case "$MODE" in
-  dev|promote) ;;
-  *) die "modo inválido: '${MODE:-<vazio>}'. Use 'dev' ou 'promote' (--help)";;
+  beta|promote) ;;
+  *) die "modo inválido: '${MODE:-<vazio>}'. Use 'beta' ou 'promote' (--help)";;
 esac
 
 need gh; need jq; need git; need npx
@@ -85,7 +85,7 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 SHA="$(git rev-parse HEAD)"
 SHORT_SHA="$(git rev-parse --short HEAD)"
 
-# Tag estável atual — usada no fim pra PROVAR que o canal dev não a moveu.
+# Tag estável atual — usada no fim pra PROVAR que o canal beta não a moveu.
 stable_latest_tag() { gh api "repos/$REPO/releases/latest" -q .tag_name 2>/dev/null || echo ""; }
 STABLE_BEFORE="$(stable_latest_tag)"
 
@@ -124,48 +124,48 @@ build() {
 }
 
 # ===========================================================================
-# MODO dev — pre-release X.Y.Z-dev.N
+# MODO beta — pre-release X.Y.Z-beta.N
 # ===========================================================================
-release_dev() {
+release_beta() {
   # Base: patch+1 do package.json (0.7.2 → 0.7.3), ou --base.
   if [ -z "$BASE" ]; then
     BASE="$(printf '%s' "$PKG_VERSION" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')"
   fi
   [[ "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "base inválida: '$BASE' (esperado X.Y.Z)"
 
-  # N = maior -dev.N já publicado nessa base, +1.
+  # N = maior -beta.N já publicado nessa base, +1.
   local max=0 n
   while read -r t; do
     case "$t" in
-      "v$BASE-dev."*)
-        n="${t##*-dev.}"
+      "v$BASE-beta."*)
+        n="${t##*-beta.}"
         if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -gt "$max" ]; then max="$n"; fi
         ;;
     esac
   done < <(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' 2>/dev/null || true)
-  local version="$BASE-dev.$((max + 1))"
+  local version="$BASE-beta.$((max + 1))"
   local tag="v$version"
 
-  info "canal dev → $tag  (branch $BRANCH @ $SHORT_SHA)"
+  info "canal beta → $tag  (branch $BRANCH @ $SHORT_SHA)"
   info "stable atual: ${STABLE_BEFORE:-<nenhum>} — não deve mudar"
   guard_tree; guard_pushed; run_tests
 
-  local out="dist-dev"
+  local out="dist-beta"
   local appimage="$out/ai-traffic-lights-$version.AppImage"
   local yml="$out/latest-linux.yml"
   run rm -f "$appimage" "$yml"   # nada de artefato velho passando por novo
-  # Só AppImage: o .deb não participa do canal dev (o updater do deb é
+  # Só AppImage: o .deb não participa do canal beta (o updater do deb é
   # informativo e resolve por /releases/latest, que exclui pre-releases).
   build "$version" "AppImage" "$out"
   if [ "$DRY" = 0 ]; then
     [ -f "$appimage" ] || die "não encontrei $appimage"
-    [ -f "$yml" ] || die "não encontrei $yml (o auto-update do canal dev depende dele)"
+    [ -f "$yml" ] || die "não encontrei $yml (o auto-update do canal beta depende dele)"
     grep -q "version: $version" "$yml" || die "$yml não bate com a versão $version"
   fi
 
   local notes; notes="$(mktemp)"
   {
-    echo "**Build de teste do canal \`dev\`.** Não afeta quem está no canal estável:"
+    echo "**Build de teste do canal \`beta\`.** Não afeta quem está no canal estável:"
     echo "esta release é uma _pre-release_, e o GitHub a omite de \`/releases/latest\` —"
     echo "que é exatamente onde o app estável procura atualização."
     echo
@@ -176,8 +176,8 @@ release_dev() {
     echo "| estável no momento | ${STABLE_BEFORE:-—} |"
     echo
     echo "### Como testar"
-    echo "Em **Preferências → Atualizações**, ligue *\"Receber builds de teste (dev)\"*."
-    echo "O app baixa esta versão sozinho e segue recebendo as próximas do canal dev."
+    echo "Em **Preferências → Atualizações**, ligue *\"Receber versões beta (teste)\"*."
+    echo "O app baixa esta versão sozinho e segue recebendo as próximas do canal beta."
     echo "Desligar o toggle traz você de volta para a última estável."
     echo
     echo "<details><summary>Instalar à mão (app anterior à 0.7.3, sem o toggle)</summary>"
@@ -200,7 +200,7 @@ release_dev() {
     --repo "$REPO" \
     --prerelease \
     --target "$SHA" \
-    --title "$tag — dev ($BRANCH @ $SHORT_SHA)" \
+    --title "$tag — beta ($BRANCH @ $SHORT_SHA)" \
     --notes-file "$notes" \
     "$appimage" "$yml"
   rm -f "$notes"
@@ -210,17 +210,17 @@ release_dev() {
 }
 
 # ===========================================================================
-# MODO promote — X.Y.Z-dev.N  →  X.Y.Z estável
+# MODO promote — X.Y.Z-beta.N  →  X.Y.Z estável
 # ===========================================================================
 release_promote() {
-  # Versão alvo: --version, ou o último dev sem o sufixo.
+  # Versão alvo: --version, ou a última beta sem o sufixo.
   if [ -z "$VERSION" ]; then
-    local last_dev
-    last_dev="$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
-      | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$' | head -1 || true)"
-    [ -n "$last_dev" ] || die "nenhuma release -dev.N encontrada; passe --version X.Y.Z"
-    VERSION="$(printf '%s' "$last_dev" | sed -E 's/^v//; s/-dev\.[0-9]+$//')"
-    info "última dev: $last_dev → promovendo para $VERSION"
+    local last_beta
+    last_beta="$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
+      | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -1 || true)"
+    [ -n "$last_beta" ] || die "nenhuma release -beta.N encontrada; passe --version X.Y.Z"
+    VERSION="$(printf '%s' "$last_beta" | sed -E 's/^v//; s/-beta\.[0-9]+$//')"
+    info "última beta: $last_beta → promovendo para $VERSION"
   fi
   [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
   local tag="v$VERSION"
@@ -274,17 +274,17 @@ release_promote() {
   if [ "$DRY" = 0 ]; then ok "publicado: https://github.com/$REPO/releases/tag/$tag"; fi
 }
 
-# Prova de que o canal dev não mexeu no estável.
+# Prova de que o canal beta não mexeu no estável.
 verify_stable_untouched() {
   if [ "$DRY" = 1 ]; then return 0; fi
   local after; after="$(stable_latest_tag)"
   if [ "$after" != "$STABLE_BEFORE" ]; then
-    die "REGRESSÃO: /releases/latest mudou de '${STABLE_BEFORE:-<nenhum>}' para '${after:-<nenhum>}'. A release dev deveria ser pre-release."
+    die "REGRESSÃO: /releases/latest mudou de '${STABLE_BEFORE:-<nenhum>}' para '${after:-<nenhum>}'. A release beta deveria ser pre-release."
   fi
   ok "estável intacto: /releases/latest continua ${after:-<nenhum>}"
 }
 
 case "$MODE" in
-  dev)     release_dev;;
+  beta)    release_beta;;
   promote) release_promote;;
 esac

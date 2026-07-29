@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Canal de atualização `dev` (opt-in).** Em **Preferências → Atualizações**,
-  ligar *"Receber builds de teste (dev)"* passa a trazer as versões novas antes
+- **Canal de atualização `beta` (opt-in).** Em **Preferências → Atualizações**,
+  ligar *"Receber versões beta (teste)"* passa a trazer as versões novas antes
   de virarem estáveis; desligar volta para a última estável. Vem **desligado**:
   builds de teste são publicados como _pre-release_ no GitHub, e quem está no
   canal estável nunca os enxerga, porque o `electron-updater` resolve a versão

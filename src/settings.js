@@ -25,28 +25,34 @@ const DEFAULTS = Object.freeze({
   revealOnRed: false,          // trazer o overlay à frente (se oculto) quando um agente fica vermelho
   revealOnReset: false,        // trazer à frente quando a cota reseta
   revealOnUpdate: false,       // trazer à frente quando há uma nova versão disponível
-  updateChannel: 'stable',     // canal de atualização: 'stable' (default) | 'dev' (builds de teste)
+  updateChannel: 'stable',     // canal de atualização: 'stable' (default) | 'beta' (builds de teste)
 });
 
-const UPDATE_CHANNELS = Object.freeze(['stable', 'dev']);
+const UPDATE_CHANNELS = Object.freeze(['stable', 'beta']);
 
 // Traduz a preferência de canal + a versão em execução nas DUAS flags que o
 // electron-updater entende. Pura de propósito: a decisão é testável sem Electron.
 //
 //   stable → allowPrerelease=false. O GitHubProvider resolve a tag por
 //            /releases/latest, que o GitHub monta ignorando pre-releases — os
-//            builds do canal dev ficam invisíveis.
-//   dev    → allowPrerelease=true. O provider passa a varrer o feed atom e
+//            builds do canal beta ficam invisíveis.
+//   beta   → allowPrerelease=true. O provider passa a varrer o feed atom e
 //            aceita a entrada mais nova, pre-release inclusive.
 //
-// allowDowngrade é o que permite SAIR do canal dev. Voltar de `0.7.4-dev.3` para
-// o estável `0.7.3` é uma descida em semver, e sem esta flag o app ficaria preso
-// no dev para sempre. Fica ligada só nesse caso (rodando pre-release e pedindo
-// estável) — nunca num app estável, onde só faria mal.
+// O nome 'beta' NÃO é decorativo: o GitHubProvider trata `alpha` e `beta` como
+// canais nativos (lista fixa no código) e qualquer outro sufixo como
+// `isCustomChannel`, que ele DESCARTA ao varrer o feed. Consequência prática:
+// quem roda `0.7.4-beta.N` também recebe uma estável mais nova que apareça;
+// quem rodasse `0.7.4-dev.N` só veria outras `-dev.*` e ficaria para trás.
+//
+// allowDowngrade é o que permite SAIR do canal beta por vontade própria. Voltar
+// de `0.7.4-beta.3` para o estável `0.7.3` é uma descida em semver, e sem esta
+// flag o app ficaria preso na beta. Fica ligada só nesse caso (rodando
+// pre-release e pedindo estável) — nunca num app estável, onde só faria mal.
 function updaterFlags(channel, appVersion) {
-  const wantDev = channel === 'dev';
+  const wantBeta = channel === 'beta';
   const onPrerelease = /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
-  return { allowPrerelease: wantDev, allowDowngrade: !wantDev && onPrerelease };
+  return { allowPrerelease: wantBeta, allowDowngrade: !wantBeta && onPrerelease };
 }
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).

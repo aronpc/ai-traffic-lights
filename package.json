@@ -10,7 +10,7 @@
     "hook:test": "bash hooks/traffic-hook.sh",
     "test": "node --test",
     "dist": "electron-builder --linux",
-    "release:dev": "bash scripts/release.sh dev",
+    "release:beta": "bash scripts/release.sh beta",
     "release:promote": "bash scripts/release.sh promote"
   },
   "author": "Aron Peyroteo <aronpeyroteo@gmail.com>",

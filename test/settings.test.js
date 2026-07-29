@@ -151,7 +151,7 @@ test('mergeWithDefaults: launchers filtra pares chave/string válidos', () => {
   assert.deepEqual(mergeWithDefaults({ launchers: 'nope' }).launchers, {});
 });
 
-// ---- canal de atualização (stable / dev) ----
+// ---- canal de atualização (stable / beta) ----
 // A regra que mais importa é o DEFAULT: quem não mexeu em nada tem de ficar no
 // canal estável, senão uma pre-release publicada no GitHub vazaria para todos.
 
@@ -159,8 +159,9 @@ test('updateChannel: default é stable e só aceita valores conhecidos', () => {
   assert.equal(DEFAULTS.updateChannel, 'stable');
   assert.equal(mergeWithDefaults(null).updateChannel, 'stable');
   assert.equal(mergeWithDefaults({}).updateChannel, 'stable');
-  assert.equal(mergeWithDefaults({ updateChannel: 'dev' }).updateChannel, 'dev');
+  assert.equal(mergeWithDefaults({ updateChannel: 'beta' }).updateChannel, 'beta');
   assert.equal(mergeWithDefaults({ updateChannel: 'nightly' }).updateChannel, 'stable'); // desconhecido
+  assert.equal(mergeWithDefaults({ updateChannel: 'dev' }).updateChannel, 'stable');     // sufixo custom não é canal
   assert.equal(mergeWithDefaults({ updateChannel: true }).updateChannel, 'stable');      // tipo errado
   assert.equal(mergeWithDefaults({ updateChannel: '' }).updateChannel, 'stable');
 });
@@ -168,23 +169,23 @@ test('updateChannel: default é stable e só aceita valores conhecidos', () => {
 test('updaterFlags: stable nunca aceita pre-release', () => {
   assert.deepEqual(updaterFlags('stable', '0.7.3'),
     { allowPrerelease: false, allowDowngrade: false });
-  // valor podre/ausente cai em stable — nunca abre o canal dev por acidente
+  // valor podre/ausente cai em stable — nunca abre o canal beta por acidente
   assert.equal(updaterFlags(undefined, '0.7.3').allowPrerelease, false);
   assert.equal(updaterFlags(null, '0.7.3').allowPrerelease, false);
-  assert.equal(updaterFlags('DEV', '0.7.3').allowPrerelease, false); // case-sensitive de propósito
+  assert.equal(updaterFlags('BETA', '0.7.3').allowPrerelease, false); // case-sensitive de propósito
 });
 
-test('updaterFlags: dev liga allowPrerelease e nunca downgrade', () => {
-  assert.deepEqual(updaterFlags('dev', '0.7.3'),
+test('updaterFlags: beta liga allowPrerelease e nunca downgrade', () => {
+  assert.deepEqual(updaterFlags('beta', '0.7.3'),
     { allowPrerelease: true, allowDowngrade: false });
-  assert.deepEqual(updaterFlags('dev', '0.7.4-dev.3'),
+  assert.deepEqual(updaterFlags('beta', '0.7.4-beta.3'),
     { allowPrerelease: true, allowDowngrade: false });
 });
 
-test('updaterFlags: sair do canal dev libera o downgrade (0.7.4-dev.3 → 0.7.3)', () => {
+test('updaterFlags: sair do canal beta libera o downgrade (0.7.4-beta.3 → 0.7.3)', () => {
   // Rodando pre-release e pedindo estável: sem allowDowngrade o app ficaria
-  // preso no dev, porque 0.7.3 < 0.7.4-dev.3 em semver.
-  assert.deepEqual(updaterFlags('stable', '0.7.4-dev.3'),
+  // preso na beta, porque 0.7.3 < 0.7.4-beta.3 em semver.
+  assert.deepEqual(updaterFlags('stable', '0.7.4-beta.3'),
     { allowPrerelease: false, allowDowngrade: true });
   assert.equal(updaterFlags('stable', '1.0.0-beta.1').allowDowngrade, true);
   // já no estável, downgrade fica desligado — não faria nada além de mal

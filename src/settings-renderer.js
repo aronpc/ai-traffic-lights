@@ -15,7 +15,7 @@ const $notifyReset = document.getElementById('notifyReset');
 const $revealRed = document.getElementById('revealOnRed');
 const $revealReset = document.getElementById('revealOnReset');
 const $revealUpdate = document.getElementById('revealOnUpdate');
-const $devChannel = document.getElementById('devChannel');
+const $betaChannel = document.getElementById('betaChannel');
 const $resetThreshold = document.getElementById('resetThreshold');
 const $resetThresholdVal = document.getElementById('resetThresholdVal');
 const $soundEnabled = document.getElementById('soundEnabled');
@@ -91,7 +91,7 @@ function buildCfg() {
   cfg.revealOnRed = $revealRed.checked;      // trazer à frente ao ficar vermelho
   cfg.revealOnReset = $revealReset.checked;  // trazer à frente ao resetar a cota
   cfg.revealOnUpdate = $revealUpdate.checked; // trazer à frente ao ter update
-  cfg.updateChannel = $devChannel.checked ? 'dev' : 'stable'; // canal de atualização
+  cfg.updateChannel = $betaChannel.checked ? 'beta' : 'stable'; // canal de atualização
   cfg.resetNotifyThresholdPct = parseInt($resetThreshold.value, 10) || 90; // limiar de "esgotado"
   cfg.soundEnabled = $soundEnabled.checked;
   cfg.soundVolume = (parseInt($soundVolume.value, 10) || 0) / 100;  // slider 0–100 → 0–1
@@ -128,7 +128,7 @@ $notifyReset.addEventListener('change', pushLive);
 $revealRed.addEventListener('change', pushLive);
 $revealReset.addEventListener('change', pushLive);
 $revealUpdate.addEventListener('change', pushLive);
-$devChannel.addEventListener('change', pushLive);
+$betaChannel.addEventListener('change', pushLive);
 // slider do limiar: atualiza o rótulo a cada pixel (barato/local); salva só ao
 // soltar (change). Não afeta o overlay ao vivo, então dispensa o debounce do opacity.
 $resetThreshold.addEventListener('input', () => { $resetThresholdVal.textContent = $resetThreshold.value + '%'; });
@@ -250,7 +250,7 @@ window.trafficLight.getSettings().then((c) => {
     $revealRed.checked = c.revealOnRed === true;      // default desligado
     $revealReset.checked = c.revealOnReset === true;  // default desligado
     $revealUpdate.checked = c.revealOnUpdate === true; // default desligado
-    $devChannel.checked = c.updateChannel === 'dev';   // default 'stable'
+    $betaChannel.checked = c.updateChannel === 'beta';   // default 'stable'
     const thr = typeof c.resetNotifyThresholdPct === 'number' ? c.resetNotifyThresholdPct : 90;
     $resetThreshold.value = String(thr);
     $resetThresholdVal.textContent = thr + '%';

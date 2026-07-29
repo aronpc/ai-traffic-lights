@@ -12,16 +12,16 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "dev = pre-release isolada · promote = vira o Latest de todo mundo"
+        description: "beta = pre-release isolada · promote = vira o Latest de todo mundo"
         type: choice
-        options: [dev, promote]
-        default: dev
+        options: [beta, promote]
+        default: beta
       base:
-        description: "modo dev: versão base X.Y.Z (vazio = patch+1 do package.json)"
+        description: "modo beta: versão base X.Y.Z (vazio = patch+1 do package.json)"
         type: string
         required: false
       version:
-        description: "modo promote: versão X.Y.Z (vazio = último -dev.N sem o sufixo)"
+        description: "modo promote: versão X.Y.Z (vazio = último -beta.N sem o sufixo)"
         type: string
         required: false
       dry_run:
