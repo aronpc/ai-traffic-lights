@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+### Changed
+### Fixed
+
+## [0.7.3] - 2026-07-29
+
+### Added
 - **Canal de atualização `beta` (opt-in).** Em **Preferências → Atualizações**,
   ligar *"Receber versões beta (teste)"* passa a trazer as versões novas antes
   de virarem estáveis; desligar volta para a última estável. Vem **desligado**:
@@ -21,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (modelo · ferramenta · tempo) virou o único modo.
 
 ### Fixed
+- **Instaladores garantem o primeiro arranque ("instala e não abre").** Linux:
+  runtime AppImage estático (dispensa `libfuse2`) + preflight que instala
+  `libfuse2`/`libfuse2t64` e as libs do Electron por distro + launcher com
+  fallback sem FUSE (`--appimage-extract-and-run`) + verificação de checksum
+  (sha512) + opção `ATL_PKG=deb` (apt resolve as dependências). macOS: `xattr`
+  + `codesign` ad-hoc destravam o Gatekeeper de app não-notarizado, sem depender
+  de Homebrew/`jq`.
+- **`pacman -Sy` removido do preflight (Arch).** Sincronizar os índices sem
+  atualizar os pacotes deixa o sistema em partial-upgrade — um jeito conhecido
+  de quebrar a instalação. O uninstall também passou a cobrir instalações via
+  `.deb`, que antes ficavam para trás.
+- **`install_macos.sh` sob bash 3.2** (o que a Apple entrega): expansão de array
+  vazio abortava sob `set -u`. Também passou a verificar o checksum do `.dmg`.
 
 ## [0.7.2] - 2026-07-16
 
