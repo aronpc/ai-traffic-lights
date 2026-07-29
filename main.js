@@ -1090,8 +1090,14 @@ ipcMain.on('save-settings', (_e, cfg) => {
   // trabalho caro quando o valor relevante mudou de fato (evita re-registrar o
   // globalShortcut e reconstruir o tray a cada tick de arraste do slider).
   const prevShortcut = settingsCfg.shortcut, prevLang = settingsCfg.lang;
+  const prevChannel = settingsCfg.updateChannel;
   settingsCfg = persistSettings(cfg);
   if (settingsCfg.shortcut !== prevShortcut) applyShortcut();   // re-registra só se o atalho mudou
+  if (settingsCfg.updateChannel !== prevChannel) {              // trocou de canal → reflete e re-checa na hora
+    applyUpdateChannel();
+    _updateCache = null;                                        // o cache do fallback é por canal
+    checkForUpdates();
+  }
   if (settingsCfg.lang !== prevLang) {                          // idioma só se mudou
     applyLang();
     if (tray) tray.setContextMenu(buildTrayMenu());             // labels do tray no idioma novo
@@ -1568,6 +1574,17 @@ function emitUpdateState() {
 }
 function setUpdateState(patch) { updateState = { ...updateState, ...patch }; emitUpdateState(); }
 
+// Aplica o canal escolhido nas Preferências ao autoUpdater. Chamado no setup e
+// de novo sempre que o toggle muda (as Preferências aplicam ao vivo), porque as
+// flags são lidas a cada checagem — não só na construção.
+// A tradução canal→flags é pura e vive em src/settings.js (updaterFlags).
+function applyUpdateChannel() {
+  if (!autoUpdater) return;                    // deb/npm/source: fallback GitHub-API, sempre estável
+  const f = settingsLib.updaterFlags(settingsCfg.updateChannel, APP_VERSION);
+  autoUpdater.allowPrerelease = f.allowPrerelease;
+  autoUpdater.allowDowngrade = f.allowDowngrade;
+}
+
 // Configura o autoUpdater (eventos) e dispara a 1ª checagem + scheduler 1h.
 // Chamado no app.whenReady (precisa de app pronto p/ detectInstallMethod/getAppPath).
 function setupAutoUpdater() {
@@ -1580,6 +1597,7 @@ function setupAutoUpdater() {
   if (autoUpdater) {
     autoUpdater.autoDownload = true;           // baixa sozinho ao detectar (instala no clique "↻" ou no quit)
     autoUpdater.autoInstallOnAppQuit = true;
+    applyUpdateChannel();                      // stable (default) ou dev, conforme as Preferências
     autoUpdater.on('update-available', (info) => {
       const v = ((info && info.version) || '').replace(/^v/, '');
       setUpdateState({ hasUpdate: true, latest: v, url: REPO_URL + '/releases/tag/v' + v, status: 'available', error: null });

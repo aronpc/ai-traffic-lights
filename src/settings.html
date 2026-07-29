@@ -22,6 +22,7 @@
       <button class="tab is-active" data-tab="general" data-i18n="tab_general">Geral</button>
       <button class="tab" data-tab="notifications" data-i18n="tab_notifications">Notificações</button>
       <button class="tab" data-tab="integration" data-i18n="tab_integration">Integração</button>
+      <button class="tab" data-tab="updates" data-i18n="tab_updates">Atualizações</button>
     </nav>
 
     <div class="tab-body">
@@ -80,6 +81,7 @@
             <label for="autostart" data-i18n="autostart_label">Iniciar com o sistema</label>
           </div>
         </div>
+
       </section>
 
       <!-- ===================== ABA: NOTIFICAÇÕES ===================== -->
@@ -177,6 +179,18 @@
             <label class="top" for="terminalCmd">Comando customizado</label>
             <input id="terminalCmd" class="shortcut" placeholder="kitty --directory {cwd} -e {cmd}" style="width:100%">
           </div>
+        </div>
+      </section>
+
+      <!-- ===================== ABA: ATUALIZAÇÕES ===================== -->
+      <section class="tab-panel" data-panel="updates" hidden>
+        <div class="section">
+          <div class="section-title" data-i18n="sec_channel">Canal</div>
+          <div class="row">
+            <input type="checkbox" id="devChannel">
+            <label for="devChannel" data-i18n="dev_channel_label">Receber builds de teste (dev)</label>
+          </div>
+          <div class="hint" data-i18n="dev_channel_hint">Versões novas antes de virarem estáveis — podem ter bugs. Desligue para voltar à última estável.</div>
         </div>
       </section>
     </div>

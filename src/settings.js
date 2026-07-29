@@ -25,7 +25,29 @@ const DEFAULTS = Object.freeze({
   revealOnRed: false,          // trazer o overlay à frente (se oculto) quando um agente fica vermelho
   revealOnReset: false,        // trazer à frente quando a cota reseta
   revealOnUpdate: false,       // trazer à frente quando há uma nova versão disponível
+  updateChannel: 'stable',     // canal de atualização: 'stable' (default) | 'dev' (builds de teste)
 });
+
+const UPDATE_CHANNELS = Object.freeze(['stable', 'dev']);
+
+// Traduz a preferência de canal + a versão em execução nas DUAS flags que o
+// electron-updater entende. Pura de propósito: a decisão é testável sem Electron.
+//
+//   stable → allowPrerelease=false. O GitHubProvider resolve a tag por
+//            /releases/latest, que o GitHub monta ignorando pre-releases — os
+//            builds do canal dev ficam invisíveis.
+//   dev    → allowPrerelease=true. O provider passa a varrer o feed atom e
+//            aceita a entrada mais nova, pre-release inclusive.
+//
+// allowDowngrade é o que permite SAIR do canal dev. Voltar de `0.7.4-dev.3` para
+// o estável `0.7.3` é uma descida em semver, e sem esta flag o app ficaria preso
+// no dev para sempre. Fica ligada só nesse caso (rodando pre-release e pedindo
+// estável) — nunca num app estável, onde só faria mal.
+function updaterFlags(channel, appVersion) {
+  const wantDev = channel === 'dev';
+  const onPrerelease = /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
+  return { allowPrerelease: wantDev, allowDowngrade: !wantDev && onPrerelease };
+}
 
 // Teclas válidas p/ um accelerator do Electron (subset seguro).
 const KEY = /^[A-Z0-9]$|^(F1[0-2]?|F[2-9])$|^(Space|Up|Down|Left|Right)$/;
@@ -67,6 +89,7 @@ function mergeWithDefaults(raw) {
     if (typeof raw.revealOnRed === 'boolean') out.revealOnRed = raw.revealOnRed;
     if (typeof raw.revealOnReset === 'boolean') out.revealOnReset = raw.revealOnReset;
     if (typeof raw.revealOnUpdate === 'boolean') out.revealOnUpdate = raw.revealOnUpdate;
+    if (UPDATE_CHANNELS.includes(raw.updateChannel)) out.updateChannel = raw.updateChannel;
     // resetNotifyThresholdPct: inteiro em [1, 100]; fora da faixa/não-número → default (90).
     if (typeof raw.resetNotifyThresholdPct === 'number' && Number.isFinite(raw.resetNotifyThresholdPct)) {
       out.resetNotifyThresholdPct = Math.max(1, Math.min(100, Math.round(raw.resetNotifyThresholdPct)));
@@ -99,4 +122,4 @@ function mergeWithDefaults(raw) {
   return out;
 }
 
-if (typeof module !== 'undefined') module.exports = { DEFAULTS, isValidShortcut, mergeWithDefaults };
+if (typeof module !== 'undefined') module.exports = { DEFAULTS, UPDATE_CHANNELS, isValidShortcut, mergeWithDefaults, updaterFlags };
