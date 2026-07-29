@@ -1,0 +1,77 @@
+name: Release
+
+# Disparo MANUAL apenas (Actions → Release → Run workflow).
+#
+# Não usamos gatilho por push de tag de propósito: o `scripts/release.sh` cria a
+# release via `gh` (que por sua vez cria a tag), então um gatilho `push: tags`
+# faria o workflow reagir à sua própria publicação e gerar release duplicada.
+#
+# O workflow não reimplementa nada — roda o MESMO script do fluxo local, para
+# que build no CI e build na máquina do mantenedor não possam divergir.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dev = pre-release isolada · promote = vira o Latest de todo mundo"
+        type: choice
+        options: [dev, promote]
+        default: dev
+      base:
+        description: "modo dev: versão base X.Y.Z (vazio = patch+1 do package.json)"
+        type: string
+        required: false
+      version:
+        description: "modo promote: versão X.Y.Z (vazio = último -dev.N sem o sufixo)"
+        type: string
+        required: false
+      dry_run:
+        description: "Só mostrar o que faria, sem publicar"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # criar release + tag
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # release.sh lê git log entre tags e checa branches remotos
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # node-pty é módulo nativo: precisa compilar contra os headers do Electron.
+      # O runner já traz build-essential e python3; libarchive-tools é o que falta
+      # para o empacotamento AppImage do electron-builder.
+      - name: Dependências de sistema
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libarchive-tools
+
+      - run: npm ci
+
+      - name: Syntax checks
+        run: |
+          bash -n hooks/traffic-hook.sh
+          bash -n scripts/release.sh
+          node --check main.js preload.js
+          for f in src/*.js scripts/*.js; do node --check "$f"; done
+
+      # Os inputs entram por env, não interpolados no shell: `base`/`version` são
+      # strings livres e ${{ }} direto num `run` é injeção de comando.
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IN_MODE: ${{ inputs.mode }}
+          IN_BASE: ${{ inputs.base }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_DRY: ${{ inputs.dry_run }}
+        run: |
+          args=("$IN_MODE")
+          if [ -n "$IN_BASE" ];    then args+=(--base "$IN_BASE"); fi
+          if [ -n "$IN_VERSION" ]; then args+=(--version "$IN_VERSION"); fi
+          if [ "$IN_DRY" = "true" ]; then args+=(--dry-run); fi
+          bash scripts/release.sh "${args[@]}"

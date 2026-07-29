@@ -98,6 +98,15 @@ npm test
   renderer backward-compatible with the previous version.
 - UI changes: include a screenshot.
 
+## Releases
+
+Maintainers publish to two isolated channels — `stable` and `dev` — from the
+same repository. A `dev` release is a GitHub *pre-release*, so it never becomes
+the *Latest* and users on the stable channel never see it. Users opt into test
+builds with **Preferences → Updates → "Get test builds (dev)"**, and turning it
+back off returns them to the latest stable. See
+[`docs/RELEASE.md`](docs/RELEASE.md).
+
 ## Reporting bugs
 
 Include: distro + desktop (X11/Wayland), terminal emulator, `node -v`, what
