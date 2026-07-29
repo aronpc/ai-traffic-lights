@@ -11,7 +11,7 @@ Renderer do overlay + **módulos de lógica pura** (testáveis sem Electron) + H
 |------|-------------|
 | `renderer.js` | Monta a lista do overlay a partir das sessões; rename in-place (dblclick); alertas na transição p/ vermelho; painel. **Choke point** `render()`. |
 | `state-machine.js` | `computeState()` — **fonte da cor do semáforo** (níveis processing/done/awaiting/read + escalada idle). |
-| `sessions.js` | `mergeSessions()` — dedup por `pid \|\| session_id` (1 processo = 1 linha). |
+| `sessions.js` | `mergeSessions()` — dedup por `sessionKey` (origin-namespaced, ver `identity.js`); 1 processo = 1 linha. |
 | `usage.js` | Coleta de consumo/quota: Claude (`~/.claude.json`), GLM (API), Codex (rollout `.jsonl`), Antigravity (SQLite). |
 | `focus.js` | Lógica PURA do click-to-focus: `pickWindow`, `tabChannel` (Warp/Tilix), `parseEnviron`, `isFocusUnsupported`. |
 | `agents.js` | Registro de agentes suportados (label, comm, bin, cor, argv) — canônico p/ UI + detecção. |
@@ -22,6 +22,10 @@ Renderer do overlay + **módulos de lógica pura** (testáveis sem Electron) + H
 | `hook-installer.js` | Instala/remove hooks nos `settings.json` de cada agente. |
 | `tooltip.js` · `ui-select.js` · `sound.js` · `validate.js` | Tooltips custom, dropdowns custom, alerta sonoro, validações (validSessionId/shellQuote/desktopEscape). |
 | `index.html` · `styles.css` | Overlay markup + tokens/classes. `settings.html` · `settings.css` = Preferências. |
+| `identity.js` | **Sync P2P** — `originOf(s)` + `sessionKey(s)` = `origin:pid\|\|session_id`; namespacing por máquina (sem colisão de pid entre nós). Browser-script + Node-require. |
+| `collect.js` | **Sync P2P** — core de coleta Electron-free (state files + sonda /proc + `readSessions`/`findTranscript`/`backfillModels`). Importado pela GUI (`main.js`) e pelo `agent.js` headless. |
+| `net.js` | **Sync P2P** — transporte: `startServer` (binda no IP da tailnet), `pollPeers` (backoff exponencial + gate `tailscaleOnlineSet`), `fetchTranscriptFromPeer`, `tokenOk` (constante), `detectTailnetIP`. |
+| `transcript.js` | **Sync P2P** — `lastMessages(path, n)`: últimas N **mensagens** (leitura reversa em chunks, agrega `message.id`). Serve `/transcript` + o painel ver-prompt. |
 
 ## For AI Agents
 

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validSessionId, shellQuote, desktopEscape } = require('../src/validate.js');
+const { validSessionId, shellQuote, desktopEscape, boundsOnScreen } = require('../src/validate.js');
 
 test('validSessionId: aceita IDs seguros', () => {
   assert.equal(validSessionId('abc-123'), true);
@@ -45,4 +45,39 @@ test('desktopEscape: escapa espaço e reservados', () => {
 
 test('desktopEscape: path sem reservados fica intacto', () => {
   assert.equal(desktopEscape('/usr/bin/electron'), '/usr/bin/electron');
+});
+
+// ---- boundsOnScreen: posição salva vs telas ativas (PR-32 #19) ----
+// Layout real de 3 monitores: [esq 0..1920] [primário 1920..4480] [dir 4480..6400].
+// Antes, a janela Terminal validava só contra o PRIMÁRIO e descartava em
+// silêncio a posição de quem estava nos laterais, a cada reabertura.
+const DISPLAYS = [
+  { workArea: { x: 0,    y: 0, width: 1920, height: 1080 } },   // esquerdo
+  { workArea: { x: 1920, y: 0, width: 2560, height: 1080 } },   // primário
+  { workArea: { x: 4480, y: 0, width: 1920, height: 1080 } },   // direito
+];
+
+test('boundsOnScreen: posição em QUALQUER monitor é preservada (multi-monitor)', () => {
+  assert.equal(boundsOnScreen({ x: 200,  y: 300 }, DISPLAYS), true, 'monitor esquerdo');
+  assert.equal(boundsOnScreen({ x: 2400, y: 300 }, DISPLAYS), true, 'monitor primário');
+  assert.equal(boundsOnScreen({ x: 5000, y: 300 }, DISPLAYS), true, 'monitor direito');
+});
+
+test('boundsOnScreen: fora de todas as telas (monitor desconectado) → false', () => {
+  assert.equal(boundsOnScreen({ x: 9999, y: 300 }, DISPLAYS), false, 'além da última tela');
+  assert.equal(boundsOnScreen({ x: -500, y: 300 }, DISPLAYS), false, 'antes da primeira');
+  assert.equal(boundsOnScreen({ x: 200, y: 5000 }, DISPLAYS), false, 'y fora');
+});
+
+test('boundsOnScreen: bordas — início inclusivo, fim exclusivo', () => {
+  assert.equal(boundsOnScreen({ x: 1920, y: 0 }, DISPLAYS), true,  'x na borda esquerda do primário');
+  assert.equal(boundsOnScreen({ x: 6400, y: 0 }, DISPLAYS), false, 'x no fim exato do último (exclusivo)');
+});
+
+test('boundsOnScreen: entrada inválida → false (nunca lança)', () => {
+  assert.equal(boundsOnScreen(null, DISPLAYS), false);
+  assert.equal(boundsOnScreen({}, DISPLAYS), false);
+  assert.equal(boundsOnScreen({ x: '200', y: 300 }, DISPLAYS), false, 'x string');
+  assert.equal(boundsOnScreen({ x: 200, y: 300 }, null), false, 'sem displays');
+  assert.equal(boundsOnScreen({ x: 200, y: 300 }, [null, {}]), false, 'displays podres');
 });

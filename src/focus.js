@@ -34,7 +34,7 @@ function pickWindow(windowid, wins, ancestorPids) {
 // NUL). É a fonte VIVA — usada no clique pra enriquecer sessões cujo state
 // ainda não tem o hint (evento anterior ao hook novo, ou sessão só-/proc).
 function parseEnviron(text) {
-  const out = { focus_url: null, tilix_id: null };
+  const out = { focus_url: null, tilix_id: null, tmux_pane: null };
   if (!text) return out;
   for (const line of text.split('\0')) {
     const eq = line.indexOf('=');
@@ -42,6 +42,7 @@ function parseEnviron(text) {
     const k = line.slice(0, eq);
     if (k === 'WARP_FOCUS_URL') out.focus_url = line.slice(eq + 1);
     else if (k === 'TILIX_ID') out.tilix_id = line.slice(eq + 1);
+    else if (k === 'TMUX_PANE') out.tmux_pane = line.slice(eq + 1);
   }
   return out;
 }
@@ -59,6 +60,41 @@ function tabChannel(state) {
   return null;
 }
 
+// tmux: foca o PAINEL do agente dentro do multiplexador. É COMPLEMENTAR ao
+// raise de janela e ao tabChannel — o agente pode estar num pane tmux dentro
+// do Warp/Tilix/qualquer terminal, então isto roda ALÉM deles. O pane id
+// ($TMUX_PANE, ex "%3") é global no server tmux; validamos o formato pra ele
+// nunca virar um argumento inesperado do `tmux`.
+function tmuxTarget(state) {
+  if (!state || !state.tmux_pane) return null;
+  const p = String(state.tmux_pane);
+  return /^%[0-9]+$/.test(p) ? p : null;
+}
+
+// Sob tmux, o PID do agente NÃO alcança o terminal: o tmux server é um daemon
+// reparentado pro init (systemd --user), então a cadeia de PPid do agente é
+// agente → zsh → tmux server → systemd — o emulador (Warp/Tilix/…) nunca
+// aparece. Quem É filho do terminal é o tmux CLIENT (um por aba anexada).
+// Esta função escolhe o client CERTO: o que está anexado à sessão do pane do
+// agente. Sem isso o pickWindow não acha janela nenhuma (raise falha) e o
+// focus_url do state vem do environ CONGELADO do server (o mesmo pra todas as
+// abas → xdg-open foca sempre a aba errada).
+//   pane    — "%41" (state.tmux_pane)
+//   panes   — [{pane, session}] de `tmux list-panes -a`
+//   clients — [{session, pid, activity}] de `tmux list-clients`
+// Retorna o pid do client, ou null (pane sem sessão/sem client anexado —
+// sessão detached é normal: o agente roda, só não tem janela pra focar).
+// Desempata pelo activity mais recente quando há N clients na mesma sessão.
+function tmuxClientPid(pane, panes, clients) {
+  if (!pane || !Array.isArray(panes) || !Array.isArray(clients)) return null;
+  const entry = panes.find((p) => p && p.pane === pane);
+  if (!entry) return null;
+  const attached = clients.filter((c) => c && c.session === entry.session && c.pid > 0);
+  if (!attached.length) return null;
+  const best = attached.reduce((a, b) => ((b.activity || 0) > (a.activity || 0) ? b : a));
+  return best.pid;
+}
+
 // Decide se o clique virou no-op (foco inviável): Wayland + não raiseou a
 // janela (wmctrl é cego pra apps Wayland-nativos) + sem canal de aba. O main
 // coleta hasTab (tabChannel != null) e raised (raiseWindow devolveu true) e
@@ -70,4 +106,4 @@ function isFocusUnsupported(state) {
   return !!state && !!state.wayland && !state.raised && !state.hasTab;
 }
 
-if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, parseEnviron, isFocusUnsupported };
+if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, tmuxTarget, tmuxClientPid, parseEnviron, isFocusUnsupported };

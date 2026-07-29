@@ -31,4 +31,16 @@ function terminalArgs(terminalId, cwd, agentCmd) {
   return [...t.cwd(cwd), ...t.exec(agentCmd)];
 }
 
-if (typeof module !== 'undefined') module.exports = { TERMINALS, TERMINAL_ORDER, pickTerminal, terminalArgs };
+// Auto-wrap: roda o agente DENTRO de um `tmux new-session` (sessão própria) → o
+// hook captura tmux_session (#S) → o clique attacha na janela Terminal. O
+// sessionName deve ser único (o main acrescenta um sufixo tipo-Date); é
+// sanitizado aqui porque entra como argv do tmux (vem de config/agent).
+function tmuxSessionName(agentId) {
+  return 'atl-' + String(agentId || 'agent').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24);
+}
+function tmuxWrap(agentCmd, sessionName) {
+  const name = /^[A-Za-z0-9._-]+$/.test(sessionName) ? sessionName : 'atl-agent';
+  return ['tmux', 'new-session', '-s', name, ...agentCmd];
+}
+
+if (typeof module !== 'undefined') module.exports = { TERMINALS, TERMINAL_ORDER, pickTerminal, terminalArgs, tmuxSessionName, tmuxWrap };

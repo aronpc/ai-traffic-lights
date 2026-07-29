@@ -24,6 +24,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { execSync } from "node:child_process"
 
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local/share")
 const STATE_DIR = path.join(DATA_HOME, "ai-traffic-lights", "state")
@@ -36,6 +37,14 @@ export const AiTrafficLights = async ({ directory, $ }) => {
     focus_url: process.env.WARP_FOCUS_URL || null,  // Warp: warp://session/<uuid>
     tilix_id: process.env.TILIX_ID || null,         // Tilix: uuid p/ activate-terminal
     zellij_session: process.env.ZELLIJ_SESSION_NAME || null,
+    tmux_session: null,   // resolvido abaixo (nome da sessão p/ attach remoto)
+    tmux_pane: process.env.TMUX_PANE || null,   // pane id (%N) p/ FOCO local (LOCAL_ONLY)
+  }
+  // tmux: nome da sessão só é obtido via CLI (não há env var). 1 fork no boot,
+  // só se $TMUX set — agentes fora do tmux => zero custo.
+  if (process.env.TMUX) {
+    try { boot.tmux_session = execSync("tmux display-message -p '#S'", { encoding: "utf8", timeout: 1000 }).trim() || null; }
+    catch { /* sem tmux/erro => fica null */ }
   }
   let lastModel = null    // último modelID visto (mensagens do assistant)
   let capturedWin = null  // janela ativa no último prompt (X11)
@@ -78,6 +87,8 @@ export const AiTrafficLights = async ({ directory, $ }) => {
         focus_url: boot.focus_url || ex.focus_url || null,
         tilix_id: boot.tilix_id || ex.tilix_id || null,
         zellij_session: boot.zellij_session,
+        tmux_session: boot.tmux_session,
+        tmux_pane: boot.tmux_pane,
         last_event: evt,
         last_event_ts: now,
         last_tool: tool || null,
