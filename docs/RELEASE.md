@@ -42,10 +42,13 @@ GitHub somado ao do `electron-updater`:
    resolve a tag **exatamente** por `/releases/latest`
    (`getLatestTagName`, `electron-updater/out/providers/GitHubProvider.js`).
    Logo, um build estável nunca enxerga uma pre-release.
-3. O `electron-updater` **liga `allowPrerelease` sozinho** quando a versão do
-   app tem componente de pre-release (`hasPrereleaseComponents`, `AppUpdater.js`).
-   Um build `-beta.N` passa a varrer o feed atom e aceita a entrada mais nova,
-   beta ou estável (ver *Por que `beta` e não `dev`*).
+3. Quem manda é **a preferência, não a versão do binário**. O `electron-updater`
+   liga `allowPrerelease` sozinho quando a versão tem componente de pre-release
+   (`hasPrereleaseComponents`, `AppUpdater.js`), mas o `applyUpdateChannel`
+   (`main.js`) **sobrescreve** as duas flags a partir de `updateChannel` logo no
+   setup e a cada troca. Ou seja: um build `-beta.N` com o canal em `stable`
+   deliberadamente **não** aceita pre-releases — é exatamente assim que a saída
+   do canal funciona.
 4. O fallback GitHub-API do app (`src/ipc/update.js`, usado por instalações
    deb/npm/source) também consulta `/releases/latest` — protegido igualmente.
 
@@ -85,8 +88,23 @@ O `promote` **não inventa** as partes editoriais: ele recusa se o
 `## [X.Y.Z]`, e diz exatamente o que falta. As notas da release estável saem
 dessa seção do CHANGELOG, seguindo a convenção do projeto.
 
-Promova sempre **do mesmo commit** que gerou a última beta testada — assim o
-binário estável é código-idêntico ao que foi validado.
+### O contrato "mesmo código da beta"
+
+O commit `chore(release)` fica **necessariamente depois** da última beta, então
+exigir o mesmo SHA seria impossível de cumprir. O contrato real é mais preciso:
+
+> entre a última beta e o commit que vai virar estável, o **único** delta pode
+> ser `package.json` e `CHANGELOG.md`.
+
+`guard_same_code_as_beta` verifica isso com `git diff --name-only` excluindo
+esses dois arquivos, e **aborta listando** qualquer outro arquivo que tenha
+mudado. Sem essa checagem, `promote` recompilaria o `HEAD` atual sem nenhuma
+relação com o que foi testado — bastaria alguém landar commits entre a beta e a
+promoção para a estável sair com código que nunca rodou no canal.
+
+Se não existir nenhuma beta da versão alvo, o script **pergunta** antes de
+seguir, em vez de recusar: promover direto é legítimo (foi o caso da própria
+0.7.3), só não pode ser silencioso.
 
 ## Entrar e sair do canal beta
 

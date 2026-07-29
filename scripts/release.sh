@@ -209,6 +209,45 @@ release_beta() {
   if [ "$DRY" = 0 ]; then ok "publicado: https://github.com/$REPO/releases/tag/$tag"; fi
 }
 
+# O binário estável tem de ser CÓDIGO-IDÊNTICO ao que foi validado na beta.
+#
+# Não dá para exigir o mesmo SHA: o commit `chore(release)` (bump + CHANGELOG)
+# fica necessariamente DEPOIS da última beta. O que dá para exigir é que o único
+# delta entre a beta e o que será empacotado sejam esses arquivos editoriais —
+# qualquer outro arquivo alterado é código que nunca rodou no canal beta
+# entrando na estável por baixo do pano.
+#
+# `package.json` é empacotado, mas a versão vem de fora (-c.extraMetadata.version
+# na beta, explícita aqui), e `CHANGELOG.md` nem entra no bundle.
+guard_same_code_as_beta() {
+  local base="$1" last_beta beta_sha extra
+  last_beta="$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
+    | grep -E "^v${base//./\\.}-beta\.[0-9]+$" | head -1 || true)"
+  if [ -z "$last_beta" ]; then
+    confirm "nenhuma beta de $base foi publicada — promover código que não passou pelo canal beta?"
+    return 0
+  fi
+  git fetch origin --tags --quiet 2>/dev/null || warn "git fetch --tags falhou — comparação pode usar tags locais defasadas"
+  beta_sha="$(git rev-parse -q --verify "refs/tags/$last_beta^{commit}" 2>/dev/null || true)"
+  if [ -z "$beta_sha" ]; then
+    confirm "não consegui resolver a tag $last_beta localmente — seguir sem comparar o código?"
+    return 0
+  fi
+  if [ "$beta_sha" = "$SHA" ]; then
+    ok "código idêntico à $last_beta (mesmo commit)"
+    return 0
+  fi
+  extra="$(git diff --name-only "$beta_sha" "$SHA" -- . \
+    ':(exclude)package.json' ':(exclude)CHANGELOG.md' 2>/dev/null || true)"
+  if [ -n "$extra" ]; then
+    printf '%s\n' "$extra" | sed 's/^/    /' >&2
+    die "estes arquivos mudaram desde $last_beta e NÃO foram testados no canal beta.
+   Publique uma nova beta deste commit antes de promover, ou promova de um commit
+   cujo único delta em relação à beta sejam package.json/CHANGELOG.md."
+  fi
+  ok "código idêntico à $last_beta (só package.json/CHANGELOG.md mudaram)"
+}
+
 # ===========================================================================
 # MODO promote — X.Y.Z-beta.N  →  X.Y.Z estável
 # ===========================================================================
@@ -234,6 +273,7 @@ release_promote() {
     || die "a release $tag já existe em $REPO"
 
   info "promovendo → $tag  (branch $BRANCH @ $SHORT_SHA)"
+  guard_same_code_as_beta "$VERSION"
   guard_tree; guard_pushed; run_tests
 
   local out="dist"
