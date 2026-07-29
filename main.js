@@ -21,7 +21,7 @@ const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const { spawn } = require('child_process');
-const { desktopEscape, shellQuote } = require('./src/validate');
+const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 
 // Flags de sandbox/shared-memory (--no-sandbox --disable-dev-shm-usage) vão na
 // LINHA DE COMANDO: build.linux.executableArgs (packaged) e scripts.start (dev).
@@ -875,8 +875,14 @@ function ensureTermWin() {
   const b = loadTermBounds();
   const w = (b && b.width) || Math.min(960, Math.max(640, Math.round(wa.width * 0.6)));
   const h = (b && b.height) || Math.min(680, Math.max(380, Math.round(wa.height * 0.7)));
-  const x = (b && b.x >= wa.x && b.x < wa.x + wa.width) ? b.x : undefined;   // só se dentro da work area
-  const y = (b && b.y >= wa.y && b.y < wa.y + wa.height) ? b.y : undefined;
+  // Valida a posição salva contra TODAS as telas, não só a primária: num setup
+  // multi-monitor a janela movida pro monitor da esquerda (x menor) ou da direita
+  // (x além da largura do primário) tinha a posição DESCARTADA em silêncio a cada
+  // reabertura, anulando o persist (PR-32 #19). Fora de qualquer tela (monitor
+  // desconectado) → undefined, e o Electron centraliza no primário.
+  const keep = boundsOnScreen(b, screen.getAllDisplays());
+  const x = keep ? b.x : undefined;
+  const y = keep ? b.y : undefined;
   termWin = new BrowserWindow({
     width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal', x, y,
     frame: false, transparent: true, resizable: true, maximizable: true, fullscreenable: true,
