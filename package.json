@@ -9,7 +9,9 @@
     "remove-hook": "node scripts/setup-hook.js --remove",
     "hook:test": "bash hooks/traffic-hook.sh",
     "test": "node --test",
-    "dist": "electron-builder --linux"
+    "dist": "electron-builder --linux",
+    "release:beta": "bash scripts/release.sh beta",
+    "release:promote": "bash scripts/release.sh promote"
   },
   "author": "Aron Peyroteo <aronpeyroteo@gmail.com>",
   "license": "MIT",

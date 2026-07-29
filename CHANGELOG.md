@@ -8,7 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Canal de atualização `beta` (opt-in).** Em **Preferências → Atualizações**,
+  ligar *"Receber versões beta (teste)"* passa a trazer as versões novas antes
+  de virarem estáveis; desligar volta para a última estável. Vem **desligado**:
+  builds de teste são publicados como _pre-release_ no GitHub, e quem está no
+  canal estável nunca os enxerga, porque o `electron-updater` resolve a versão
+  por `/releases/latest` — endpoint que o GitHub monta ignorando pre-releases.
+
 ### Changed
+- **A lista de sessões é sempre compacta.** O toggle normal/compacta do header e
+  a configuração `compact` deixaram de existir; a linha densa
+  (modelo · ferramenta · tempo) virou o único modo.
+
 ### Fixed
 
 ## [0.7.2] - 2026-07-16

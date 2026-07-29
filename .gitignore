@@ -1,6 +1,7 @@
 # dependências e builds
 node_modules/
 dist/
+dist-beta/
 
 # estado local de ferramentas de desenvolvimento
 .omc/
