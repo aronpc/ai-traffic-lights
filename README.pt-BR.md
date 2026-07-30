@@ -31,6 +31,9 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 > Para o inventário completo — incluindo limites conhecidos, funcionalidades
 > implementadas na branch de sync e roadmap — veja o
 > [Catálogo de funcionalidades e roadmap](docs/FUNCIONALIDADES.md).
+>
+> 🧪 **Sincronização multi-máquina (beta):** mostre os agentes de outras
+> máquinas no seu overlay via Tailscale — [guia de configuração](docs/SYNC.md).
 
 - 🟢🟡🔴 Uma luz por sessão + luz agregada no cabeçalho
 - 🤖 **Quatro agentes, um overlay**: Claude Code, Antigravity, Codex e OpenCode
