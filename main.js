@@ -33,6 +33,10 @@ const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 // e URL pública do repo (rodapé das Preferências + tooltip do tray).
 const APP_VERSION = app.getVersion();
 const REPO_URL = 'https://github.com/aronpc/ai-traffic-lights';
+// Feature de sync (P2P) é beta: só em build pre-release (0.7.4-beta.N, lida de
+// app.getVersion). Na estável/fonte (0.7.3) a aba Sincronização some e nada de
+// sync é gravado ou sobe.
+const SYNC_AVAILABLE = settingsLib.isPrerelease(APP_VERSION);
 
 // Instância única: relançar o app não duplica o overlay — TOGGLA o existente
 // e sai. Previne overlays duplicados (autostart + lançamento manual) e dá um
@@ -665,8 +669,11 @@ ipcMain.on('save-settings', (_e, cfg) => {
 // (handler 'open-settings' movido p/ src/ipc/settings.js — REF passo 9)
 
 // Sync multi-máquina: lê/gravar SÓ o sub-objeto sync (validado em persistSettings).
-ipcMain.handle('get-sync', () => (settingsCfg && settingsCfg.sync) || null);
+// Sync é feature beta: get-sync devolve null fora de uma build beta (a aba de
+// Preferências some; ninguém lê/grava sync na estável).
+ipcMain.handle('get-sync', () => SYNC_AVAILABLE ? ((settingsCfg && settingsCfg.sync) || null) : null);
 ipcMain.on('set-sync', (_e, syncCfg) => {
+  if (!SYNC_AVAILABLE) return;
   settingsCfg = persistSettings({ sync: syncCfg });
   applySync();
   sendToRenderer('settings-changed', settingsCfg);
@@ -735,6 +742,7 @@ let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no
 let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
 function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
 function applySync() {
+  if (!SYNC_AVAILABLE) return;   // feature beta: estável/fonte nunca sobem servidor/poller
   const s = (settingsCfg && settingsCfg.sync) || {};
   const tok = typeof s.token === 'string' ? s.token : '';
   // SERVIDOR (compartilhar minhas sessões): binda no IP da tailnet

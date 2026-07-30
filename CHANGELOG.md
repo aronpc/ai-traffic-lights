@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   de sessão decide a ordem.
 
 ### Fixed
+- **Aba Sincronização em branco nas Preferências.** A aba vinha aninhada dentro
+  de "Atualizações" por uma tag `</section>` ausente no `settings.html`, o que
+  fazia o painel inteiro sumir ao ser selecionado.
+- **Aceitar o canal beta reage na hora, sem reiniciar.** A troca já era aplicada
+  a quente, mas silenciosamente; agora o estado "verificando" aparece imediatamente.
+- **Aba Sincronização (sync P2P) só existe em builds beta.** Feature não lançada
+  na estável: removida do DOM e dos IPCs (`get-sync`/`set-sync`/`applySync`)
+  fora de uma versão `-beta.N`.
 - **Instaladores garantem o primeiro arranque ("instala e não abre").** Linux:
   runtime AppImage estático (dispensa `libfuse2`) + preflight que instala
   `libfuse2`/`libfuse2t64` e as libs do Electron por distro + launcher com

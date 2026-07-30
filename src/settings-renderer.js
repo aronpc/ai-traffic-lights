@@ -315,6 +315,15 @@ window.trafficLight.getSettings().then((c) => {
   refreshAllSelects();                               // re-sincroniza os dropdowns custom com os values carregados
   ready = true;                                      // libera o live-apply só após popular tudo
 });
+// Sync é feature beta: a aba Sincronização só existe em build beta (versão
+// -beta.N). Na estável/fonte, removemos aba + painel do DOM.
+window.trafficLight.syncAvailable().then((ok) => {
+  if (ok) return;
+  const tab = document.querySelector('.tab[data-tab="sync"]');
+  const panel = document.querySelector('.tab-panel[data-panel="sync"]');
+  if (tab) tab.remove();
+  if (panel) panel.remove();
+});
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });
 // Sync (P2P): popula os campos do sub-objeto sync. Population programática não
 // dispara 'change', então não empurra nada — e pushSync() ainda assim respeita `ready`.
