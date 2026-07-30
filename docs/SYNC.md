@@ -35,6 +35,57 @@ constante. Sem token, nada sobe.
 2. **Versão beta** do ATL em todas as máquinas (o sync não existe na estável).
 3. O ATL rodando em cada máquina que vai participar.
 
+## Tailscale — preparando a rede
+
+O sync usa o **Tailscale** como transporte: ele cria uma rede privada
+ponto-a-ponto entre as suas máquinas (IPs `100.x`) sobre WireGuard, sem abrir
+portas no roteador nem expor nada à internet pública. Cada ATL binda o servidor
+**direto** no IP da sua tailnet, na porta do app — por isso todas as máquinas
+precisam estar na **mesma tailnet**.
+
+> Não usa `tailscale serve`: aquele exporia HTTPS na `:443`, e a URL não casaria
+> com a porta HTTP do ATL. A confiança vem do WireGuard E2E + o token do sync.
+
+### Instalar
+
+- **Linux** (script oficial, qualquer distro) ou o pacote da sua distribuição:
+  ```bash
+  curl -fsSL https://tailscale.com/install.sh | sh
+  ```
+- **macOS**: app em <https://tailscale.com/download/mac> ou
+  `brew install --cask tailscale`.
+
+### Conectar cada máquina
+
+```bash
+sudo tailscale up
+```
+
+Isso abre o navegador para autenticar. Na primeira máquina você cria/entra na
+sua tailnet; nas demais, autorize cada uma no admin console do Tailscale.
+Repita em **todas** as máquinas que vão participar do sync.
+
+### Descobrir o IP/nome de cada peer
+
+- `tailscale ip -4` → o IP `100.x` **desta** máquina (é o `host` que o outro lado
+  vai listar em *Máquinas que eu observo*).
+- `tailscale status` → tabela com todos os peers, seus IPs, nomes e quem está
+  online (é exatamente isto que o poller do ATL consulta para só tentar rede em
+  quem está alcançável).
+
+Se o **MagicDNS** estiver ligado no admin console do Tailscale, você pode usar o
+**hostname** da máquina em vez do IP (ex.: `notebook`) — mais fácil de ler e não
+muda se o IP variar.
+
+### Observações
+
+- **ACLs:** por padrão o Tailscale permite todo o tráfego entre máquinas da
+  mesma tailnet. Se a sua tem regras de firewall (Access Controls), garanta que
+  a porta do sync (`47474` por padrão) está liberada entre os nós.
+- **Sem Tailscale:** se o binário `tailscale` não for encontrado, o ATL degrada
+  o servidor para `127.0.0.1` (só esta máquina enxerga) e os peers não se
+  alcançam — instale o Tailscale para sincronizar entre máquinas.
+
 ## Configurando (Preferências → Sincronização)
 
 Os campos vivem em `~/.local/share/ai-traffic-lights/settings.json`
