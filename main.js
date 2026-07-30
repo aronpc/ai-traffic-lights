@@ -912,6 +912,12 @@ function ensureTermWin() {
   // REPINTAR o xterm — enquanto esteve oculta o canvas foi descartado e o buffer
   // não. Sem isso a aba reabre em branco com o tmux vivo do outro lado.
   termWin.on('restore', () => sendTerm('term-shown'));
+  // (re)mostrar a termWin (× = hide → clicar de novo = show): o canvas do xterm é
+  // descartado enquanto a janela esteve oculta e o renderer precisa repintar.
+  // No Linux/X11 o visibilitychange é unreliable pra hide/show de BrowserWindow,
+  // então avisamos pelo canal do main (igual ao restore) — sem isto a aba
+  // reabria em branco, com o tmux/pty vivo do outro lado.
+  termWin.on('show', () => sendTerm('term-shown'));
   termWin.on('maximize', () => sendTerm('term-maximized', true));
   termWin.on('unmaximize', () => sendTerm('term-maximized', false));
   termWin.on('resize', saveTermBounds);   // persiste tamanho/posição (debounce; ignora se maximizada)
