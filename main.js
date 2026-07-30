@@ -878,6 +878,13 @@ function revealTermWin() {
     termWin.show();
     termWin.moveTop();
     termWin.focus();
+    // Reabrir a termWin (hide→show): o canvas do xterm foi descartado enquanto a
+    // janela esteve oculta e o renderer precisa repintar. No X11 frameless+
+    // transparent o evento 'show' e o visibilitychange são unreliable, então
+    // avisamos o renderer DIRETO aqui — e com delay, porque o WM remapeia a
+    // janela de forma assíncrona (repintar antes do remapeamento deixa o canvas
+    // preto/vazio, mesmo com o tmux/pty vivo do outro lado).
+    setTimeout(() => { if (termWin && !termWin.isDestroyed() && termWin.isVisible()) sendTerm('term-shown'); }, 120);
   } catch {}
 }
 

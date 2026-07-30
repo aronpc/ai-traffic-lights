@@ -165,7 +165,15 @@ window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').
 // Sinal do main (show/restore da janela) — mais confiável que visibilitychange,
 // que nem sempre dispara no hide/show de uma BrowserWindow no Linux.
 window.trafficLight.onTermShown(() => {
-  requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
+  // Reabrir a termWin (hide→show): o canvas do xterm é descartado enquanto a
+  // janela esteve oculta. Repintamos no rAF e de novo ~260ms depois — no X11
+  // frameless+transparent o remapeamento pelo WM é assíncrono, e o 1º repaint
+  // pode rodar ANTES do canvas reanexar (a aba reabria preta). O 2º pega a
+  // janela já estável e a textura refeita pelo clearTextureAtlas.
+  const t = terms.get(activeTabId);
+  const once = () => { fitActive(); repaint(t); };
+  requestAnimationFrame(once);
+  setTimeout(() => requestAnimationFrame(once), 260);
 });
 // Conexão (re)estabelecida (revive): re-fit + re-envia o tamanho p/ a aba certa,
 // senão o tmux remoto desenha no tamanho defasado e o conteúdo fica mal posicionado.
