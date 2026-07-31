@@ -290,6 +290,7 @@ function reviveTermSession(tabId, s) {
 }
 
 function attachRemote({ origin, tmux_session, cwd, alias, key, label }) {
+  termDbg('attachRemote origin=' + origin + ' tmux=' + tmux_session + ' sessions=' + termSessions.size);
   if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
   const isLocal = !origin || origin === 'local';
   const dupKey = (isLocal ? 'local' : origin) + '|' + tmux_session;
@@ -308,6 +309,7 @@ function attachRemote({ origin, tmux_session, cwd, alias, key, label }) {
   ensureTermWin();
   const title = termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal });
   const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session, sessionKey: key, label, cwd });
+  termDbg('attachRemote NEW tabId=' + tabId + ' kind=' + (isLocal ? 'local' : 'remote'));
   if (isLocal) {
     spawnPtyLocal(tabId, ['tmux', 'attach', '-t', tmux_session], cwd);
   } else {
@@ -953,7 +955,13 @@ function addTermSession({ title, kind, origin, tmux_session, sessionKey, label, 
   sendTerm('term-tab-added', { tabId, title });
   return tabId;
 }
+// DEBUG TEMPORÁRIO: rastreia o fluxo de abas/attach para diagnosticar "re-attach
+// (fechar aba e clicar no semáforo de novo) deixa a aba vazia". Grava em
+// /tmp/atl-term.log — remover esta função e suas chamadas ao resolver.
+function termDbg(msg) { try { fs.appendFileSync('/tmp/atl-term.log', new Date().toISOString() + ' ' + msg + '\n'); } catch {} }
 function closeTermSession(tabId) {
+  const sc = termSessions.get(tabId);
+  termDbg('closeTermSession tabId=' + tabId + ' hadWs=' + !!sc?.ws + ' hadProc=' + !!sc?.proc);
   destroyTermSession(tabId);
   sendTerm('term-tab-removed', { tabId });
   if (!termSessions.size && termWin && !termWin.isDestroyed()) try { termWin.hide(); } catch {}
@@ -976,12 +984,14 @@ function spawnPtyLocal(tabId, cmd, cwd) {
 }
 // cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
 function openRemotePty(tabId, { host, port, token, tmux_session }) {
-  const s = termSessions.get(tabId); if (!s) return;
+  const s = termSessions.get(tabId); if (!s) { termDbg('openRemotePty: sem sessão tabId=' + tabId); return; }
   const url = 'ws://' + host + ':' + (port || 47474) + '/pty';
+  termDbg('openRemotePty tabId=' + tabId + ' url=' + url + ' tmux=' + tmux_session);
   let ws;
-  try { ws = new (require('ws'))(url, { headers: { Authorization: 'Bearer ' + token } }); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
+  try { ws = new (require('ws'))(url, { headers: { Authorization: 'Bearer ' + token } }); } catch (e) { termDbg('openRemotePty ws-new FALHOU: ' + e.message); sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
   s.ws = ws;
   ws.on('open', () => {
+    termDbg('openRemotePty ws OPEN tabId=' + tabId + ' → start tmux=' + tmux_session);
     try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: s.cols, rows: s.rows })); } catch {}
     // o `start` usa s.cols/s.rows (possivelmente defasados). Pede ao renderer
     // o tamanho REAL da janela e re-envia → tmux remoto desenha no tamanho certo.
@@ -989,16 +999,18 @@ function openRemotePty(tabId, { host, port, token, tmux_session }) {
   });
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
+    termDbg('openRemotePty ws MSG tabId=' + tabId + ' type=' + m.type + ' len=' + (m.data != null ? m.data.length : 0));
     if (m.type === 'out') sendTerm('pty-out', { tabId, data: m.data });
     else if (m.type === 'exit') sendTerm('pty-exit', { tabId });
     else if (m.type === 'error') sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + m.msg + '\x1b[0m\r\n' });
   });
-  ws.on('error', (e) => sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n' }));
+  ws.on('error', (e) => { termDbg('openRemotePty ws ERROR tabId=' + tabId + ': ' + (e.message || e)); sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n' }); });
   // Queda de conexão (peer dorme, wifi cai, sync desligado do outro lado) é o
   // modo de falha MAIS comum e não emite 'error' — só 'close'. Sem tratar, a
   // aba ficava "assombrada": parecia viva, não respondia, sem aviso nenhum
   // (PR-32 #17). Avisa e encerra a aba, como no fim de um pty local.
-  ws.on('close', () => {
+  ws.on('close', (code) => {
+    termDbg('openRemotePty ws CLOSE tabId=' + tabId + ' code=' + code);
     const cur = termSessions.get(tabId);
     if (!cur || cur.ws !== ws) return;   // aba já fechada/reconectada — não polui a nova
     cur.ws = null;
