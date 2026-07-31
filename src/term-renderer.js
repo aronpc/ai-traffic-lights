@@ -105,18 +105,13 @@ function refitTab(tabId) {
 }
 
 // ---- eventos do main ----
-// Aba/output que chegam enquanto a termWin está OCULTA (hide — fecha a última
-// aba → termWin.hide(); re-attach re-show). Criar o xterm (term.open) com a
-// janela oculta deixa o renderer quebrado: a aba abre preta, sem conteúdo, e
-// nem resize recupera. Bufferizamos e só criamos/escrevemos quando a janela
-// está visível (sinal 'term-shown' do main, confiável no X11 frameless).
-const pendingTabs = [];
+// O main só entrega o term-tab-added quando a termWin está ESTÁVEL (senão o
+// xterm abria durante a transição hide→show e o render quebrava — aba preta).
+// Enquanto o term-tab-added não chega, o pty-out é bufferizado aqui e escrito
+// na criação da aba.
 const pendingOut = new Map();
-function termAreaVisible() { return !document.hidden && areaVisible(); }
 function doTermTabAdded(tabId, title) {
   ensureTerm(tabId);
-  const t0 = terms.get(tabId);
-  if (window.trafficLight.termDbg) window.trafficLight.termDbg('tab-added ' + tabId + ' ensure=' + (t0 ? ('ok ' + t0.term.cols + 'x' + t0.term.rows) : 'NULL') + ' visible=' + termAreaVisible());
   const btn = document.createElement('button');
   btn.className = 'tab';
   btn.dataset.tab = String(tabId);
@@ -126,24 +121,13 @@ function doTermTabAdded(tabId, title) {
   btn.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.closeTab(tabId); });
   $tabs.appendChild(btn);
   showTab(tabId);
-  // Output que chegou antes do term-tab-added (o main segura o tab-added até a
-  // janela estar estável): agora o xterm existe → escreve o bufferizado.
+  // Output que chegou antes do term-tab-added: agora o xterm existe → escreve.
   const arr = pendingOut.get(tabId);
   if (arr) { pendingOut.delete(tabId); const t = terms.get(tabId); if (t) for (const d of arr) t.term.write(d); }
 }
-// Drena abas + output bufferizados (chamado quando a janela (re)fica visível).
-function flushPending() {
-  while (pendingTabs.length) { const p = pendingTabs.shift(); doTermTabAdded(p.tabId, p.title); }
-  for (const [tabId, arr] of pendingOut) {
-    const t = terms.get(tabId);
-    if (t) { for (const d of arr) t.term.write(d); }
-    else if (window.trafficLight.termDbg) window.trafficLight.termDbg('flush: sem term p/ ' + tabId + ' (' + arr.length + ' chunks)');
-  }
-  pendingOut.clear();
-}
 window.trafficLight.onPtyOut(({ tabId, data }) => {
   const t = terms.get(tabId);
-  if (!t || !termAreaVisible()) {                 // term ainda não criado OU janela oculta → bufferiza
+  if (!t) {                                       // term ainda não criado (main segura o tab-added) → bufferiza
     const a = pendingOut.get(tabId) || []; a.push(data); pendingOut.set(tabId, a);
     return;
   }
@@ -153,14 +137,7 @@ window.trafficLight.onPtyExit(({ tabId }) => {
   const t = terms.get(tabId);
   if (t) t.term.write('\r\n\x1b[90m[processo encerrou]\x1b[0m');
 });
-window.trafficLight.onTermTabAdded(({ tabId, title }) => {
-  if (!termAreaVisible()) {                        // janela oculta: criar o xterm agora quebra o render
-    pendingTabs.push({ tabId, title });
-    if (window.trafficLight.termDbg) window.trafficLight.termDbg('tab-added ' + tabId + ' BUFFERED (janela oculta)');
-    return;
-  }
-  doTermTabAdded(tabId, title);
-});
+window.trafficLight.onTermTabAdded(({ tabId, title }) => doTermTabAdded(tabId, title));
 window.trafficLight.onTermTabRemoved(({ tabId }) => {
   const t = terms.get(tabId);
   if (t) { try { t.term.dispose(); } catch {} }
@@ -204,13 +181,11 @@ window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').
 // Sinal do main (show/restore da janela) — mais confiável que visibilitychange,
 // que nem sempre dispara no hide/show de uma BrowserWindow no Linux.
 window.trafficLight.onTermShown(() => {
-  // Reabrir a termWin (hide→show): drena abas/output bufferizados enquanto a
-  // janela esteve oculta (re-attach após fechar a última aba — criar o xterm no
-  // oculto quebrava o render) e repinta o canvas, que é descartado quando oculto.
-  // Repintamos no rAF e de novo ~260ms depois — no X11 frameless+transparent o
-  // remapeamento pelo WM é assíncrono, e o 1º repaint pode rodar ANTES do canvas
-  // reanexar (a aba reabria preta). O 2º pega a janela já estável.
-  flushPending();
+  // Reabrir a termWin (hide→show): o canvas do xterm é descartado enquanto a
+  // janela esteve oculta. Repintamos no rAF e de novo ~260ms depois — no X11
+  // frameless+transparent o remapeamento pelo WM é assíncrono, e o 1º repaint
+  // pode rodar ANTES do canvas reanexar (a aba reabria preta). O 2º pega a
+  // janela já estável.
   const t = terms.get(activeTabId);
   const once = () => { fitActive(); repaint(t); };
   requestAnimationFrame(once);
@@ -232,7 +207,6 @@ window.addEventListener('resize', fitActive);
 // 'focus' cobre o restore do WM.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  flushPending();
   requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
 });
 window.addEventListener('focus', () => {
