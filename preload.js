@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   switchTab: (tabId) => ipcRenderer.send('term-switch-tab', tabId),
   closeTab: (tabId) => ipcRenderer.send('term-close-tab', tabId),
   ptyInput: (tabId, data) => ipcRenderer.send('term-input', { tabId, data }),
+  termDbg: (msg) => ipcRenderer.send('term-dbg', msg),   // telemetria renderer → /tmp/atl-term.log
   ptyResize: (tabId, cols, rows) => ipcRenderer.send('term-resize', { tabId, cols, rows }),
   onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, p) => cb(p)),            // p = { tabId, data }
   onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, p) => cb(p)),          // p = { tabId }

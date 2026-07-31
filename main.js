@@ -1038,6 +1038,7 @@ ipcMain.handle('term-hosts', () => {
   const live = peers.filter((p) => livePeers.has(p.host));   // só quem tem o ATL ligado (respondeu /sessions)
   return [{ id: 'local', label: 'local' }, ...live.map((p) => ({ id: p.host, label: p.name || p.host }))];
 });
+ipcMain.on('term-dbg', (_e, msg) => termDbg('RND ' + msg));   // telemetria do renderer → /tmp/atl-term.log
 ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/max/close
   if (!termWin || termWin.isDestroyed()) return;
   try {

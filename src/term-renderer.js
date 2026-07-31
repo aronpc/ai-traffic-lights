@@ -105,13 +105,19 @@ function refitTab(tabId) {
 }
 
 // ---- eventos do main ----
-window.trafficLight.onPtyOut(({ tabId, data }) => { const t = terms.get(tabId); if (t) t.term.write(data); });
+window.trafficLight.onPtyOut(({ tabId, data }) => {
+  const t = terms.get(tabId);
+  if (window.trafficLight.termDbg) window.trafficLight.termDbg('pty-out ' + tabId + ' hasTerm=' + !!t + (t ? (' cols=' + t.term.cols + 'x' + t.term.rows) : '') + ' len=' + (data ? data.length : 0));
+  if (t) t.term.write(data);
+});
 window.trafficLight.onPtyExit(({ tabId }) => {
   const t = terms.get(tabId);
   if (t) t.term.write('\r\n\x1b[90m[processo encerrou]\x1b[0m');
 });
 window.trafficLight.onTermTabAdded(({ tabId, title }) => {
   ensureTerm(tabId);
+  const t0 = terms.get(tabId);
+  if (window.trafficLight.termDbg) window.trafficLight.termDbg('tab-added ' + tabId + ' ensure=' + (t0 ? ('ok ' + t0.term.cols + 'x' + t0.term.rows) : 'NULL'));
   const btn = document.createElement('button');
   btn.className = 'tab';
   btn.dataset.tab = String(tabId);
