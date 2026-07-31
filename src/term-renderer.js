@@ -126,6 +126,10 @@ function doTermTabAdded(tabId, title) {
   btn.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.closeTab(tabId); });
   $tabs.appendChild(btn);
   showTab(tabId);
+  // Output que chegou antes do term-tab-added (o main segura o tab-added até a
+  // janela estar estável): agora o xterm existe → escreve o bufferizado.
+  const arr = pendingOut.get(tabId);
+  if (arr) { pendingOut.delete(tabId); const t = terms.get(tabId); if (t) for (const d of arr) t.term.write(d); }
 }
 // Drena abas + output bufferizados (chamado quando a janela (re)fica visível).
 function flushPending() {

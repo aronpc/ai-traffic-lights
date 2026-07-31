@@ -842,6 +842,19 @@ const termSessions = new Map();   // tabId -> { title, kind, origin, tmux_sessio
 let tabSeq = 0;
 let termWinReady = false;         // term.html carregou? Fila de IPCs até did-finish-load — evita perder term-tab-added/pty-out na 1ª abertura (janela vinha vazia).
 const termQueue = [];
+// A termWin precisa estar VISÍVEL e ESTÁVEL (WM mapeou) quando o renderer cria o
+// xterm (term.open). Abrir o xterm durante a transição hide→show (X11 frameless
+// remapeia assíncrono) deixa o render quebrado: a aba vinha preta e nem resize
+// recuperava. O main SÓ entrega o term-tab-added quando a janela está estável;
+// até lá, guarda aqui. (document.hidden no renderer não detecta hide/show de
+// BrowserWindow — por isso o controle fica aqui, onde isVisible() é confiável.)
+let termWinStable = false;
+const pendingTermTabs = [];
+function flushPendingTermTabs() {
+  termWinStable = true;
+  if (!termWinReady || !termWin || termWin.isDestroyed()) return;
+  for (const p of pendingTermTabs.splice(0)) { try { termWin.webContents.send('term-tab-added', p); } catch {} }
+}
 function sendTerm(ch, payload) {
   if (!termWin || termWin.isDestroyed()) return;
   if (!termWinReady) { termQueue.push([ch, payload]); return; }
@@ -875,18 +888,21 @@ function saveTermBounds() {
 function revealTermWin() {
   if (!termWin || termWin.isDestroyed()) return;
   try {
+    termWinStable = false;   // transição hide→show: não criar xterms até o WM mapear
     if (termWin.isMinimized()) termWin.restore();
     termWin.showInactive();
     termWin.show();
     termWin.moveTop();
     termWin.focus();
-    // Reabrir a termWin (hide→show): o canvas do xterm foi descartado enquanto a
-    // janela esteve oculta e o renderer precisa repintar. No X11 frameless+
-    // transparent o evento 'show' e o visibilitychange são unreliable, então
-    // avisamos o renderer DIRETO aqui — e com delay, porque o WM remapeia a
-    // janela de forma assíncrona (repintar antes do remapeamento deixa o canvas
-    // preto/vazio, mesmo com o tmux/pty vivo do outro lado).
-    setTimeout(() => { if (termWin && !termWin.isDestroyed() && termWin.isVisible()) sendTerm('term-shown'); }, 120);
+    // Reabrir a termWin (hide→show): o WM no X11 frameless+transparent remapeia a
+    // janela de forma ASSÍNCRONA. Criar/repintar o xterm antes do remapeamento
+    // deixa o canvas preto. Com o delay o WM já mapeou → a janela está ESTÁVEL:
+    // libera os term-tab-added guardados e avisa o renderer pra repintar.
+    setTimeout(() => {
+      if (!termWin || termWin.isDestroyed() || !termWin.isVisible()) return;
+      flushPendingTermTabs();
+      sendTerm('term-shown');
+    }, 120);
   } catch {}
 }
 
@@ -916,6 +932,7 @@ function ensureTermWin() {
     termWinReady = true;
     for (const [ch, p] of termQueue.splice(0)) { try { termWin.webContents.send(ch, p); } catch {} }
     sendTerm('term-maximized', !!termWin.isMaximized());   // estado inicial: renderer tira o radius se maximizada
+    flushPendingTermTabs();   // 1ª carga: janela nasce visível/estável → libera abas guardadas
   });
   // Janela reapareceu (show do ensureTermWin, restore do WM): o renderer precisa
   // REPINTAR o xterm — enquanto esteve oculta o canvas foi descartado e o buffer
@@ -937,7 +954,7 @@ function ensureTermWin() {
   // abre/fecha (PR-32 #08).
   termWin.on('closed', () => {
     for (const id of [...termSessions.keys()]) destroyTermSession(id);
-    termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear();
+    termWin = null; termWinReady = false; termWinStable = false; termQueue.length = 0; pendingTermTabs.length = 0; termSessions.clear();
   });
   return termWin;
 }
@@ -952,7 +969,11 @@ function addTermSession({ title, kind, origin, tmux_session, sessionKey, label, 
   // label/cwd ficam guardados p/ RECONSTRUIR o título quando o alias é removido
   // (rename pra vazio) — sem eles a aba cairia no 'tmux: <sessão>'.
   termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, label: label || null, cwd: cwd || null, proc: null, ws: null, cols: 80, rows: 24 });
-  sendTerm('term-tab-added', { tabId, title });
+  // Só entrega o term-tab-added com a termWin ESTÁVEL; criar o xterm antes (na
+  // transição hide→show) quebra o render. O pty-out que chega antes o renderer
+  // bufferiza (term ainda não existe lá).
+  if (termWinStable && termWinReady) sendTerm('term-tab-added', { tabId, title });
+  else { pendingTermTabs.push({ tabId, title }); termDbg('addTermSession tabId=' + tabId + ' BUFFERED (stable=' + termWinStable + ' ready=' + termWinReady + ')'); }
   return tabId;
 }
 // DEBUG TEMPORÁRIO: rastreia o fluxo de abas/attach para diagnosticar "re-attach
