@@ -985,7 +985,15 @@ function closeTermSession(tabId) {
   termDbg('closeTermSession tabId=' + tabId + ' hadWs=' + !!sc?.ws + ' hadProc=' + !!sc?.proc);
   destroyTermSession(tabId);
   sendTerm('term-tab-removed', { tabId });
-  if (!termSessions.size && termWin && !termWin.isDestroyed()) try { termWin.hide(); } catch {}
+  if (!termSessions.size && termWin && !termWin.isDestroyed()) {
+    // FECHA (não hide) a termWin ao despovoar. Uma termWin REAPROVEITADA
+    // (hide→show) não volta a renderizar o xterm de uma aba reaberta (fica preta,
+    // mesmo com o ws mandando output e o write sendo chamado) — só uma janela
+    // NOVA, criada no próximo attach via did-finish-load, renderiza certo (é o
+    // caminho da 1ª aba, que sempre funcionou). O close descarta a page; o
+    // ensureTermWin recria uma fresca.
+    try { termWin.close(); } catch {}
+  }
 }
 // spawn node-pty local pra uma aba (shell novo ou tmux attach local).
 function spawnPtyLocal(tabId, cmd, cwd) {
