@@ -216,7 +216,7 @@ function parseOpencodeUsage(cfg, now) {
     }
     let title = '?';
     if (key === 'rolling') title = '5h';
-    if (key === 'weekly') title = 'Semana';
+    if (key === 'weekly') title = '7d';
     if (key === 'monthly') title = 'Mês';
     out.push({ title, usedPct: clampPct(w.percent), resetAt, resetInMin, status: w.status || null });
   }

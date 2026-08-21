@@ -1012,7 +1012,7 @@ test('parseOpencodeUsage: extrai janelas rolling, weekly e monthly', () => {
   assert.equal(out[0].resetInMin, 300); // 5h
   assert.equal(out[0].status, 'active');
 
-  assert.equal(out[1].title, 'Semana');
+  assert.equal(out[1].title, '7d');
   assert.equal(out[1].usedPct, 4);
 
   assert.equal(out[2].title, 'Mês');
