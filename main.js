@@ -1449,7 +1449,7 @@ async function collectAndSendUsage({ claudeFetch = false } = {}) {
     glmCreds = mergeGlmCreds(glmCreds, opencodeGlmCreds());
     
     // OpenCode Go: consulta a API nativa do OpenCode
-    const ocCred = opencodeApiCreds(); console.log("ocCred is:", ocCred);
+    const ocCred = opencodeApiCreds();
     
     const codexCwds = codexCwdsFromSessions();
     const entries = await usage.collectUsage({
