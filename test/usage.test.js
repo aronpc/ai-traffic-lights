@@ -10,7 +10,8 @@ const {
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
   collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter,
-  _clearGlmCache, _clearClaudeCache, _clearCodexCache,
+  _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
+  parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
 
 // now fixo = 2026-07-07T12:00:00Z → testes determinísticos (mês é 0-indexed em JS: 6=Jul).
@@ -995,6 +996,81 @@ test('mergeUsage: antigravity-plan limpa antigravity-quota do cache anterior', (
 });
 
 // =========================== detectReset (aviso de "cota resetou") ===========================
+
+test('parseOpencodeUsage: extrai janelas rolling, weekly e monthly', () => {
+  const payload = {
+    usage: {
+      rolling: { percent: 15.5, resets_at: '2026-07-07T17:00:00Z', status: 'active' },
+      weekly: { percent: 4.2, resets_at: '2026-07-14T12:00:00Z', status: 'active' },
+      monthly: { percent: 0.5, resets_at: '2026-08-01T00:00:00Z', status: 'active' }
+    }
+  };
+  const out = parseOpencodeUsage(payload, NOW);
+  assert.equal(out.length, 3);
+  assert.strictEqual(out[0].title, '5h');
+  assert.strictEqual(out[0].usedPct, 16);
+  assert.equal(out[0].resetInMin, 300); // 5h
+  assert.equal(out[0].status, 'active');
+
+  assert.equal(out[1].title, 'Semana');
+  assert.equal(out[1].usedPct, 4);
+
+  assert.equal(out[2].title, 'Mês');
+  assert.equal(out[2].usedPct, 1);
+});
+
+test('parseOpencodeUsage: falhas de schema retornam []', () => {
+  assert.deepEqual(parseOpencodeUsage(null, NOW), []);
+  assert.deepEqual(parseOpencodeUsage({}, NOW), []);
+  assert.deepEqual(parseOpencodeUsage({ error: 'invalid token' }, NOW), []);
+});
+
+test('parseOpencodeUsage: clamp de pct acima de 100 e janela esgotada', () => {
+  const out = parseOpencodeUsage({ usage: { rolling: { percent: 120, resets_at: '2026-07-07T17:00:00Z', status: 'exhausted' } } }, NOW);
+  assert.equal(out[0].usedPct, 100);
+  assert.equal(out[0].status, 'exhausted');
+});
+
+test('readOpencodeUsage: sem credencial → null', async () => {
+  assert.equal(await readOpencodeUsage({ env: {}, now: NOW }), null);
+});
+
+test('readOpencodeUsage: cache evita chamadas seguidas', async () => {
+  _clearOpencodeCache();
+  let calls = 0;
+  const mock = async () => { calls++; return { usage: { rolling: { percent: 0, resets_at: '2026-07-07T13:00:00Z', status: 'active' } } }; };
+  const env = { OPENCODE_AUTH_TOKEN: 'token' };
+
+  await readOpencodeUsage({ env, now: NOW, fetcher: mock });
+  assert.equal(calls, 1);
+  await readOpencodeUsage({ env, now: NOW + 10_000, fetcher: mock });
+  assert.equal(calls, 1, 'evitou fetch, bateu no cache');
+  await readOpencodeUsage({ env, now: NOW + 31_000, fetcher: mock });
+  assert.equal(calls, 2, 'após 30s chamou novamente');
+});
+
+test('readOpencodeUsage: erro de rede retorna entry fallback', async () => {
+  _clearOpencodeCache();
+  const mockErr = async () => { throw new Error('timeout'); };
+  const out = await readOpencodeUsage({ env: { OPENCODE_AUTH_TOKEN: 'tok' }, now: NOW, fetcher: mockErr, suffix: 'test' });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'opencode-err:test');
+  assert.equal(out[0].error, 'timeout');
+  assert.equal(out[0].usedPct, null);
+});
+
+test('readOpencodeUsage: monta entry com os dados extraídos', async () => {
+  _clearOpencodeCache();
+  const mock = async () => ({ usage: { rolling: { percent: 50, resets_at: '2026-07-07T13:00:00Z', status: 'exhausted' } } });
+  const out = await readOpencodeUsage({ env: { OPENCODE_AUTH_TOKEN: 'tok' }, now: NOW, fetcher: mock, label: 'Custom' });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'opencode-win0');
+  assert.equal(out[0].title, '5h');
+  assert.equal(out[0].plan, 'Custom');
+  assert.equal(out[0].usedPct, 50);
+  assert.equal(out[0].resetInMin, 60);
+  assert.equal(out[0].extra, 'esgotado'); // map status exhausted
+});
 // PURA: `now` injetado (NOW = 2026-07-07T12:00:00Z, definido no topo). Estes casos
 // são a ESPECIFICAÇÃO da regra de transição estava-esgotado → resetou.
 const RESET_ENTRY = (id, usedPct, resetAt) => ({ id, agent: 'glm', plan: 'GLM Pro', title: 'Tokens (5h)', usedPct, resetAt });
