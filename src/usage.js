@@ -110,7 +110,13 @@ function parseGlmQuota(payload, now) {
     const resetInMin = resetAt ? Math.max(0, Math.round((Date.parse(resetAt) - nowMs) / 60000)) : null;
     const pct = typeof lim.percentage === 'number' ? clampPct(lim.percentage) : null;
     if (lim.type === 'TOKENS_LIMIT') {
-      out.push({ title: 'Tokens (5h)', usedPct: pct, resetAt, resetInMin, extra: null, level: root.level || null });
+      let title = 'Tokens (5h)'; // fallback padrão para payloads antigos/testes
+      if (lim.unit === 6) {
+        title = 'Tokens (7d)';
+      } else if (lim.unit === 5) {
+        title = 'Tokens (mês)';
+      }
+      out.push({ title: title, usedPct: pct, resetAt, resetInMin, extra: null, level: root.level || null });
     } else if (lim.type === 'TIME_LIMIT') {
       // MCP/tools mensal (search-prime, web-reader, zread, ...).
       out.push({ title: 'MCP (mês)', usedPct: pct, resetAt, resetInMin, extra: formatUsage(lim.currentValue, lim.usage), level: root.level || null });
