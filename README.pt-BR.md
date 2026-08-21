@@ -49,7 +49,8 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 - 📊 **Medidores de uso por agente** (rodapé): uma linha alinhada por janela de
   uso, com barra de % e próximo reset — **Claude** (5h + semanal, números reais
   da API OAuth de uso), **Codex** (5h + semanal, lidos passivamente do rollout
-  da sessão) e **GLM Coding Plan** (tokens 5h + MCP mensal). Linhas ficam âmbar
+  da sessão), **GLM Coding Plan** (tokens 5h + MCP mensal) e **OpenCode Go** (5h +
+  semanal + mensal). Linhas ficam âmbar
   ≥70%, vermelhas ≥90%; o último valor persiste (fica cinza quando velho) e
   sobrevive a reinícios. Alterne entre os medidores e o Quick Launcher no cabeçalho
 - 🎚️ **Aparência**: slider de transparência da janela, ao vivo e lembrado. A

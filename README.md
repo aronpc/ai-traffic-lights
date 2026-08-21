@@ -50,7 +50,8 @@ terminal — **window _and_ tab**.
 - 📊 **Per-agent usage meters** (footer): one aligned row per usage window with
   a % meter and next reset — **Claude** (5-hour + weekly, real numbers from the
   OAuth usage API), **Codex** (5-hour + weekly, read passively from the session
-  rollout) and **GLM Coding Plan** (5h tokens + monthly MCP). Rows go amber
+  rollout), **GLM Coding Plan** (5h tokens + monthly MCP), and **OpenCode Go**
+  (5-hour + weekly + monthly). Rows go amber
   ≥70%, red ≥90%; the last value sticks (greys out when stale) and survives
   restarts. Toggle between the meters and the Quick Launcher in the header
 - 🎚️ **Appearance**: window transparency slider, live and remembered. The
