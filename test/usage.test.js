@@ -1038,7 +1038,7 @@ test('readOpencodeUsage: sem credencial → null', async () => {
 test('readOpencodeUsage: cache evita chamadas seguidas', async () => {
   _clearOpencodeCache();
   let calls = 0;
-  const mock = async () => { calls++; return { usage: { rolling: { percent: 0, resets_at: '2026-07-07T13:00:00Z', status: 'active' } } }; };
+  const mock = async () => { calls++; return JSON.stringify({ usage: { rolling: { percent: 0, resets_at: '2026-07-07T13:00:00Z', status: 'active' } } }); };
   const env = { OPENCODE_AUTH_TOKEN: 'token' };
 
   await readOpencodeUsage({ env, now: NOW, fetcher: mock });
@@ -1054,14 +1054,27 @@ test('readOpencodeUsage: erro de rede retorna entry fallback', async () => {
   const mockErr = async () => { throw new Error('timeout'); };
   const out = await readOpencodeUsage({ env: { OPENCODE_AUTH_TOKEN: 'tok' }, now: NOW, fetcher: mockErr, suffix: 'test' });
   assert.equal(out.length, 1);
-  assert.equal(out[0].id, 'opencode-err:test');
+  assert.equal(out[0].id, 'opencode:test');
   assert.equal(out[0].error, 'timeout');
   assert.equal(out[0].usedPct, null);
 });
 
+test('readOpencodeUsage: erro de rede respeita cache de 30s', async () => {
+  _clearOpencodeCache();
+  let calls = 0;
+  const mockErr = async () => { calls++; throw new Error('timeout'); };
+  const env = { OPENCODE_AUTH_TOKEN: 'tok' };
+  await readOpencodeUsage({ env, now: NOW, fetcher: mockErr, suffix: 'test' });
+  assert.equal(calls, 1);
+  await readOpencodeUsage({ env, now: NOW + 10_000, fetcher: mockErr, suffix: 'test' });
+  assert.equal(calls, 1, 'erro ficou em cache, não refez fetch');
+  await readOpencodeUsage({ env, now: NOW + 31_000, fetcher: mockErr, suffix: 'test' });
+  assert.equal(calls, 2, 'após 30s tentou novamente');
+});
+
 test('readOpencodeUsage: monta entry com os dados extraídos', async () => {
   _clearOpencodeCache();
-  const mock = async () => ({ usage: { rolling: { percent: 50, resets_at: '2026-07-07T13:00:00Z', status: 'exhausted' } } });
+  const mock = async () => JSON.stringify({ usage: { rolling: { percent: 50, resets_at: '2026-07-07T13:00:00Z', status: 'exhausted' } } });
   const out = await readOpencodeUsage({ env: { OPENCODE_AUTH_TOKEN: 'tok' }, now: NOW, fetcher: mock, label: 'Custom' });
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 'opencode-win0');
