@@ -773,18 +773,18 @@ async function readOpencodeUsage({ env, now, fetcher, label, suffix } = {}) {
   const sfx = suffix ? `:${suffix}` : '';
 
   let raw = null;
-  const getFn = fetcher || _httpsGetJson;
   try {
-    raw = await getFn(
-      'https://opencode.ai/zen/go/v1/usage', 
+    raw = await _httpsGetJson(
+      'https://opencode.ai/zen/go/v1/usage',
       { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
       fetcher
     );
   } catch (err) {
     const result = [{
-      id: 'opencode-err' + sfx, agent: 'opencode', title: 'OpenCode' + planTag, usedPct: null,
+      id: 'opencode' + sfx, agent: 'opencode', title: 'OpenCode' + planTag, usedPct: null,
       resetAt: null, resetInMin: null, extra: null, source: 'opencode.api', error: err.message || 'fetch error',
     }];
+    _opencodeCacheByToken.set(token, { at: nowMs, entries: result });
     return result;
   }
 
