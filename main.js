@@ -1368,7 +1368,7 @@ function opencodeApiCreds() {
   const authFile = path.join(DATA_HOME, 'opencode', 'auth.json');
   let auth;
   try { auth = JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch { return null; }
-  
+
   const ocg = auth['opencode-go'];
   if (ocg && ocg.type === 'api' && ocg.key) {
     const token = ocg.key;
@@ -1447,10 +1447,10 @@ async function collectAndSendUsage({ claudeFetch = false } = {}) {
     // OpenCode: se tiver o provider z.ai (zai-coding-plan) no auth.json, a
     // credencial dele consulta a MESMA API de quota — mescla (dedup por token).
     glmCreds = mergeGlmCreds(glmCreds, opencodeGlmCreds());
-    
+
     // OpenCode Go: consulta a API nativa do OpenCode
     const ocCred = opencodeApiCreds();
-    
+
     const codexCwds = codexCwdsFromSessions();
     const entries = await usage.collectUsage({
       glmCreds, codexCwds, home: app.getPath('home'),
