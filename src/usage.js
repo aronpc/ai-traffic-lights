@@ -199,6 +199,24 @@ function parseAnthropicUsage(payload, now) {
 //   }
 // resets_at é epoch em SEGUNDOS (≠ Anthropic ISO, ≠ GLM ms). window_minutes
 // nomeia a janela (300→"5 h", 10080→"7 dias", outro→"Nh"/"Nd"). `now` em ms.
+function parseCodexRateLimits(rateLimits, now) {
+  const out = [];
+  if (!rateLimits || typeof rateLimits !== 'object') return out;
+  const nowMs = now || Date.now();
+  for (const key of ['primary', 'secondary']) {
+    const w = rateLimits[key];
+    if (!w || typeof w !== 'object' || typeof w.used_percent !== 'number') continue;
+    const resetAt = typeof w.resets_at === 'number' && w.resets_at > 0
+      ? new Date(w.resets_at * 1000).toISOString() : null;
+    const resetInMin = resetAt ? Math.max(0, Math.round((Date.parse(resetAt) - nowMs) / 60000)) : null;
+    out.push({ title: windowTitle(w.window_minutes), usedPct: clampPct(w.used_percent), resetAt, resetInMin });
+  }
+  return out;
+}
+
+// Extrai as janelas de uso do payload da API OpenCode Go (/zen/go/v1/usage).
+// Schema: { usage: { rolling: { percent, resets_at, status }, weekly, monthly } }
+// resets_at é ISO string (igual Anthropic). `now` em ms.
 function parseOpencodeUsage(cfg, now) {
   const out = [];
   if (!cfg || typeof cfg !== 'object' || !cfg.usage || typeof cfg.usage !== 'object') return out;
@@ -219,21 +237,6 @@ function parseOpencodeUsage(cfg, now) {
     if (key === 'weekly') title = '7d';
     if (key === 'monthly') title = 'Mês';
     out.push({ title, usedPct: clampPct(w.percent), resetAt, resetInMin, status: w.status || null });
-  }
-  return out;
-}
-
-function parseCodexRateLimits(rateLimits, now) {
-  const out = [];
-  if (!rateLimits || typeof rateLimits !== 'object') return out;
-  const nowMs = now || Date.now();
-  for (const key of ['primary', 'secondary']) {
-    const w = rateLimits[key];
-    if (!w || typeof w !== 'object' || typeof w.used_percent !== 'number') continue;
-    const resetAt = typeof w.resets_at === 'number' && w.resets_at > 0
-      ? new Date(w.resets_at * 1000).toISOString() : null;
-    const resetInMin = resetAt ? Math.max(0, Math.round((Date.parse(resetAt) - nowMs) / 60000)) : null;
-    out.push({ title: windowTitle(w.window_minutes), usedPct: clampPct(w.used_percent), resetAt, resetInMin });
   }
   return out;
 }
@@ -832,26 +835,30 @@ async function collectUsage(opts = {}) {
     : (opts.env ? [{ env: opts.env }] : []);
   const multi = creds.length > 1;              // >1 conta → rotula cada bloco
 
-  // Claude (OAuth) + todas as contas GLM em paralelo — I/O de rede independente.
-  // Claude usa opts.claudeFetcher (separado do de GLM: cada API tem schema/mock
-  // próprio; em teste sem claudeFetcher e sem token, o Claude cai no plano-só).
+  // Claude (OAuth) + OpenCode Go + todas as contas GLM em paralelo — I/O de rede
+  // independente. Claude usa opts.claudeFetcher (separado do de GLM/OpenCode:
+  // cada API tem schema/mock próprio; em teste sem claudeFetcher e sem token, o
+  // Claude cai no plano-só).
   const [claude, antigravity, opencode, ...glm] = await Promise.all([
     readClaudeUsage({
       home: opts.home, now: opts.now, fetcher: opts.claudeFetcher,
       cooldownUntil: opts.claudeCooldownUntil, cooldownFails: opts.claudeCooldownFails,
       setCooldown: opts.claudeSetCooldown,
+      // Lazy: só bate na API do Claude quando o caller pede (gatilho de UI). O
+      // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
+      // omite → false. Default true preserva o contrato dos testes/uso direto.
       allowFetch: opts.claudeAllowFetch !== false,
     }).catch(() => null),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
     readOpencodeUsage({
-      env: opts.opencodeEnv || opts.env, now: opts.now, fetcher: opts.fetcher,
+      env: opts.opencodeEnv, now: opts.now, fetcher: opts.fetcher,
       label: opts.opencodeLabel, suffix: opts.opencodeSuffix,
     }).catch(() => null),
     ...creds.map((c) => readGlmUsage({
       env: c.env, now: opts.now, fetcher: opts.fetcher,
       label: multi ? c.label : undefined,
       suffix: multi ? c.suffix : undefined,
-    }).catch(() => null)),
+    }).catch(() => null)),                       // readGlmUsage já captura; dupla defesa
   ]);
   if (Array.isArray(claude)) out.push(...claude);
   if (Array.isArray(antigravity)) out.push(...antigravity);
