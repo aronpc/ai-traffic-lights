@@ -11,6 +11,7 @@
 function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_URL, SETTINGS_BOUNDS_FILE, BASE_DIR, appDir, SETTINGS_W, SETTINGS_H }) {
   const fs = require('fs');
   const path = require('path');
+  const settingsLib = require('../settings');   // isPrerelease (gate da feature beta)
   const { BrowserWindow, screen, dialog, shell } = require('electron');
 
   // Estado da janela — privado do módulo. Estava declarado no main.js e o
@@ -76,6 +77,9 @@ function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_
     settingsWin.on('closed', () => { settingsWin = null; });
   }
   ipcMain.handle('get-settings', () => getSettings());
+  // Feature sync = build beta. O renderer pergunta pra saber se mostra a aba
+  // Sincronização (some na estável/fonte — só existe em versão -beta.N).
+  ipcMain.handle('sync-available', () => settingsLib.isPrerelease(APP_VERSION));
   ipcMain.handle('get-lang', () => getLang());
   ipcMain.handle('get-version', () => APP_VERSION);              // rodapé das Preferências
   ipcMain.on('open-external', (_e, url) => {

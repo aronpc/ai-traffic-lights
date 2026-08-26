@@ -1,6 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { DEFAULTS, isValidShortcut, mergeWithDefaults, updaterFlags } = require('../src/settings.js');
+const { DEFAULTS, isValidShortcut, mergeWithDefaults, updaterFlags, isPrerelease } = require('../src/settings.js');
+
+test('isPrerelease: true só com sufixo de pre-release (canal beta)', () => {
+  assert.equal(isPrerelease('0.7.4-beta.1'), true);
+  assert.equal(isPrerelease('0.8.0-beta.3'), true);
+  assert.equal(isPrerelease('0.7.3'), false);          // estável
+  assert.equal(isPrerelease(undefined), false);
+  assert.equal(isPrerelease(''), false);
+});
 
 test('isValidShortcut: aceita modificador + tecla', () => {
   assert.equal(isValidShortcut('Control+Alt+H'), true);

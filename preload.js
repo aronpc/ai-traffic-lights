@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   openSettings: () => ipcRenderer.send('open-settings'),
   getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
   setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
+  syncAvailable: () => ipcRenderer.invoke('sync-available'),     // feature sync = build beta (aba Sincronização some na estável)
   fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
   attachRemote: (origin, tmuxSession, cwd, alias, key, label) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd, alias, key, label }), // abre na janela Terminal (título = o mesmo label da linha)
   // janela Terminal (abas): o estado dos pty/ws vive no main; o renderer só desenha.

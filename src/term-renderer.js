@@ -105,12 +105,12 @@ function refitTab(tabId) {
 }
 
 // ---- eventos do main ----
-window.trafficLight.onPtyOut(({ tabId, data }) => { const t = terms.get(tabId); if (t) t.term.write(data); });
-window.trafficLight.onPtyExit(({ tabId }) => {
-  const t = terms.get(tabId);
-  if (t) t.term.write('\r\n\x1b[90m[processo encerrou]\x1b[0m');
-});
-window.trafficLight.onTermTabAdded(({ tabId, title }) => {
+// O main só entrega o term-tab-added quando a termWin está ESTÁVEL (senão o
+// xterm abria durante a transição hide→show e o render quebrava — aba preta).
+// Enquanto o term-tab-added não chega, o pty-out é bufferizado aqui e escrito
+// na criação da aba.
+const pendingOut = new Map();
+function doTermTabAdded(tabId, title) {
   ensureTerm(tabId);
   const btn = document.createElement('button');
   btn.className = 'tab';
@@ -121,7 +121,23 @@ window.trafficLight.onTermTabAdded(({ tabId, title }) => {
   btn.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.closeTab(tabId); });
   $tabs.appendChild(btn);
   showTab(tabId);
+  // Output que chegou antes do term-tab-added: agora o xterm existe → escreve.
+  const arr = pendingOut.get(tabId);
+  if (arr) { pendingOut.delete(tabId); const t = terms.get(tabId); if (t) for (const d of arr) t.term.write(d); }
+}
+window.trafficLight.onPtyOut(({ tabId, data }) => {
+  const t = terms.get(tabId);
+  if (!t) {                                       // term ainda não criado (main segura o tab-added) → bufferiza
+    const a = pendingOut.get(tabId) || []; a.push(data); pendingOut.set(tabId, a);
+    return;
+  }
+  t.term.write(data);
 });
+window.trafficLight.onPtyExit(({ tabId }) => {
+  const t = terms.get(tabId);
+  if (t) t.term.write('\r\n\x1b[90m[processo encerrou]\x1b[0m');
+});
+window.trafficLight.onTermTabAdded(({ tabId, title }) => doTermTabAdded(tabId, title));
 window.trafficLight.onTermTabRemoved(({ tabId }) => {
   const t = terms.get(tabId);
   if (t) { try { t.term.dispose(); } catch {} }
@@ -165,7 +181,15 @@ window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').
 // Sinal do main (show/restore da janela) — mais confiável que visibilitychange,
 // que nem sempre dispara no hide/show de uma BrowserWindow no Linux.
 window.trafficLight.onTermShown(() => {
-  requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
+  // Reabrir a termWin (hide→show): o canvas do xterm é descartado enquanto a
+  // janela esteve oculta. Repintamos no rAF e de novo ~260ms depois — no X11
+  // frameless+transparent o remapeamento pelo WM é assíncrono, e o 1º repaint
+  // pode rodar ANTES do canvas reanexar (a aba reabria preta). O 2º pega a
+  // janela já estável.
+  const t = terms.get(activeTabId);
+  const once = () => { fitActive(); repaint(t); };
+  requestAnimationFrame(once);
+  setTimeout(() => requestAnimationFrame(once), 260);
 });
 // Conexão (re)estabelecida (revive): re-fit + re-envia o tamanho p/ a aba certa,
 // senão o tmux remoto desenha no tamanho defasado e o conteúdo fica mal posicionado.

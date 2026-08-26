@@ -60,9 +60,15 @@ const UPDATE_CHANNELS = Object.freeze(['stable', 'beta']);
 // de `0.7.4-beta.3` para o estável `0.7.3` é uma descida em semver, e sem esta
 // flag o app ficaria preso na beta. Fica ligada só nesse caso (rodando
 // pre-release e pedindo estável) — nunca num app estável, onde só faria mal.
+// True se a versão em execução é uma pre-release do canal beta (tem sufixo
+// após X.Y.Z, ex.: 0.7.4-beta.1). Reusada pelo updater (allowDowngrade) e pelo
+// gate da feature de sync — a aba Sincronização só existe em build beta.
+function isPrerelease(appVersion) {
+  return /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
+}
 function updaterFlags(channel, appVersion) {
   const wantBeta = channel === 'beta';
-  const onPrerelease = /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
+  const onPrerelease = isPrerelease(appVersion);
   return { allowPrerelease: wantBeta, allowDowngrade: !wantBeta && onPrerelease };
 }
 
@@ -165,4 +171,4 @@ function mergeWithDefaults(raw) {
   return out;
 }
 
-if (typeof module !== 'undefined') module.exports = { DEFAULTS, UPDATE_CHANNELS, isValidShortcut, mergeWithDefaults, updaterFlags };
+if (typeof module !== 'undefined') module.exports = { DEFAULTS, UPDATE_CHANNELS, isValidShortcut, mergeWithDefaults, updaterFlags, isPrerelease };

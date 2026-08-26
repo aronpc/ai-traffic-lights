@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   de sessão decide a ordem.
 
 ### Fixed
+- **Aba Sincronização em branco nas Preferências.** A aba vinha aninhada dentro
+  de "Atualizações" por uma tag `</section>` ausente no `settings.html`, o que
+  fazia o painel inteiro sumir ao ser selecionado.
+- **Aceitar o canal beta reage na hora, sem reiniciar.** A troca já era aplicada
+  a quente, mas silenciosamente; agora o estado "verificando" aparece imediatamente.
+- **Aba Sincronização (sync P2P) só existe em builds beta.** Feature não lançada
+  na estável: removida do DOM e dos IPCs (`get-sync`/`set-sync`/`applySync`)
+  fora de uma versão `-beta.N`.
 - **Ativação de janela imune à prevenção de roubo de foco do Mutter.** O raise
   usava `wmctrl -i -a`, que manda `_NET_ACTIVE_WINDOW` na forma legada; com
   `focus-new-windows='smart'` o Mutter podia ignorar a partir do 2º clique

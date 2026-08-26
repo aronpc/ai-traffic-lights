@@ -232,10 +232,16 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     autoUpdater.allowDowngrade = f.allowDowngrade;
   }
 
-  // Trocou de canal nas Preferências → reflete e re-checa na hora.
+  // Trocou de canal nas Preferências → reflete e re-checa na hora. A detecção
+  // em si já é a quente (allowPrerelease + checkForUpdates re-busca o feed), mas
+  // sem feedback visível o usuário não via nada acontecer ao marcar beta e achava
+  // que precisava reiniciar o app. O status 'checking' mostra a re-verificação na
+  // hora; o resultado (update disponível / em dia) transiciona sozinho pelos
+  // eventos do autoUpdater.
   function onChannelChanged() {
     applyUpdateChannel();
     _updateCache = null;                       // o cache do fallback é por canal
+    setUpdateState({ status: 'checking', error: null, hasUpdate: false, progress: 0 });
     checkForUpdates();
   }
 

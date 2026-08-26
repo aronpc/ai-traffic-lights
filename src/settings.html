@@ -192,6 +192,8 @@
             <label for="betaChannel" data-i18n="beta_channel_label">Receber versões beta (teste)</label>
           </div>
           <div class="hint" data-i18n="beta_channel_hint">Versões novas antes de virarem estáveis — podem ter bugs. Desligue para voltar à última estável.</div>
+        </div>
+      </section>
       <!-- ===================== ABA: SINCRONIZAÇÃO ===================== -->
       <section class="tab-panel" data-panel="sync" hidden>
         <div class="section">
@@ -212,7 +214,7 @@
           </div>
           <div class="field">
             <label class="top" for="syncPort" data-i18n="sync_port_label">Porta</label>
-            <input id="syncPort" type="number" min="1" max="65535" style="width:120px">
+            <input id="syncPort" type="number" min="1" max="65535">
           </div>
           <div class="row">
             <input type="checkbox" id="syncShare">
@@ -228,7 +230,7 @@
           </div>
           <div class="field">
             <label class="top" for="syncPeers" data-i18n="sync_peers_label">Máquinas que eu observo (uma por linha)</label>
-            <textarea id="syncPeers" rows="4" style="width:100%" placeholder="100.64.0.2&#10;servidor loja-mqx"></textarea>
+            <textarea id="syncPeers" rows="4" placeholder="100.64.0.2&#10;servidor loja-mqx"></textarea>
             <div class="hint" data-i18n="sync_peers_hint"></div>
           </div>
         </div>

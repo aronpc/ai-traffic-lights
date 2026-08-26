@@ -33,6 +33,10 @@ const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 // e URL pública do repo (rodapé das Preferências + tooltip do tray).
 const APP_VERSION = app.getVersion();
 const REPO_URL = 'https://github.com/aronpc/ai-traffic-lights';
+// Feature de sync (P2P) é beta: só em build pre-release (0.7.4-beta.N, lida de
+// app.getVersion). Na estável/fonte (0.7.3) a aba Sincronização some e nada de
+// sync é gravado ou sobe.
+const SYNC_AVAILABLE = settingsLib.isPrerelease(APP_VERSION);
 
 // Instância única: relançar o app não duplica o overlay — TOGGLA o existente
 // e sai. Previne overlays duplicados (autostart + lançamento manual) e dá um
@@ -665,8 +669,11 @@ ipcMain.on('save-settings', (_e, cfg) => {
 // (handler 'open-settings' movido p/ src/ipc/settings.js — REF passo 9)
 
 // Sync multi-máquina: lê/gravar SÓ o sub-objeto sync (validado em persistSettings).
-ipcMain.handle('get-sync', () => (settingsCfg && settingsCfg.sync) || null);
+// Sync é feature beta: get-sync devolve null fora de uma build beta (a aba de
+// Preferências some; ninguém lê/grava sync na estável).
+ipcMain.handle('get-sync', () => SYNC_AVAILABLE ? ((settingsCfg && settingsCfg.sync) || null) : null);
 ipcMain.on('set-sync', (_e, syncCfg) => {
+  if (!SYNC_AVAILABLE) return;
   settingsCfg = persistSettings({ sync: syncCfg });
   applySync();
   sendToRenderer('settings-changed', settingsCfg);
@@ -735,6 +742,7 @@ let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no
 let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
 function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
 function applySync() {
+  if (!SYNC_AVAILABLE) return;   // feature beta: estável/fonte nunca sobem servidor/poller
   const s = (settingsCfg && settingsCfg.sync) || {};
   const tok = typeof s.token === 'string' ? s.token : '';
   // SERVIDOR (compartilhar minhas sessões): binda no IP da tailnet
@@ -832,6 +840,19 @@ const termSessions = new Map();   // tabId -> { title, kind, origin, tmux_sessio
 let tabSeq = 0;
 let termWinReady = false;         // term.html carregou? Fila de IPCs até did-finish-load — evita perder term-tab-added/pty-out na 1ª abertura (janela vinha vazia).
 const termQueue = [];
+// A termWin precisa estar VISÍVEL e ESTÁVEL (WM mapeou) quando o renderer cria o
+// xterm (term.open). Abrir o xterm durante a transição hide→show (X11 frameless
+// remapeia assíncrono) deixa o render quebrado: a aba vinha preta e nem resize
+// recuperava. O main SÓ entrega o term-tab-added quando a janela está estável;
+// até lá, guarda aqui. (document.hidden no renderer não detecta hide/show de
+// BrowserWindow — por isso o controle fica aqui, onde isVisible() é confiável.)
+let termWinStable = false;
+const pendingTermTabs = [];
+function flushPendingTermTabs() {
+  termWinStable = true;
+  if (!termWinReady || !termWin || termWin.isDestroyed()) return;
+  for (const p of pendingTermTabs.splice(0)) { try { termWin.webContents.send('term-tab-added', p); } catch {} }
+}
 function sendTerm(ch, payload) {
   if (!termWin || termWin.isDestroyed()) return;
   if (!termWinReady) { termQueue.push([ch, payload]); return; }
@@ -865,11 +886,21 @@ function saveTermBounds() {
 function revealTermWin() {
   if (!termWin || termWin.isDestroyed()) return;
   try {
+    termWinStable = false;   // transição hide→show: não criar xterms até o WM mapear
     if (termWin.isMinimized()) termWin.restore();
     termWin.showInactive();
     termWin.show();
     termWin.moveTop();
     termWin.focus();
+    // Reabrir a termWin (hide→show): o WM no X11 frameless+transparent remapeia a
+    // janela de forma ASSÍNCRONA. Criar/repintar o xterm antes do remapeamento
+    // deixa o canvas preto. Com o delay o WM já mapeou → a janela está ESTÁVEL:
+    // libera os term-tab-added guardados e avisa o renderer pra repintar.
+    setTimeout(() => {
+      if (!termWin || termWin.isDestroyed() || !termWin.isVisible()) return;
+      flushPendingTermTabs();
+      sendTerm('term-shown');
+    }, 120);
   } catch {}
 }
 
@@ -899,11 +930,18 @@ function ensureTermWin() {
     termWinReady = true;
     for (const [ch, p] of termQueue.splice(0)) { try { termWin.webContents.send(ch, p); } catch {} }
     sendTerm('term-maximized', !!termWin.isMaximized());   // estado inicial: renderer tira o radius se maximizada
+    flushPendingTermTabs();   // 1ª carga: janela nasce visível/estável → libera abas guardadas
   });
   // Janela reapareceu (show do ensureTermWin, restore do WM): o renderer precisa
   // REPINTAR o xterm — enquanto esteve oculta o canvas foi descartado e o buffer
   // não. Sem isso a aba reabre em branco com o tmux vivo do outro lado.
   termWin.on('restore', () => sendTerm('term-shown'));
+  // (re)mostrar a termWin (× = hide → clicar de novo = show): o canvas do xterm é
+  // descartado enquanto a janela esteve oculta e o renderer precisa repintar.
+  // No Linux/X11 o visibilitychange é unreliable pra hide/show de BrowserWindow,
+  // então avisamos pelo canal do main (igual ao restore) — sem isto a aba
+  // reabria em branco, com o tmux/pty vivo do outro lado.
+  termWin.on('show', () => sendTerm('term-shown'));
   termWin.on('maximize', () => sendTerm('term-maximized', true));
   termWin.on('unmaximize', () => sendTerm('term-maximized', false));
   termWin.on('resize', saveTermBounds);   // persiste tamanho/posição (debounce; ignora se maximizada)
@@ -914,7 +952,7 @@ function ensureTermWin() {
   // abre/fecha (PR-32 #08).
   termWin.on('closed', () => {
     for (const id of [...termSessions.keys()]) destroyTermSession(id);
-    termWin = null; termWinReady = false; termQueue.length = 0; termSessions.clear();
+    termWin = null; termWinReady = false; termWinStable = false; termQueue.length = 0; pendingTermTabs.length = 0; termSessions.clear();
   });
   return termWin;
 }
@@ -929,13 +967,25 @@ function addTermSession({ title, kind, origin, tmux_session, sessionKey, label, 
   // label/cwd ficam guardados p/ RECONSTRUIR o título quando o alias é removido
   // (rename pra vazio) — sem eles a aba cairia no 'tmux: <sessão>'.
   termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, label: label || null, cwd: cwd || null, proc: null, ws: null, cols: 80, rows: 24 });
-  sendTerm('term-tab-added', { tabId, title });
+  // Só entrega o term-tab-added com a termWin ESTÁVEL; criar o xterm antes (na
+  // transição hide→show) quebra o render. O pty-out que chega antes o renderer
+  // bufferiza (term ainda não existe lá).
+  if (termWinStable && termWinReady) sendTerm('term-tab-added', { tabId, title });
+  else pendingTermTabs.push({ tabId, title });
   return tabId;
 }
 function closeTermSession(tabId) {
   destroyTermSession(tabId);
   sendTerm('term-tab-removed', { tabId });
-  if (!termSessions.size && termWin && !termWin.isDestroyed()) try { termWin.hide(); } catch {}
+  if (!termSessions.size && termWin && !termWin.isDestroyed()) {
+    // FECHA (não hide) a termWin ao despovoar. Uma termWin REAPROVEITADA
+    // (hide→show) não volta a renderizar o xterm de uma aba reaberta (fica preta,
+    // mesmo com o ws mandando output e o write sendo chamado) — só uma janela
+    // NOVA, criada no próximo attach via did-finish-load, renderiza certo (é o
+    // caminho da 1ª aba, que sempre funcionou). O close descarta a page; o
+    // ensureTermWin recria uma fresca.
+    try { termWin.close(); } catch {}
+  }
 }
 // spawn node-pty local pra uma aba (shell novo ou tmux attach local).
 function spawnPtyLocal(tabId, cmd, cwd) {
