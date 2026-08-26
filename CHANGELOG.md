@@ -44,6 +44,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Aba Sincronização (sync P2P) só existe em builds beta.** Feature não lançada
   na estável: removida do DOM e dos IPCs (`get-sync`/`set-sync`/`applySync`)
   fora de uma versão `-beta.N`.
+- **Ativação de janela imune à prevenção de roubo de foco do Mutter.** O raise
+  usava `wmctrl -i -a`, que manda `_NET_ACTIVE_WINDOW` na forma legada; com
+  `focus-new-windows='smart'` o Mutter podia ignorar a partir do 2º clique
+  consecutivo e a janela apenas piscava na dock. Passa a usar
+  `xdotool windowactivate --sync`, cujo `xdo_activate_window` manda source
+  indication *pager* (`data.l[0]=2`, conferido no `.rodata` do libxdo), com o
+  wmctrl como fallback.
+- **O clique sem efeito deixa de ser silencioso no X11.** `isFocusUnsupported`
+  exigia `wayland: true`, então quando o raise falhava no X11 — árvore de
+  processos passando por um multiplexador, ou o WM recusando a ativação — o
+  clique não fazia nada e não dizia nada. O gate passa a perguntar só "teve
+  algum efeito?", e a mensagem deixa de citar Wayland/GNOME Terminal.
+- **O auto-updater deixa de destruir builds locais.** No Linux o
+  electron-updater atualiza SUBSTITUINDO o arquivo apontado por `$APPIMAGE` —
+  então rodar um AppImage recém-gerado a partir do `dist/`, com uma release mais
+  nova publicada, fazia ele reescrever o próprio artefato de build no quit. O
+  updater só é instanciado quando `app.isPackaged` (guarda recomendada pela doc
+  oficial) e o AppImage **não** está num diretório de saída do electron-builder
+  (`builder-effective-config.yaml` / `builder-debug.yml` / `linux-unpacked` ao
+  lado). Nos dois casos a checagem informativa via GitHub API continua, e a UI
+  já cai sozinha no "abrir a release" quando `canAutoInstall` é falso.
 - **Instaladores garantem o primeiro arranque ("instala e não abre").** Linux:
   runtime AppImage estático (dispensa `libfuse2`) + preflight que instala
   `libfuse2`/`libfuse2t64` e as libs do Electron por distro + launcher com

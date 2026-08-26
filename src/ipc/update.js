@@ -93,12 +93,33 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   }
   function setUpdateState(patch) { updateState = { ...updateState, ...patch }; emitUpdateState(); }
 
+  // Um AppImage recém-buildado roda direto do `dist/` do projeto — e ali ele é,
+  // legitimamente, um "appimage". Só que o electron-updater atualiza no Linux
+  // SUBSTITUINDO o arquivo apontado por $APPIMAGE: com uma release mais nova
+  // publicada, ele reescreve o próprio artefato de build no quit e o build que
+  // você acabou de gerar some. Detectamos pela vizinhança — o electron-builder
+  // deixa estes arquivos ao lado do .AppImage que produziu.
+  const BUILD_DIR_MARKERS = ['builder-effective-config.yaml', 'builder-debug.yml', 'linux-unpacked'];
+  function isBuildArtifact(appImagePath) {
+    if (!appImagePath) return false;
+    const dir = path.dirname(appImagePath);
+    return BUILD_DIR_MARKERS.some((f) => {
+      try { return fs.existsSync(path.join(dir, f)); } catch { return false; }
+    });
+  }
+
   // Configura o autoUpdater (eventos) e dispara a 1ª checagem + scheduler 1h.
   function setupAutoUpdater() {
     const method = detectInstallMethod();
     updateState.method = method;
-    if (method === 'appimage') {
+    // app.isPackaged: guarda recomendada pela doc oficial do Electron — em dev o
+    // updater não deve existir. isBuildArtifact: não auto-instalar por cima de um
+    // build local. Nos dois casos a checagem informativa (GitHub API) continua e a
+    // UI cai sozinha no "abrir a release", que já é o caminho de canAutoInstall=false.
+    if (method === 'appimage' && app.isPackaged && !isBuildArtifact(process.env.APPIMAGE)) {
       try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { console.error('[auto-update] require electron-updater falhou:', e && e.message); autoUpdater = null; }
+    } else if (method === 'appimage') {
+      console.log('[auto-update] auto-instalação desligada: build local ou não empacotado (' + (process.env.APPIMAGE || process.execPath) + ')');
     }
     updateState.canAutoInstall = !!autoUpdater;
     if (autoUpdater) {

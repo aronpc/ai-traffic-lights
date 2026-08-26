@@ -115,6 +115,18 @@ test('parseGlmQuota: TOKENS_LIMIT (5h) + TIME_LIMIT (mês)', () => {
   assert.equal(out[1].extra, '1.2M/2.5M');
 });
 
+test('parseGlmQuota: TOKENS_LIMIT diferencia 5h e 7d via campo unit', () => {
+  const out = parseGlmQuota({
+    limits: [
+      { type: 'TOKENS_LIMIT', unit: 3, percentage: 10 },
+      { type: 'TOKENS_LIMIT', unit: 6, percentage: 42 }
+    ]
+  }, NOW);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].title, 'Tokens (5h)');
+  assert.equal(out[1].title, 'Tokens (7d)');
+});
+
 test('parseGlmQuota: schema real (data.limits + nextResetTime em ms + level)', () => {
   // payload cru do /api/monitor/usage/quota/limit (z.ai), capturado em 2026-07-07.
   const payload = {

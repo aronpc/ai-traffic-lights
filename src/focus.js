@@ -95,15 +95,15 @@ function tmuxClientPid(pane, panes, clients) {
   return best.pid;
 }
 
-// Decide se o clique virou no-op (foco inviável): Wayland + não raiseou a
-// janela (wmctrl é cego pra apps Wayland-nativos) + sem canal de aba. O main
-// coleta hasTab (tabChannel != null) e raised (raiseWindow devolveu true) e
-// pede a decisão aqui — assim o gate fica testável e cobre QUALQUER terminal
-// Wayland-nativo sem canal (GNOME Terminal, Console/kgx, …), não uma lista
-// fixa. Em X11/XWayland o raise funciona, então nunca dispara. (issue: foco
-// do terminal padrão do Ubuntu no Wayland.)
+// Decide se o clique virou no-op: não raiseou a janela E não havia canal de
+// aba. O main coleta hasTab (tabChannel != null) e raised (raiseWindow devolveu
+// true) e pede a decisão aqui — assim o gate fica testável.
+// Antes exigia `wayland: true`, o que deixava o X11 mudo: quando o raise falha
+// ali (multiplexador quebrando a árvore de processos, ou o Mutter recusando a
+// ativação) o clique não fazia NADA e não dizia nada. A plataforma não muda a
+// pergunta — "teve algum efeito?" vale nas duas.
 function isFocusUnsupported(state) {
-  return !!state && !!state.wayland && !state.raised && !state.hasTab;
+  return !!state && !state.raised && !state.hasTab;
 }
 
 if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, tmuxTarget, tmuxClientPid, parseEnviron, isFocusUnsupported };

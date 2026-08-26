@@ -142,15 +142,18 @@ test('#1 tabChannel: sem canal (gnome-terminal etc.) → null', () => {
   assert.equal(tabChannel({ focus_url: 'http://evil' }), null);
 });
 
-// isFocusUnsupported: o clique virou no-op? Wayland + sem raise (wmctrl cego
-// pra apps Wayland-nativos) + sem canal de aba. (issue: foco do terminal
-// padrão do Ubuntu no Wayland — gnome-terminal não é alcançável.)
+// isFocusUnsupported: o clique virou no-op? Sem raise + sem canal de aba. A
+// plataforma não muda a pergunta — antes o gate exigia `wayland: true` e por
+// isso deixava o X11 mudo, mesmo quando o clique não fazia efeito nenhum.
 test('isFocusUnsupported: Wayland + sem raise + sem canal → true (gnome-terminal nativo)', () => {
   assert.equal(isFocusUnsupported({ wayland: true, raised: false, hasTab: false }), true);
 });
 
-test('isFocusUnsupported: X11 nunca dispara (wmctrl alcança a janela)', () => {
-  assert.equal(isFocusUnsupported({ wayland: false, raised: false, hasTab: false }), false);
+test('isFocusUnsupported: X11 sem raise e sem canal TAMBÉM dispara', () => {
+  // era `assert.equal(..., false)`: a asserção antiga codificava a premissa de
+  // que no X11 o wmctrl sempre alcança a janela. Não alcança quando a árvore de
+  // processos passa por um multiplexador, nem quando o Mutter recusa a ativação.
+  assert.equal(isFocusUnsupported({ wayland: false, raised: false, hasTab: false }), true);
 });
 
 test('isFocusUnsupported: raiseou a janela → false (teve efeito)', () => {
@@ -161,7 +164,8 @@ test('isFocusUnsupported: Warp/Tilix têm canal de aba → false mesmo sem raise
   assert.equal(isFocusUnsupported({ wayland: true, raised: false, hasTab: true }), false);
 });
 
-test('isFocusUnsupported: null / state vazio → false', () => {
-  assert.equal(isFocusUnsupported(null), false);
-  assert.equal(isFocusUnsupported({}), false);
+test('isFocusUnsupported: sem state → false; state vazio → true (nada teve efeito)', () => {
+  assert.equal(isFocusUnsupported(null), false);      // nada a dizer
+  assert.equal(isFocusUnsupported(undefined), false);
+  assert.equal(isFocusUnsupported({}), true);         // nem raise nem aba
 });
