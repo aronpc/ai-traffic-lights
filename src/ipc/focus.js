@@ -55,6 +55,19 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     return null;
   }
 
+  // Ativa a janela. xdotool ANTES do wmctrl: o `xdo_activate_window` manda
+  // _NET_ACTIVE_WINDOW com source indication "pager" (data.l[0]=2, conferido no
+  // .rodata do libxdo), que o Mutter aceita mesmo com focus-new-windows='smart';
+  // o `wmctrl -i -a` manda a forma legada e a partir do 2º clique consecutivo a
+  // requisição podia ser ignorada — a janela só piscava na dock. --sync com
+  // timeout curto: se o WM recusar, o throw devolve false em vez de mentir.
+  function activateWindow(id) {
+    if (!id) return false;
+    try { execFileSync('xdotool', ['windowactivate', '--sync', String(id)], { timeout: 900 }); return true; } catch {}
+    try { execFileSync('wmctrl', ['-i', '-a', String(id)], { timeout: 2000 }); return true; } catch {}
+    return false;
+  }
+
   // Ordem: no X11, raise a janela e então troca a aba. No Wayland, a aba primeiro
   // (wmctrl só enxerga XWayland) e o raise vira tentativa-bônus.
   function raiseWindow(windowid, pid) {
@@ -88,8 +101,7 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
       if (m) wins.push({ id: m[1], idNum: parseInt(m[1], 16), pid: parseInt(m[2], 10) });
     }
     const id = focus.pickWindow(windowid, wins, ancestorPidsOf(pid));
-    if (id) { try { execFileSync('wmctrl', ['-i', '-a', id], { timeout: 2000 }); return true; } catch { return false; } }
-    return false;
+    return id ? activateWindow(id) : false;
   }
 
   function focusTab(state) {
@@ -196,8 +208,8 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     // Wayland + sem canal de aba + sem janela alcançável pelo wmctrl (ex.: GNOME
     // Terminal nativo) → o clique vira no-op silencioso. Avisamos em vez de parecer
     // quebrado (issue: foco do terminal padrão do Ubuntu no Wayland).
-    if (focus.isFocusUnsupported({ wayland: IS_WAYLAND, raised, hasTab })) {
-      notifyUser(T('ntf_focus_unsupported_wayland'));
+    if (focus.isFocusUnsupported({ raised, hasTab })) {
+      notifyUser(T('ntf_focus_none'));
     }
   }
 
