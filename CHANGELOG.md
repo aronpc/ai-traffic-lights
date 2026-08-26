@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dentro do tmux (via `$TMUX_PANE`), por cima do foco de janela e do canal de
   aba (Warp/Tilix). O pane é validado (`/^%[0-9]+$/`) antes de virar argumento
   do `tmux` e não cruza a rede (local-only).
+- **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
 
 ### Changed
 - **Identidade de sessão agora inclui a origem** no merge, alertas, snooze e

@@ -468,6 +468,7 @@ function usagePlanName(u) {
   if (u.agent === 'codex') return plan.replace(/^Codex\s+/, '');
   if (u.agent === 'glm') return plan.replace(/^GLM\s+/, '').replace(/\s*\(z\.ai\)\s*$/, '');
   if (u.agent === 'antigravity') return plan.replace(/^Antigravity\s*\(/, '').replace(/\)\s*$/, '');
+  if (u.agent === 'opencode') return plan.replace(/^OpenCode\s*/i, '').replace(/\s*\([a-f0-9]{6}\)$/, '');
   return plan;
 }
 function usageWindow(u) {

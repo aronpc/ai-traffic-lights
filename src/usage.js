@@ -220,6 +220,33 @@ function parseCodexRateLimits(rateLimits, now) {
   return out;
 }
 
+// Extrai as janelas de uso do payload da API OpenCode Go (/zen/go/v1/usage).
+// Schema: { usage: { rolling: { percent, resets_at, status }, weekly, monthly } }
+// resets_at é ISO string (igual Anthropic). `now` em ms.
+function parseOpencodeUsage(cfg, now) {
+  const out = [];
+  if (!cfg || typeof cfg !== 'object' || !cfg.usage || typeof cfg.usage !== 'object') return out;
+  const usage = cfg.usage;
+  const nowMs = now || Date.now();
+  for (const key of ['rolling', 'weekly', 'monthly']) {
+    const w = usage[key];
+    if (!w || typeof w !== 'object' || typeof w.percent !== 'number') continue;
+    const resets = w.resetsAt || w.resets_at;
+    const resetAt = typeof resets === 'string' && resets ? resets : null;
+    let resetInMin = null;
+    if (resetAt) {
+      const parsed = Date.parse(resetAt);
+      if (!Number.isNaN(parsed)) resetInMin = Math.max(0, Math.round((parsed - nowMs) / 60000));
+    }
+    let title = '?';
+    if (key === 'rolling') title = '5h';
+    if (key === 'weekly') title = '7d';
+    if (key === 'monthly') title = 'Mês';
+    out.push({ title, usedPct: clampPct(w.percent), resetAt, resetInMin, status: w.status || null });
+  }
+  return out;
+}
+
 // Nomeia a janela pelo tamanho em minutos (Codex não rotula por nome).
 function windowTitle(min) {
   if (min === 300) return '5 h';
@@ -740,6 +767,60 @@ async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
 // Limpa o cache (testes / mudança de credencial).
 function _clearGlmCache() { _glmCacheByToken.clear(); }
 
+const _opencodeCacheByToken = new Map(); // token → { at, entries }
+
+// Lê o uso da API OpenCode Go (https://opencode.ai/zen/go/v1/usage)
+async function readOpencodeUsage({ env, now, fetcher, label, suffix } = {}) {
+  const token = env && env.OPENCODE_AUTH_TOKEN;
+  if (!token) return null;
+  const nowMs = now || Date.now();
+  const cached = _opencodeCacheByToken.get(token);
+  if (cached && nowMs - cached.at < 30000) return cached.entries;
+
+  const planBase = label || 'OpenCode Go';
+  const planTag = suffix ? ` (${suffix})` : '';
+  const sfx = suffix ? `:${suffix}` : '';
+
+  let raw = null;
+  try {
+    raw = await _httpsGetJson(
+      'https://opencode.ai/zen/go/v1/usage',
+      { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+      fetcher
+    );
+  } catch (err) {
+    const result = [{
+      id: 'opencode' + sfx, agent: 'opencode', title: 'OpenCode' + planTag, usedPct: null,
+      resetAt: null, resetInMin: null, extra: null, source: 'opencode.api', error: err.message || 'fetch error',
+    }];
+    _opencodeCacheByToken.set(token, { at: nowMs, entries: result });
+    return result;
+  }
+
+  const windows = parseOpencodeUsage(raw, nowMs);
+  const entries = windows.map((w, i) => ({
+    id: `opencode-win${i}${sfx}`,
+    agent: 'opencode',
+    title: w.title,
+    plan: planBase + planTag,
+    usedPct: w.usedPct,
+    resetAt: w.resetAt,
+    resetInMin: w.resetInMin,
+    extra: w.status === 'exhausted' ? 'esgotado' : null,
+    source: 'opencode.api',
+    error: null,
+  }));
+
+  const result = entries.length ? entries : [{
+    id: 'opencode' + sfx, agent: 'opencode', title: 'OpenCode' + planTag, usedPct: null, resetAt: null,
+    resetInMin: null, extra: null, source: 'opencode.api', error: 'no limits parsed',
+  }];
+  _opencodeCacheByToken.set(token, { at: nowMs, entries: result });
+  return result;
+}
+
+function _clearOpencodeCache() { _opencodeCacheByToken.clear(); }
+
 // =========================== ORQUESTRADOR ===========================
 
 // Junta todas as fontes. Ordem estável: Claude (local) primeiro, GLM depois.
@@ -760,10 +841,11 @@ async function collectUsage(opts = {}) {
     : (opts.env ? [{ env: opts.env }] : []);
   const multi = creds.length > 1;              // >1 conta → rotula cada bloco
 
-  // Claude (OAuth) + todas as contas GLM em paralelo — I/O de rede independente.
-  // Claude usa opts.claudeFetcher (separado do de GLM: cada API tem schema/mock
-  // próprio; em teste sem claudeFetcher e sem token, o Claude cai no plano-só).
-  const [claude, antigravity, ...glm] = await Promise.all([
+  // Claude (OAuth) + OpenCode Go + todas as contas GLM em paralelo — I/O de rede
+  // independente. Claude usa opts.claudeFetcher (separado do de GLM/OpenCode:
+  // cada API tem schema/mock próprio; em teste sem claudeFetcher e sem token, o
+  // Claude cai no plano-só).
+  const [claude, antigravity, opencode, ...glm] = await Promise.all([
     readClaudeUsage({
       home: opts.home, now: opts.now, fetcher: opts.claudeFetcher,
       cooldownUntil: opts.claudeCooldownUntil, cooldownFails: opts.claudeCooldownFails,
@@ -774,14 +856,19 @@ async function collectUsage(opts = {}) {
       allowFetch: opts.claudeAllowFetch !== false,
     }).catch(() => null),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
+    readOpencodeUsage({
+      env: opts.opencodeEnv, now: opts.now, fetcher: opts.fetcher,
+      label: opts.opencodeLabel, suffix: opts.opencodeSuffix,
+    }).catch(() => null),
     ...creds.map((c) => readGlmUsage({
       env: c.env, now: opts.now, fetcher: opts.fetcher,
       label: multi ? c.label : undefined,
       suffix: multi ? c.suffix : undefined,
-    }).catch(() => null)),                      // readGlmUsage já captura; dupla defesa
+    }).catch(() => null)),                       // readGlmUsage já captura; dupla defesa
   ]);
   if (Array.isArray(claude)) out.push(...claude);
   if (Array.isArray(antigravity)) out.push(...antigravity);
+  if (Array.isArray(opencode)) out.push(...opencode);
 
   // Codex (passivo, sem rede): uma leitura por cwd distinto de sessão Codex viva.
   // opts.codexCwds = ['/home/x/proj', ...] (main.js coleta de /proc/<pid>/cwd).
@@ -818,7 +905,7 @@ const USAGE_DROP_MS = 20 * 60 * 1000;   // ~20 min → remove
 function isSummaryEntry(e) {
   if (!e || !e.id) return false;
   const id = String(e.id);
-  return id === 'claude-plan' || id === 'antigravity-plan' || id === 'glm' || id.startsWith('glm:');
+  return id === 'claude-plan' || id === 'antigravity-plan' || id === 'glm' || id.startsWith('glm:') || id === 'opencode' || id.startsWith('opencode:');
 }
 
 // Funde a coleta nova (fresh) com o estado anterior (prev), por `id`. Resolve o
@@ -985,11 +1072,11 @@ function detectReset(prevState, entries, now, threshold) {
 }
 
 if (typeof module !== 'undefined') module.exports = {
-  parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits, parseAntigravityTier, parseAntigravityQuota,
-  readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, collectUsage, parseEnviron,
+  parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits, parseAntigravityTier, parseAntigravityQuota, parseOpencodeUsage,
+  readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, readOpencodeUsage, collectUsage, parseEnviron,
   findCodexRollout, lastCodexRateLimits, mergeUsage, isSummaryEntry, detectReset, parseRetryAfter,
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
-  _clearGlmCache, _clearClaudeCache, _clearCodexCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
+  _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
   readClaudeCreds, claudePlanFromCreds,
 };
