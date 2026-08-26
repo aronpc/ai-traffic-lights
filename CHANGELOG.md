@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
 ### Changed
 ### Fixed
 
