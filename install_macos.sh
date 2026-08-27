@@ -50,7 +50,34 @@ verify_checksum() {
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 [ "$OS" = "Darwin" ] || die "Este instalador é exclusivo do macOS. SO atual: $OS"
-need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq/brew NÃO são exigidos
+need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq é verificado abaixo
+
+# O hook de eventos que o app instala (traffic-hook.sh) REQUER jq para gravar o
+# state de cada sessão — e jq não vem de fábrica no macOS. Sem ele o hook roda
+# em todo tool call, falha na escrita e o overlay fica silenciosamente vazio.
+# Instalamos via Homebrew quando dá; sem brew, aviso forte com o comando manual.
+ensure_jq() {
+  # command -v aprova um jq quebrado (shim corrompido): sonda executabilidade.
+  if command -v jq >/dev/null 2>&1 && jq --version >/dev/null 2>&1; then
+    ok "jq presente (o hook de eventos exige)"
+    return 0
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    info "instalando jq via Homebrew (o hook de eventos exige)..."
+    # Re-checa o PATH pós-install: brew via wrapper pode linkar fora do PATH.
+    if brew install jq && command -v jq >/dev/null 2>&1; then
+      ok "jq instalado"
+    else
+      warn "jq não ficou utilizável após o brew — reabra o terminal ou instale manualmente."
+      warn "Sem jq o app NÃO monitora nenhuma sessão (overlay vazio)."
+    fi
+  else
+    warn "jq AUSENTE e Homebrew não encontrado."
+    warn "O hook de eventos exige jq — sem ele o app abre vazio (nenhuma sessão no overlay). Instale:"
+    warn '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && brew install jq'
+  fi
+}
+ensure_jq
 
 # O build publicado é Apple Silicon (arm64). Em Intel, o .dmg arm64 não abre
 # (Rosetta não traduz arm64→x86). Avisamos forte; a verificação pós-install
@@ -182,4 +209,10 @@ cat <<EOF
 
   Monitorar Claude Code, Antigravity, etc.: abra o app → engrenagem
   (Preferências) → "Install/update hooks".
+
+  Opcional — melhor foco e multi-máquina:
+    • tmux      — brew install tmux · o clique no semáforo foca o PAINEL exato
+                  do agente (dentro do tmux), além da aba do terminal
+    • Tailscale — https://tailscale.com · sincronize o overlay entre máquinas
+                  (aba "Sincronização" nas Preferências, builds beta)
 EOF

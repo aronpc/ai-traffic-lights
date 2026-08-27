@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aba (Warp/Tilix). O pane é validado (`/^%[0-9]+$/`) antes de virar argumento
   do `tmux` e não cruza a rede (local-only).
 - **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
+- **Dicas de foco/tmux nas Preferências (aba Integração).** Como o clique acha
+  o agente (janela → aba → painel tmux) e os casos que "não funcionam" com
+  causa conhecida: sessão tmux detached (sem cliente anexado não há aba para
+  focar), painel recriado (o hook regrava no próximo evento) e GNOME Terminal
+  no Wayland (inalcançável para apps de terceiros).
+- **Requisito de Tailscale documentado na aba Sincronização.** Como instalar,
+  conferir (`tailscale status`) e endereçar peers (IPs 100.x.y.z ou MagicDNS).
 
 ### Changed
 - **Identidade de sessão agora inclui a origem** no merge, alertas, snooze e
@@ -66,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`builder-effective-config.yaml` / `builder-debug.yml` / `linux-unpacked` ao
   lado). Nos dois casos a checagem informativa via GitHub API continua, e a UI
   já cai sozinha no "abrir a release" quando `canAutoInstall` é falso.
+- **Instalador macOS deixa de omitir o `jq` (hook morto em silêncio).** O
+  `install_macos.sh` declarava que jq não era exigido — verdade para o
+  instalador, mas o `traffic-hook.sh` que o app instala **requer** jq (não vem
+  de fábrica no macOS). Sem ele o hook roda em todo tool call, falha na
+  gravação do state e o overlay fica silenciosamente vazio. Agora o
+  instalador instala via Homebrew quando dá, ou avisa com o comando manual.
+  Os dois instaladores também ganharam dicas de Tailscale (sync multi-máquina)
+  e o Linux a de "Install/update hooks" (paridade com o macOS).
 - **Instaladores garantem o primeiro arranque ("instala e não abre").** Linux:
   runtime AppImage estático (dispensa `libfuse2`) + preflight que instala
   `libfuse2`/`libfuse2t64` e as libs do Electron por distro + launcher com

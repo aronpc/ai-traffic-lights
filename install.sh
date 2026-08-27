@@ -350,6 +350,14 @@ cat <<EOF
     • tmux   — foca o PAINEL do agente (já instalado por este script)
     (GNOME Terminal no Wayland não é alcançável por apps de terceiros.)
 
+  Monitorar Claude Code, Antigravity, etc.: abra o app → engrenagem
+  (Preferências) → "Install/update hooks". Sem o hook, nenhuma sessão
+  aparece no overlay.
+
+  Opcional — sincronizar o overlay entre máquinas:
+    • Tailscale (https://tailscale.com): conecte as máquinas na mesma
+      tailnet e ative a aba "Sincronização" nas Preferências (builds beta).
+
   O app se AUTO-ATUALIZA (AppImage): avisa quando há versão nova e baixa +
   reinicia pela própria interface — sem refazer este install.
 
