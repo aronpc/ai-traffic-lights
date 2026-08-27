@@ -14,6 +14,7 @@ Suíte de testes (`node --test`, ~191 testes). Testa os **módulos puros** de `s
 | `sessions.test.js` | `mergeSessions()` — dedup por `pid\|\|session_id`. |
 | `focus.test.js` | `pickWindow`/`tabChannel`/`parseEnviron`/`isFocusUnsupported`. |
 | `usage.test.js` | Coleta de consumo Claude/GLM/Codex/Antigravity + `mergeUsage`/`detectReset`. |
+| `install-macos.test.js` | `install_macos.sh` de ponta a ponta com stubs de PATH (uname/curl/jq/npm + hdiutil/ditto/codesign). Guarda o contrato "não declarar sucesso sem instalar". |
 | `settings.test.js` · `i18n.test.js` · `tooltip.test.js` · `sound.test.js` · `launcher.test.js` · `validate.test.js` | Demais módulos puros. |
 
 ## For AI Agents
