@@ -21,6 +21,8 @@ jobs:
       - name: Syntax checks
         run: |
           bash -n hooks/traffic-hook.sh
+          bash -n install.sh
+          bash -n install_macos.sh
           node --check main.js preload.js
           for f in src/*.js scripts/*.js; do node --check "$f"; done
       - name: Tests
