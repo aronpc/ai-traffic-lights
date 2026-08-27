@@ -120,7 +120,7 @@ main() {
       ps_out=$(ps -p "$pid" -o ppid=,comm= 2>/dev/null)
       ppid="" comm=""
       read -r ppid comm <<< "$ps_out"
-      comm=$(basename "$comm")
+      comm="${comm##*/}"  # basename sem fork (evita "basename: illegal option" com -zsh)
       case "$AGENT:$comm" in
         claude:claude|claude:claude-agent-acp|gemini:node|antigravity:node|antigravity:agy|antigravity:antigravity|codex:codex) agent_pid="$pid"; break ;;
       esac

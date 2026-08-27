@@ -6,10 +6,12 @@
 const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { execFileSync } = require('child_process');
 const chokidar = require('chokidar');
 const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
+const kiroAdapter   = require('./adapters/kiro/ai-traffic-lights');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const settingsLib = require('./src/settings');
@@ -111,11 +113,20 @@ function readSessions() {
         if (s && s.session_id) stateFileSessions.push(s);
       } catch { /* parcial/inválido — ignora */ }
     }
+    // Mapa agent -> Set<PID> dos state files existentes (pra discovery ignorar
+    // processos filhos/auxiliares do mesmo agent que JÁ têm state file).
+    const existingAgentPids = new Map();
+    for (const s of stateFileSessions) {
+      if (s.agent && s.pid) {
+        if (!existingAgentPids.has(s.agent)) existingAgentPids.set(s.agent, new Set());
+        existingAgentPids.get(s.agent).add(s.pid);
+      }
+    }
     // Merge + dedup (lógica pura em src/sessions.js). Sem filtro por
     // term_program: Tilix não exporta TERM_PROGRAM e sumia do overlay.
     // O gate de "interativo" é o parent=shell (sonda /proc) e o próprio
     // state file (o hook só dispara em sessão interativa).
-    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents());
+    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids));
   } catch { return []; }
 }
 
@@ -176,8 +187,34 @@ function backfillModels() {
 // processo vêm do registro (src/agents.js). (cwd é ilegível por ptrace_scope →
 // essas entram com label fallback "<agente> · PID".)
 const SHELLS = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
-function discoverAgentProcs() {
+const KIRO_LOCK_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
+
+// Lê o PID do .lock ativo do Kiro (se houver). Cache 4s.
+let _kiroLockPid = null, _kiroLockAt = 0;
+function getKiroLockPid() {
+  if (_kiroLockPid && Date.now() - _kiroLockAt < 4000) return _kiroLockPid;
+  try {
+    const files = fs.readdirSync(KIRO_LOCK_DIR).filter(f => f.endsWith('.lock'));
+    for (const f of files) {
+      try {
+        const lock = JSON.parse(fs.readFileSync(path.join(KIRO_LOCK_DIR, f), 'utf8'));
+        if (lock && typeof lock.pid === 'number') {
+          _kiroLockPid = lock.pid;
+          _kiroLockAt = Date.now();
+          return _kiroLockPid;
+        }
+      } catch {}
+    }
+  } catch {}
+  _kiroLockPid = null;
+  _kiroLockAt = Date.now();
+  return null;
+}
+
+function discoverAgentProcs(existingAgentPids) {
   const found = [];
+  const kiroLockPid = getKiroLockPid(); // PID válido do Kiro (ou null)
+
   if (process.platform === 'darwin') {
     try {
       const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 2000 });
@@ -203,6 +240,16 @@ function discoverAgentProcs() {
         }
         if (!agent) continue;
         
+        // Kiro: só aceita o PID que está no .lock (evita processos filhos/auxiliares)
+        // Só aplica se HÁ state files de kiro (sessão ativa). Se não há, permite descoberta normal.
+        if (agent === 'kiro' && kiroLockPid && existingAgentPids.has('kiro') && pid !== kiroLockPid) continue;
+        
+        // Demais agents: se já existe state file para este agent com este PID, ignora
+        // (evita processos filhos/auxiliares criarem linhas duplicadas).
+        // Permite descoberta se for um PID NOVO do mesmo agent (ex.: 2ª sessão Claude).
+        const existingPids = existingAgentPids.get(agent);
+        if (existingPids && existingPids.has(pid)) continue;
+        
         let pcomm = '';
         try {
           const parentOutput = execFileSync('ps', ['-p', ppid, '-o', 'comm='], { encoding: 'utf8', timeout: 1000 }).trim();
@@ -221,6 +268,7 @@ function discoverAgentProcs() {
       for (const ent of fs.readdirSync('/proc')) {
         if (!/^\d+$/.test(ent)) continue;
         try {
+          const pid = parseInt(ent, 10);
           const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
           let agent = COMM_TO_AGENT.get(comm);
           if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
@@ -230,13 +278,24 @@ function discoverAgentProcs() {
             } catch {}
           }
           if (!agent) continue;
+          
+          // Kiro: só aceita o PID que está no .lock (evita processos filhos/auxiliares)
+          // Só aplica se HÁ state files de kiro (sessão ativa). Se não há, permite descoberta normal.
+          if (agent === 'kiro' && kiroLockPid && existingAgentPids.has('kiro') && pid !== kiroLockPid) continue;
+          
+          // Demais agents: se já existe state file para este agent com este PID, ignora
+          // (evita processos filhos/auxiliares criarem linhas duplicadas).
+          // Permite descoberta se for um PID NOVO do mesmo agent (ex.: 2ª sessão Claude).
+          const existingPids = existingAgentPids.get(agent);
+          if (existingPids && existingPids.has(pid)) continue;
+          
           const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
           const m = status.match(/^PPid:\s+(\d+)/m);
           if (!m) continue;
           let pcomm = '';
           try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
           if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-          if (SHELLS.has(pcomm)) found.push({ pid: parseInt(ent, 10), agent });
+          if (SHELLS.has(pcomm)) found.push({ pid, agent });
         } catch {}
       }
     } catch {}
@@ -244,9 +303,9 @@ function discoverAgentProcs() {
   return found;
 }
 let _disc = null, _discAt = 0;
-function discoveredTerminalAgents() {
+function discoveredTerminalAgents(existingAgentPids) {
   if (_disc && Date.now() - _discAt < 4000) return _disc; // cache 4s
-  _disc = discoverAgentProcs();
+  _disc = discoverAgentProcs(existingAgentPids);
   _discAt = Date.now();
   return _disc;
 }
@@ -864,6 +923,11 @@ function installHookFromApp() {
       hookInstaller.installOpencode(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
       parts.push('OpenCode: ' + T('ntf_plugin_ok'));
     }
+    if (hookInstaller.kiroAvailable()) {
+      hookInstaller.installKiro(path.join(__dirname, 'adapters/kiro/ai-traffic-lights.js'), BASE_DIR);
+      kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; }); // invalida cache discovery na 1ª escrita
+      parts.push('Kiro: ' + T('ntf_plugin_ok'));
+    }
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_none_found'));
   } catch (e) { notifyUser(T('ntf_install_fail', { msg: e.message })); }
 }
@@ -876,6 +940,7 @@ function removeHookFromApp() {
       if (r.removed) parts.push(`${t.label}: ${T('ntf_removed', { n: r.removed })}`);
     }
     if (hookInstaller.removeOpencode().removed) parts.push('OpenCode: ' + T('ntf_plugin_removed'));
+    if (hookInstaller.removeKiro(BASE_DIR).removed) { kiroAdapter.stop(); parts.push('Kiro: ' + T('ntf_plugin_removed')); }
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
   } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
 }
@@ -911,17 +976,27 @@ function buildTrayMenu() {
 // ---- tray dinâmico: ícone pinta com a pior cor + tooltip com a contagem ----
 // Variante por nível (bolinha colorida no canto do ícone-base). Sem sessões,
 // cai no ícone neutro (não dá "tudo verde" com nada rodando).
+// No macOS usamos ícones coloridos com sufixo -mac.png (PNG com alpha, fundo
+// transparente, bolinhas coloridas) que ficam bem na menu bar em qualquer tema.
+// No Linux ficam os originais coloridos sem sufixo.
+const IS_MAC = process.platform === 'darwin';
+function trayIconFile(name) {
+  return IS_MAC ? name.replace('.png', '-mac.png') : name;
+}
 const TRAY_ICON_FILE = {
-  awaiting: 'tray-icon-r.png',
-  processing: 'tray-icon-y.png',
-  done: 'tray-icon-g.png',
+  awaiting: trayIconFile('tray-icon-r.png'),
+  processing: trayIconFile('tray-icon-y.png'),
+  done: trayIconFile('tray-icon-g.png'),
 };
 const trayIcons = {};
 for (const [lvl, file] of Object.entries(TRAY_ICON_FILE)) {
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', file));
   trayIcons[lvl] = img.isEmpty() ? null : img;
 }
-const trayIconBase = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
+const trayIconBase = (() => {
+  const img = nativeImage.createFromPath(path.join(__dirname, `assets/${trayIconFile('tray-icon.png')}`));
+  return img;
+})();
 function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
   if (!tray || tray.isDestroyed()) return;
   const total = awaiting + processing + done;
@@ -935,8 +1010,7 @@ function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets/tray-icon.png'));
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  tray = new Tray(trayIconBase.isEmpty() ? nativeImage.createEmpty() : trayIconBase);
   tray.setToolTip(`AI Traffic Lights v${APP_VERSION}`);
   tray.setContextMenu(buildTrayMenu());
   tray.on('click', toggleWin);
@@ -1176,28 +1250,45 @@ app.whenReady().then(() => {
   try { hookInstaller.syncHookCopy(path.join(__dirname, 'hooks/traffic-hook.sh'), BASE_DIR); } catch {}
   // idem pro plugin do OpenCode (só se o usuário já o instalou)
   hookInstaller.syncOpencodeIfInstalled(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
+  // idem pro adapter do Kiro (watcher de ~/.kiro/sessions/cli/)
+  hookInstaller.syncKiroIfInstalled(path.join(__dirname, 'adapters/kiro/ai-traffic-lights.js'), BASE_DIR);
+  // inicia o watcher do Kiro se o Kiro estiver instalado
+  if (hookInstaller.kiroAvailable()) kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
   settingsCfg = loadSettings();                      // threshold/atalho/idioma do usuário
   applyLang();                                       // Preferências (lang) > locale do sistema
   createWindow();
   createTray();
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
-  chokidar
+  _stateWatcher = chokidar
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })
     .on('all', () => sendSessions());
   reapDead();
-  setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
+  _sessionInterval = setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
   // Consumo/reset dos agentes: GLM (rede, cache 30s) + Codex/Antigravity (disco).
   // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
   // O Claude é LAZY: o loop de fundo NÃO bate na API dele (limite agregado do
   // 429); só o boot e os gatilhos de UI (abrir/revelar overlay, ⟳) buscam o %.
   collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o %
-  setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
+  _usageInterval = setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
   setupAutoUpdater();                            // update checker (boot + 1h) — AppImage auto-update
 });
 
+// Referências para cleanup no encerramento.
+let _stateWatcher = null;
+let _sessionInterval = null;
+let _usageInterval = null;
+let _updaterInterval = null;
+
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  if (_sessionInterval) clearInterval(_sessionInterval);
+  if (_usageInterval) clearInterval(_usageInterval);
+  if (_updaterInterval) clearInterval(_updaterInterval);
+  if (_stateWatcher) _stateWatcher.close().catch(() => {});
+  kiroAdapter.stop();
+});
 
 // ---- consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API) ----
 // Coletor async (GLM faz rede → nunca bloqueia o ciclo de 5s das sessões).
@@ -1637,7 +1728,7 @@ function setupAutoUpdater() {
     autoUpdater.on('error', (e) => { const msg = String((e && e.message) || e); setUpdateState({ status: 'error', error: msg }); if (_manualCheck) _notifyManualResult(false, null, msg); });
   }
   checkForUpdates();                            // 1ª checagem no boot
-  setInterval(checkForUpdates, 60 * 60 * 1000); // re-checa a cada 1h
+  _updaterInterval = setInterval(checkForUpdates, 60 * 60 * 1000); // re-checa a cada 1h
 }
 
 // Cache da checagem GitHub-API (fallback não-appimage): 30min pra não spammar.

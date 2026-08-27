@@ -231,7 +231,43 @@ function remove(targetId) {
   return { removed, wrote };
 }
 
+// ---- Kiro CLI: adapter de watcher (não usa hooks de shell) ----
+// O Kiro não expõe hooks como o Claude Code. O adapter é um watcher JS que
+// monitora ~/.kiro/sessions/cli/ — copiado para <baseDir>/adapters/kiro/.
+const KIRO = {
+  label: 'Kiro CLI',
+  detectDir: path.join(os.homedir(), '.kiro'),
+  sessionsDir: path.join(os.homedir(), '.kiro', 'sessions', 'cli'),
+  adapterFile: 'ai-traffic-lights.js',
+};
+function kiroAdapterDir(baseDir) { return path.join(baseDir, 'adapters', 'kiro'); }
+function kiroAdapterPath(baseDir) { return path.join(kiroAdapterDir(baseDir), KIRO.adapterFile); }
+function kiroAvailable() {
+  try { return fs.existsSync(KIRO.detectDir); } catch { return false; }
+}
+function kiroInstalled(baseDir) {
+  try { return fs.existsSync(kiroAdapterPath(baseDir)); } catch { return false; }
+}
+function installKiro(srcAdapter, baseDir) {
+  const dest = kiroAdapterPath(baseDir);
+  const updated = fs.existsSync(dest);
+  fs.mkdirSync(kiroAdapterDir(baseDir), { recursive: true });
+  fs.copyFileSync(srcAdapter, dest);
+  return { dest, updated, wrote: true };
+}
+function removeKiro(baseDir) {
+  try {
+    const p = kiroAdapterPath(baseDir);
+    if (fs.existsSync(p)) { fs.unlinkSync(p); return { removed: 1, wrote: true }; }
+  } catch {}
+  return { removed: 0, wrote: false };
+}
+function syncKiroIfInstalled(srcAdapter, baseDir) {
+  try { if (kiroInstalled(baseDir)) fs.copyFileSync(srcAdapter, kiroAdapterPath(baseDir)); } catch {}
+}
+
 module.exports = {
   TARGETS, HOOK_MARKER, available, syncHookCopy, install, remove,
   OPENCODE, opencodeAvailable, opencodeInstalled, installOpencode, removeOpencode, syncOpencodeIfInstalled,
+  KIRO, kiroAvailable, kiroInstalled, installKiro, removeKiro, syncKiroIfInstalled,
 };
