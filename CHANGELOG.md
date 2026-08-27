@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   de sessão decide a ordem.
 
 ### Fixed
+- **Instalador do macOS mentia "Concluído" sem instalar nada.** Quando o release
+  não publica `.dmg` (hoje: sempre, pois o `release.yml` só builda Linux), o
+  `install_macos.sh` apenas avisava e seguia — gravava os aliases apontando para
+  um app inexistente, imprimia "✓ Concluído!" e ainda sugeria `xattr`/`codesign`
+  num caminho que não existe, levando o usuário direto a `No such file`. Agora
+  aborta com `die` e instruções de build do fonte (paridade com o `install.sh`
+  do Linux, que já morria sem o asset). Dentro do repo o script segue em modo
+  desenvolvimento, onde o alias cai para `npx electron .` e de fato funciona.
 - **Aba Sincronização em branco nas Preferências.** A aba vinha aninhada dentro
   de "Atualizações" por uma tag `</section>` ausente no `settings.html`, o que
   fazia o painel inteiro sumir ao ser selecionado.
