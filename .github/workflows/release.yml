@@ -30,9 +30,12 @@ on:
         default: false
 
 permissions:
-  contents: write   # criar release + tag
+  contents: write   # criar release + tag + upload de artefatos
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Job Linux — compila AppImage + .deb e cria a release no GitHub.
+  # ---------------------------------------------------------------------------
   release:
     runs-on: ubuntu-latest
     steps:
@@ -72,6 +75,38 @@ jobs:
         run: |
           args=("$IN_MODE")
           if [ -n "$IN_BASE" ];    then args+=(--base "$IN_BASE"); fi
+          if [ -n "$IN_VERSION" ]; then args+=(--version "$IN_VERSION"); fi
+          if [ "$IN_DRY" = "true" ]; then args+=(--dry-run); fi
+          bash scripts/release.sh "${args[@]}"
+
+  # ---------------------------------------------------------------------------
+  # Job macOS — compila .dmg + .zip (arm64) e faz upload para a release criada
+  # pelo job Linux. Roda em paralelo; o modo `upload-mac` do release.sh aguarda
+  # a release existir antes de tentar o upload (retry com timeout de 5 min).
+  # Só executado no modo `promote` (betas são Linux-only).
+  # ---------------------------------------------------------------------------
+  build-mac:
+    runs-on: macos-latest
+    if: ${{ inputs.mode == 'promote' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build macOS e upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_DRY: ${{ inputs.dry_run }}
+        run: |
+          args=(upload-mac)
           if [ -n "$IN_VERSION" ]; then args+=(--version "$IN_VERSION"); fi
           if [ "$IN_DRY" = "true" ]; then args+=(--dry-run); fi
           bash scripts/release.sh "${args[@]}"
