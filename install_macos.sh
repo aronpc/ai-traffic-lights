@@ -57,16 +57,19 @@ need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq é
 # em todo tool call, falha na escrita e o overlay fica silenciosamente vazio.
 # Instalamos via Homebrew quando dá; sem brew, aviso forte com o comando manual.
 ensure_jq() {
-  if command -v jq >/dev/null 2>&1; then
+  # command -v aprova um jq quebrado (shim corrompido): sonda executabilidade.
+  if command -v jq >/dev/null 2>&1 && jq --version >/dev/null 2>&1; then
     ok "jq presente (o hook de eventos exige)"
     return 0
   fi
   if command -v brew >/dev/null 2>&1; then
     info "instalando jq via Homebrew (o hook de eventos exige)..."
-    if brew install jq; then
+    # Re-checa o PATH pós-install: brew via wrapper pode linkar fora do PATH.
+    if brew install jq && command -v jq >/dev/null 2>&1; then
       ok "jq instalado"
     else
-      warn "brew install jq falhou — sem jq o app NÃO monitora nenhuma sessão. Instale manualmente."
+      warn "jq não ficou utilizável após o brew — reabra o terminal ou instale manualmente."
+      warn "Sem jq o app NÃO monitora nenhuma sessão (overlay vazio)."
     fi
   else
     warn "jq AUSENTE e Homebrew não encontrado."
