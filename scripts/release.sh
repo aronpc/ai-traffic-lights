@@ -363,15 +363,22 @@ release_upload_mac() {
   local dmg="" zip_mac="" yml_mac
   yml_mac="$out/latest-mac.yml"
 
+  # Nada de artefato velho passando por novo (mesma regra do fluxo Linux):
+  # um .dmg/.zip de versão ou arquitetura anterior em $out viciaria o
+  # `ls` abaixo e subiria binário errado pra release certa.
+  run rm -f "$out"/*.dmg "$out"/*-mac.zip "$yml_mac" || true
+
   build_mac "$VERSION" "$out"
 
   if [ "$DRY" = 0 ]; then
-    dmg="$(ls "$out/"*.dmg 2>/dev/null | head -1)"
-    zip_mac="$(ls "$out/"*-mac.zip 2>/dev/null | head -1)"
-    [ -n "$dmg" ]     || die "não encontrei .dmg em $out/"
-    [ -n "$zip_mac" ] || die "não encontrei -mac.zip em $out/"
+    # Seleção ANCORADA na versão do build (não apenas "qualquer .dmg"):
+    # `ls *.dmg | head -1` pregaria o primeiro em ordem alfabética.
+    dmg="$(ls "$out"/*"-$VERSION-"*.dmg 2>/dev/null | head -1)"
+    zip_mac="$(ls "$out"/*"-$VERSION-mac".zip 2>/dev/null | head -1)"
+    [ -n "$dmg" ]     || die "não encontrei .dmg da versão $VERSION em $out/"
+    [ -n "$zip_mac" ] || die "não encontrei -mac.zip da versão $VERSION em $out/"
     [ -f "$yml_mac" ] || die "não encontrei $yml_mac"
-    grep -q "version: $VERSION" "$yml_mac" \
+    grep -Eq "^version: ${VERSION}([[:space:]]*)$" "$yml_mac" \
       || die "$yml_mac não bate com a versão $VERSION"
   fi
 

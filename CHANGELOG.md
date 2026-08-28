@@ -74,6 +74,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kiroAvailable()` passou a checar o diretório de sessões (a tray não
   anuncia monitoramento que não existe — disparidade com o guard do watcher)
   e "Remover hooks" agora para o watcher mesmo sem cópia em `<BASE_DIR>`.
+- **Discovery — lock do Kiro com liveness e sem amnesia de 2ª sessão.**
+  O `getKiroLockPid()` validava o PID cacheado contra o processo vivo (via
+  `kill(pid, 0)`), mas ainda reaceitava um `.lock` morto no re-scan. O guard
+  do discovery descartava TODO kiro que não fosse o PID do lock sempre que
+  houvesse algum state file de kiro no disco — a 2ª sessão, e o próprio lock
+  vivo quando o state do 1º expirasse, ficavam amnésicos no overlay. Agora o
+  PID vivo do lock é o único kiro autorizado sem state file; quem tem state
+  passa pela dedup genérica; o gate `existingAgentPids.has('kiro')` saiu.
+- **CI/release — o CI cobre hoje o que a PR-46 toca.** Syntax checks passam a
+  incluir `adapters/**` e o `install_macos.sh` (a correção do pipefail ficava
+  fora do CI); o job `build-mac` do release.yml ganhou `needs: [release]` —
+  o upload não pode chegar antes de a release existir (o retry de 5 min do
+  release.sh escondia a corrida); e o `upload-mac` limpa `.dmg`/`.zip`
+  velhos de `dist-mac`, ancora a seleção do artefato na versão do build
+  (`ls *.dmg | head -1` pegava o primeiro em ordem alfabética) e ancora o
+  `grep` do `latest-mac.yml` no começo da linha.
 
 ## [0.7.3] - 2026-07-29
 

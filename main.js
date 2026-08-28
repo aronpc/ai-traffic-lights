@@ -192,13 +192,19 @@ const KIRO_LOCK_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
 // Lê o PID do .lock ativo do Kiro (se houver). Cache 4s.
 let _kiroLockPid = null, _kiroLockAt = 0;
 function getKiroLockPid() {
-  if (_kiroLockPid && Date.now() - _kiroLockAt < 4000) return _kiroLockPid;
+  if (_kiroLockPid && Date.now() - _kiroLockAt < 4000) {
+    // Liveness do PID cacheado: um .lock esquecido em disco com o processo
+    // morto não pode blindar a descoberta (e o PID vivo do Kiro sumiria do
+    // `discoveredTerminalAgents` só porque um state antigo de kiro existe).
+    try { process.kill(_kiroLockPid, 0); return _kiroLockPid; } catch { _kiroLockPid = null; }
+  }
   try {
     const files = fs.readdirSync(KIRO_LOCK_DIR).filter(f => f.endsWith('.lock'));
     for (const f of files) {
       try {
         const lock = JSON.parse(fs.readFileSync(path.join(KIRO_LOCK_DIR, f), 'utf8'));
         if (lock && typeof lock.pid === 'number') {
+          try { process.kill(lock.pid, 0); } catch { continue; } // lock morto é lixo
           _kiroLockPid = lock.pid;
           _kiroLockAt = Date.now();
           return _kiroLockPid;
@@ -240,9 +246,15 @@ function discoverAgentProcs(existingAgentPids) {
         }
         if (!agent) continue;
         
-        // Kiro: só aceita o PID que está no .lock (evita processos filhos/auxiliares)
-        // Só aplica se HÁ state files de kiro (sessão ativa). Se não há, permite descoberta normal.
-        if (agent === 'kiro' && kiroLockPid && existingAgentPids.has('kiro') && pid !== kiroLockPid) continue;
+        // Kiro: o único PID de kiro "autorizado" sem state file é o PID vivo do
+        // lock. Demais kiro sujeitos: com state file já existente, o guard
+        // genérico de baixo dedupe; sem state file e sem ser o lock, é
+        // processo auxiliar/ruído → descarta. Nada disso depende de
+        // `existingAgentPids.has('kiro')`: gate com "há algum kiro em state"
+        // causava amnesia — o lock vivo (ou uma 2ª sessão nova) era descartado
+        // pra sempre enquanto UM state qualquer de kiro existisse no disco.
+        const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
+        if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
         
         // Demais agents: se já existe state file para este agent com este PID, ignora
         // (evita processos filhos/auxiliares criarem linhas duplicadas).
@@ -279,9 +291,10 @@ function discoverAgentProcs(existingAgentPids) {
           }
           if (!agent) continue;
           
-          // Kiro: só aceita o PID que está no .lock (evita processos filhos/auxiliares)
-          // Só aplica se HÁ state files de kiro (sessão ativa). Se não há, permite descoberta normal.
-          if (agent === 'kiro' && kiroLockPid && existingAgentPids.has('kiro') && pid !== kiroLockPid) continue;
+          // Kiro: mesma lógica do darwin — autorizado o PID vivo do lock, dedup
+        // genérico para quem tem state file, descarta auxiliar/ruído.
+        const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
+        if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
           
           // Demais agents: se já existe state file para este agent com este PID, ignora
           // (evita processos filhos/auxiliares criarem linhas duplicadas).
