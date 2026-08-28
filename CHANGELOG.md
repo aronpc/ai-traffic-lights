@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
 ### Changed
 ### Fixed
+- **Toggle do overlay pelo tray no macOS.** O ícone da bandeja alternava
+  mostrar/ocultar de forma aparentemente aleatória: a janela nascia visível,
+  `alwaysOnTop('screen-saver')` cobria os ícones do menu bar e o macOS
+  coalescia dois cliques rápidos em `double-click`. A causa raiz era o handler
+  de `blur` (que reafirmava `alwaysOnTop` + `moveTop()` para o X11) — no macOS
+  o blur dispara no `hide()` e o `moveTop()` re-exibia o overlay na hora. Agora
+  a janela nasce oculta, usa nível `floating` no macOS, o handler de `blur`
+  fica restrito ao Linux e o tray chama `setIgnoreDoubleClickEvents(true)`, com
+  cada clique virando exatamente um `click` e o toggle ficando 1:1.
 
 ## [0.7.3] - 2026-07-29
 

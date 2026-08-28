@@ -833,6 +833,8 @@ function createWindow() {
     frame: false,
     transparent: true,
     resizable: true,
+    show: false,               // nasce oculta: o 1º clique no tray REVELA (se nascesse
+                               // visível, o 1º clique ocultava — toggle invertido)
     skipTaskbar: true,       // fora da barra de tarefas e do alt-tab (SKIP_TASKBAR/PAGER)
     maximizable: false,      // (não implementado no Linux; vale nas demais plataformas)
     fullscreenable: false,
@@ -846,7 +848,11 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  win.setAlwaysOnTop(true, 'screen-saver');
+  // macOS: 'screen-saver' (NSScreenSaverWindowLevel=1000) cobre ATÉ o menu bar
+  // (nível 24) — o overlay no canto superior direito taparia os ícones do tray e
+  // o 2º clique ("esconder") nunca chegaria a ele. 'floating' fica acima das
+  // janelas comuns, mas abaixo do menu bar. Linux mantém 'screen-saver' (X11).
+  win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'screen-saver');
   // Linux/Mutter ignora `maximizable` → reverte na hora qualquer maximize
   // (Super+↑, drag no topo da tela, tiling). Overlay nunca vira tela cheia.
   win.on('maximize', () => { try { win.unmaximize(); } catch {} });
@@ -854,7 +860,11 @@ function createWindow() {
   // CHANGELOG 0.6.7) — clicar em outra janela/no desktop derruba o always-on-top
   // sem passar por toggleWin/revealIfHidden. Reafirma no blur, do mesmo jeito
   // que já se faz no toggle/reveal (setAlwaysOnTop + moveTop).
+  // macOS: NSWindow.Level não degrada no blur (propriedade persistente, sem o
+  // quirk X11). Reafirmar moveTop() aqui re-exibiria a janela após o hide() do
+  // tray-toggle (blur dispara no hide → moveTop → overlay volta sozinho).
   win.on('blur', () => {
+    if (process.platform === 'darwin') return;
     try { win.setAlwaysOnTop(true, 'screen-saver'); } catch {}
     try { win.moveTop(); } catch {}
   });
@@ -880,13 +890,20 @@ function createWindow() {
 
 // Mostrar/ocultar centralizado. No show, re-afirma skipTaskbar — alguns WMs
 // resetam o hint no ciclo hide/show (bug conhecido de Electron/X11).
+// Estado controlado AQUI (não confiar em win.isVisible() — assíncrono).
+let _winState = 'hidden';        // 'hidden' | 'visible'
+
 function toggleWin() {
   if (!win || win.isDestroyed()) return;
-  if (win.isVisible()) win.hide();
-  else {
-    win.show(); try { win.setSkipTaskbar(true); } catch {} try { win.moveTop(); } catch {}
-    // Revelou o overlay (tray/atalho) → o usuário vai olhar; busca o % do Claude
-    // agora (lazy). Cache de 5 min evita repetir a cada mostra/esconde.
+
+  if (_winState === 'visible') {
+    _winState = 'hidden';
+    win.hide();
+  } else {
+    _winState = 'visible';
+    win.show();
+    try { win.setSkipTaskbar(true); } catch {}
+    try { win.moveTop(); } catch {}
     collectAndSendUsage({ claudeFetch: true });
   }
 }
@@ -899,6 +916,7 @@ function toggleWin() {
 function revealIfHidden() {
   try {
     if (win && !win.isDestroyed() && !win.isVisible()) {
+      _winState = 'visible';
       win.show();
       try { win.setSkipTaskbar(true); } catch {}
       try { win.moveTop(); } catch {}
@@ -1012,8 +1030,22 @@ function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
 function createTray() {
   tray = new Tray(trayIconBase.isEmpty() ? nativeImage.createEmpty() : trayIconBase);
   tray.setToolTip(`AI Traffic Lights v${APP_VERSION}`);
-  tray.setContextMenu(buildTrayMenu());
-  tray.on('click', toggleWin);
+  // macOS: NÃO seta context menu permanente — senão left-click abre o menu.
+  // Vamos controlar manualmente: left-click = toggleWin, right-click = popUpContextMenu.
+  if (process.platform !== 'darwin') {
+    tray.setContextMenu(buildTrayMenu());
+  }
+  // macOS: por padrão (ignoreDoubleClickEvents=false) o 2º clique rápido é
+  // COALESCIDO em double-click — o Mac suprime o 'click' e o toggle de ocultar
+  // nunca dispara (clique pra mostrar, sem clique pra esconder). Desligar a
+  // coalescência faz cada clique virar UM 'click'. É o método oficial p/ toggle.
+  if (process.platform === 'darwin') tray.setIgnoreDoubleClickEvents(true);
+  tray.on('click', toggleWin);                    // left-click (1 dedo) → toggle overlay
+  tray.on('right-click', () => {                  // right-click / 2 dedos → menu
+    if (process.platform === 'darwin') {
+      tray.popUpContextMenu(buildTrayMenu());
+    }
+  });
 }
 
 // ---- janela de Preferências (threshold de idle + atalho) ----
@@ -1078,7 +1110,7 @@ function createSettingsWindow() {
   // O overlay é always-on-top nível 'screen-saver' — sem elevar as Preferências
   // ao MESMO nível, elas abrem ATRÁS dele quando as janelas se sobrepõem.
   // Mesmo nível + criada depois = fica na frente.
-  settingsWin.setAlwaysOnTop(true, 'screen-saver');
+  settingsWin.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'screen-saver');
   settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
   settingsWin.on('move', saveSettingsBounds);          // só posição (tamanho é fixo)
   settingsWin.on('closed', () => { settingsWin = null; });
@@ -1174,7 +1206,7 @@ ipcMain.on('save-settings', (_e, cfg) => {
   }
   if (settingsCfg.lang !== prevLang) {                          // idioma só se mudou
     applyLang();
-    if (tray) tray.setContextMenu(buildTrayMenu());             // labels do tray no idioma novo
+    if (tray && process.platform !== 'darwin') tray.setContextMenu(buildTrayMenu()); // labels do tray no idioma novo (Linux/Windows)
   }
   sendToRenderer('settings-changed', settingsCfg);
 });
