@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a janela nasce oculta, usa nível `floating` no macOS, o handler de `blur`
   fica restrito ao Linux e o tray chama `setIgnoreDoubleClickEvents(true)`, com
   cada clique virando exatamente um `click` e o toggle ficando 1:1.
+<<<<<<< HEAD
 - **Visibilidade de boot restaurada no Linux/Windows.** O `show:false` da fix
   do tray (feita para o 1º clique do tray revelar no macOS) escondia a janela
   também nas demais plataformas — o AppImage abria "sem nada" até achar o ícone
@@ -45,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   o app roda como app acessório da menu bar (sem ícone permanente no Dock, sem
   slot no Cmd-Tab). No dev-run, clicar no ícone do app re-abre o overlay
   (handler `activate`), em vez de "abriu e não fez nada".
+- **Sessão do OpenCode presa em amarelo depois de terminar.** O plugin
+  re-gravava `UserPromptSubmit` na estabilização `message.updated` (role=user)
+  no mesmo instante do `session.idle`, sobrescrevendo o `Stop` — sessão que
+  concluía sem tools ficava 🟡 para sempre. Agora `message.updated` pós-idle
+  não sobrescreve o `Stop` (janela de 2s); o fim de turno volta a ficar verde
+  e a escalar para vermelho ⏰ conforme o threshold de idle.
 
 ## [0.7.3] - 2026-07-29
 
