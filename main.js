@@ -833,8 +833,8 @@ function createWindow() {
     frame: false,
     transparent: true,
     resizable: true,
-    show: false,               // nasce oculta: o 1º clique no tray REVELA (se nascesse
-                               // visível, o 1º clique ocultava — toggle invertido)
+    show: process.platform !== 'darwin', // darwin: nasce oculta (1º clique no tray REVELA);
+                               // Linux/Windows: nasce visível como no origin/main
     skipTaskbar: true,       // fora da barra de tarefas e do alt-tab (SKIP_TASKBAR/PAGER)
     maximizable: false,      // (não implementado no Linux; vale nas demais plataformas)
     fullscreenable: false,
@@ -890,18 +890,22 @@ function createWindow() {
 
 // Mostrar/ocultar centralizado. No show, re-afirma skipTaskbar — alguns WMs
 // resetam o hint no ciclo hide/show (bug conhecido de Electron/X11).
-// Estado controlado AQUI (não confiar em win.isVisible() — assíncrono).
+// _winState só espelha o estado p/ callers externos; a FONTE DA VERDADE do
+// toggle é win.isVisible() (síncrono) — se externamente a janela foi ocultada
+// (Cmd+H no macOS, unmap do WM), o próximo clique REVELA em vez de esconder
+// de novo (senão o overlay "some" por 2 cliques).
 let _winState = 'hidden';        // 'hidden' | 'visible'
 
 function toggleWin() {
   if (!win || win.isDestroyed()) return;
 
-  if (_winState === 'visible') {
+  if (win.isVisible()) {
     _winState = 'hidden';
     win.hide();
   } else {
     _winState = 'visible';
     win.show();
+    try { applySkip(); } catch {}
     try { win.setSkipTaskbar(true); } catch {}
     try { win.moveTop(); } catch {}
     collectAndSendUsage({ claudeFetch: true });
@@ -918,6 +922,7 @@ function revealIfHidden() {
     if (win && !win.isDestroyed() && !win.isVisible()) {
       _winState = 'visible';
       win.show();
+      try { applySkip(); } catch {}
       try { win.setSkipTaskbar(true); } catch {}
       try { win.moveTop(); } catch {}
     }
@@ -1313,6 +1318,9 @@ let _usageInterval = null;
 let _updaterInterval = null;
 
 app.on('window-all-closed', () => app.quit());
+// macOS: re-abrir ao clicar no ícone do app (faz sentido pro dev run — no build
+// empacotado o LSUIElement remove o ícone do Dock; aqui é reveal, não toggle).
+app.on('activate', () => { if (win && !win.isDestroyed()) revealIfHidden(); });
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (_sessionInterval) clearInterval(_sessionInterval);

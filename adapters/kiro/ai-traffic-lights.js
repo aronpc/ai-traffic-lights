@@ -13,6 +13,8 @@
 //   ToolResults      → PreToolUse       (Kiro executou ferramenta → 🟡)
 //   lock sumiu       → SessionEnd       (remove state file)
 //   lock apareceu    → SessionStart     (nova sessão → 🟢)
+//   jsonl quieto     → Stop (sintetizado) — o jsonl do Kiro NÃO tem marcador de
+//                      fim de turno; sem isto, sessão ociosa fica 🟡 para sempre
 //
 // A escalada idle (verde→vermelho após N min) já é tratada pelo renderer.
 //
@@ -28,6 +30,14 @@ const KIRO_SESSIONS_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
 const DATA_HOME  = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 const STATE_DIR  = path.join(DATA_HOME, 'ai-traffic-lights', 'state');
 const SAFE_ID    = /^[A-Za-z0-9._-]+$/;
+
+// Síntese de Stop: o Kiro nunca emite fim de turno, então um turno que entregou
+// a resposta e ficou quieto permaneceria amarelo para sempre. Depois de
+// STOP_AFTER_MS sem crescimento do .jsonl, registramos Stop (→ 🟢 → ⏰ vermelho
+// conforme o threshold de idle do renderer). False-positive mid-turn (turno
+// longo com gap aí) só pisca verde e re-acende no próximo evento — cosmético.
+const STOP_AFTER_MS = 120 * 1000;     // silêncio do jsonl → turno considerado parado
+const STALENESS_SCAN_MS = 30 * 1000;  // intervalo da varredura de parada
 
 // ---- helpers de state file (mesma semântica do traffic-hook.sh) ----
 
@@ -142,6 +152,8 @@ function toCanonical(kind) {
 
 // Map: sid → tamanho do .jsonl visto por último (evita re-processar linhas antigas)
 const _jsonlSizes = new Map();
+// Map: sid → ms do último crescimento do .jsonl (base da síntese de Stop)
+const _lastSeen = new Map();
 
 function handleJsonl(sid) {
   const jsonlFile = path.join(KIRO_SESSIONS_DIR, `${sid}.jsonl`);
@@ -150,6 +162,7 @@ function handleJsonl(sid) {
     const prevSize = _jsonlSizes.get(sid) || 0;
     if (stat.size <= prevSize) return;
     _jsonlSizes.set(sid, stat.size);
+    _lastSeen.set(sid, Date.now());
   } catch { return; }
 
   const kind = lastJsonlEvent(sid);
@@ -182,6 +195,7 @@ function handleJsonl(sid) {
 function handleLock(sid, exists) {
   if (exists) {
     // Nova sessão ou re-apareceu — garante state file com pid do lock
+    _lastSeen.set(sid, Date.now());
     const stateFile = path.join(STATE_DIR, `${sid}.json`);
     const lock = readLock(sid);
     if (!lock) return; // lock inválido
@@ -219,6 +233,7 @@ function handleLock(sid, exists) {
   } else {
     // Lock sumiu → sessão encerrou
     _jsonlSizes.delete(sid);
+    _lastSeen.delete(sid);
     dropState(sid);
   }
 }
@@ -234,6 +249,7 @@ function bootstrap() {
     for (const sid of locks) {
       if (!SAFE_ID.test(sid)) continue;
       handleLock(sid, true);
+      _lastSeen.set(sid, Date.now());
       // processa estado atual do jsonl
       const jsonlFile = path.join(KIRO_SESSIONS_DIR, `${sid}.jsonl`);
       try {
@@ -251,6 +267,24 @@ function bootstrap() {
 
 let _watcher = null;
 let _onFirstWrite = null;
+let _staleTimer = null;
+
+const PROCESSING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
+
+// Registra Stop em sessões cujo jsonl está quieto há STOP_AFTER_MS e cujo último
+// evento ainda é de PROCESSAMENTO (turno aberto sem novo downstream). Após gravar,
+// re-anchora lastSeen p/ não re-gravar Stop num loop de 30s; qualquer linha nova
+// do jsonl derruba a síntese (volta a amarelo no próximo evento real).
+function scanForStops() {
+  const now = Date.now();
+  for (const [sid, lastSeen] of _lastSeen) {
+    if (now - lastSeen < STOP_AFTER_MS) continue;
+    const st = readState(sid);
+    if (!st || st.agent !== 'kiro' || !PROCESSING.has(st.last_event)) continue;
+    writeState(sid, 'Stop', null);
+    _lastSeen.set(sid, now);
+  }
+}
 
 function start(chokidar, onFirstWrite) {
   if (_watcher) return; // já rodando
@@ -265,6 +299,8 @@ function start(chokidar, onFirstWrite) {
     depth:            0,         // só arquivos diretos, não subpastas
     awaitWriteFinish: { stabilityThreshold: 80, pollInterval: 30 },
   });
+
+  _staleTimer = setInterval(scanForStops, STALENESS_SCAN_MS);
 
   _watcher.on('all', (event, filePath) => {
     const sid = sidFromFile(filePath);
@@ -281,6 +317,7 @@ function start(chokidar, onFirstWrite) {
 
 function stop() {
   if (_watcher) { _watcher.close().catch(() => {}); _watcher = null; }
+  if (_staleTimer) { clearInterval(_staleTimer); _staleTimer = null; }
 }
 
 module.exports = { start, stop };

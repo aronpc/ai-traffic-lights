@@ -20,6 +20,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a janela nasce oculta, usa nível `floating` no macOS, o handler de `blur`
   fica restrito ao Linux e o tray chama `setIgnoreDoubleClickEvents(true)`, com
   cada clique virando exatamente um `click` e o toggle ficando 1:1.
+- **Visibilidade de boot restaurada no Linux/Windows.** O `show:false` da fix
+  do tray (feita para o 1º clique do tray revelar no macOS) escondia a janela
+  também nas demais plataformas — o AppImage abria "sem nada" até achar o ícone
+  da bandeja. Agora `show` é só darwin; Linux/Windows voltam a nascer com o
+  overlay visível, e as demais fix preservam a semântica de toggle
+  (fonte da verdade = `win.isVisible()` — um ocultamento externo, ex.: Cmd+H no
+  macOS, volta a ser revelado no clique seguinte em vez de "sumir por 2 cliques").
+  O re-show também re-aplica `wmctrl` no Linux (o hint `skip_taskbar` do X11 é
+  descartado pelos WMs a cada ciclo hide/show — ressurge na barra de tarefas).
+- **Sessão Kiro ociosa presa em amarelo.** O jsonl do Kiro só carrega
+  `Prompt/AssistantMessage/ToolResults` (sem marcador de fim de turno) — com o
+  mapeamento anterior a sessão morria 🟡 e a escalada idle (⏰ vermelho) nunca
+  disparava. O adapter agora sintetiza `Stop` quando o .jsonl fica quieto por
+  120 s com o último evento ainda em processamento (checado a cada 30 s;
+  qualquer linha nova re-acende o amarelo). Efeito: fim de turno vira 🟢 e, após
+  o threshold de idle configurado, ⏰ vermelho — como nos agentes com hook.
+- **Instalador macOS morto em silêncio antes do fallback de checksum.** Sob
+  `set -euo pipefail`, um `grep` sem match dentro da atribuição de `expected`
+  derrubava o script ANTES de chegar aos tiers de fallback — o best-effort
+  prometido (aviso + seguir) nunca disparava. Guardas `|| :` restauram a
+  cascata (nome hifenizado → nome decodificado → qualquer .dmg) e o aviso.
+- **Ícone do app no Dock (macOS).** O empacotamento agora declara `LSUIElement`:
+  o app roda como app acessório da menu bar (sem ícone permanente no Dock, sem
+  slot no Cmd-Tab). No dev-run, clicar no ícone do app re-abre o overlay
+  (handler `activate`), em vez de "abriu e não fez nada".
 
 ## [0.7.3] - 2026-07-29
 

@@ -38,14 +38,18 @@ verify_checksum() {
   yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
     || { warn "sem latest-mac.yml — pulei a verificação de integridade"; return 0; }
   # Tenta: nome decodificado, depois nome com espaços→hífens, depois qualquer .dmg no yml.
+  # `|| :` em cada tentativa: sob `set -euo pipefail` um grep sem match derrubaria o
+  # script ANTES de atingir o fallback — o best-effort prometido pela função não
+  # poderia nunca disparar (PR-46 review #2). A falha vira expected vazio → cai p/ o
+  # próximo tier ou p/ o aviso "sha512 não encontrado".
   local base_hyphens; base_hyphens="$(printf '%s' "$base_decoded" | tr ' ' '-')"
-  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_hyphens" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_hyphens" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   if [ -z "$expected" ]; then
-    expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_decoded" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+    expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_decoded" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   fi
   if [ -z "$expected" ]; then
     # Fallback: pega o sha512 associado a qualquer entrada .dmg no yml
-    expected="$(printf '%s\n' "$yml" | grep -A3 'url:.*\.dmg' | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+    expected="$(printf '%s\n' "$yml" | grep -A3 'url:.*\.dmg' | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   fi
   [ -n "$expected" ] || { warn "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
   if command -v openssl >/dev/null 2>&1; then
