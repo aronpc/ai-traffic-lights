@@ -243,7 +243,10 @@ const KIRO = {
 function kiroAdapterDir(baseDir) { return path.join(baseDir, 'adapters', 'kiro'); }
 function kiroAdapterPath(baseDir) { return path.join(kiroAdapterDir(baseDir), KIRO.adapterFile); }
 function kiroAvailable() {
-  try { return fs.existsSync(KIRO.detectDir); } catch { return false; }
+  // Paridade com o guard do start() do adapter (~/.kiro/sessions/cli): antes
+  // checava só ~/.kiro e a tray reportava "Kiro instalado/sucesso" mesmo com o
+  // watcher incapaz de observar nada (instalação nova sem nenhum chat aberto).
+  try { return fs.existsSync(KIRO.sessionsDir); } catch { return false; }
 }
 function kiroInstalled(baseDir) {
   try { return fs.existsSync(kiroAdapterPath(baseDir)); } catch { return false; }

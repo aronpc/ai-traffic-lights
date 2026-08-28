@@ -52,6 +52,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concluía sem tools ficava 🟡 para sempre. Agora `message.updated` pós-idle
   não sobrescreve o `Stop` (janela de 2s); o fim de turno volta a ficar verde
   e a escalar para vermelho ⏰ conforme o threshold de idle.
+- **Adapter Kiro — escritor de estado à prova de crash e não-destrutivo.**
+  O review da PR-46 listava quatro quebras: (a) duas das três escritas
+  rodavam fora do `try/catch` — um EACCES/ENOSPC no `.tmp` derrubava o main do
+  Electron junto com a tray e os demais agentes; (b) o detector assumia que o
+  `.jsonl` só cresce, e a primeira compactação do Kiro (ou `/clear`) deixava a
+  sessão surda para sempre; (c) `writeState` regrava 16 chaves fixas zerando
+  `transcript_path`, os canais de foco e chaves de terceiros — o click-to-focus
+  numa linha Kiro nunca funcionava e o `backfillModels()` refazia
+  `findTranscript()` a cada boot; (d) o `cwd` real nunca chegava ao state
+  (enricher guardado por contagem de chaves + dispatcher que descartava o
+  `.json` em silêncio). Agora toda escrita passa por um único `atomicWrite()`
+  com try/catch, o merge preserva as chaves existentes, o encolhimento do
+  `.jsonl` volta a ser lido e o `.json` consolidado re-dispara o
+  enriquecimento.
+- **Adapter Kiro — sem linha-zumbi e com opt-out que funciona.** State file
+  escrito sem `.lock` legível virava `pid:null`: invisível à dedup do
+  `readSessions`, imune ao `reapDead()` e duplicado no discovery enquanto o
+  Kiro rodava. O adapter só grava quando tem pid (o add do `.lock` cria a
+  linha) e o `reapDead()` remove estado `pid:null` parado por 10 min.
+  `kiroAvailable()` passou a checar o diretório de sessões (a tray não
+  anuncia monitoramento que não existe — disparidade com o guard do watcher)
+  e "Remover hooks" agora para o watcher mesmo sem cópia em `<BASE_DIR>`.
 
 ## [0.7.3] - 2026-07-29
 

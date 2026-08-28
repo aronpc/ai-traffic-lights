@@ -770,7 +770,14 @@ function reapDead() {
         try { if (Date.now() - fs.statSync(p).mtimeMs > 600_000) { fs.unlinkSync(p); changed = true; } } catch {}
         continue;
       }
-      if (!s.pid) continue;
+      if (!s.pid) {
+        // Estado sem pid (legado do adapter Kiro que virava zumbi — imune ao
+        // reap por processo; o adapter não mete pid:null desde o fix da PR-46).
+        // Sessão viva sempre regrava o arquivo (mtime novo); parado por >10min
+        // é lixo de sessão morta — remove (mesma semântica do .tmp órfão).
+        try { if (Date.now() - fs.statSync(p).mtimeMs > 600_000) { fs.unlinkSync(p); changed = true; } } catch {}
+        continue;
+      }
       try { process.kill(s.pid, 0); }         // vivo? (não lança)
       catch { try { fs.unlinkSync(p); changed = true; } catch {} }
     }
@@ -963,7 +970,11 @@ function removeHookFromApp() {
       if (r.removed) parts.push(`${t.label}: ${T('ntf_removed', { n: r.removed })}`);
     }
     if (hookInstaller.removeOpencode().removed) parts.push('OpenCode: ' + T('ntf_plugin_removed'));
-    if (hookInstaller.removeKiro(BASE_DIR).removed) { kiroAdapter.stop(); parts.push('Kiro: ' + T('ntf_plugin_removed')); }
+    // Para o watcher SEMPRE que o usuário pede pra remover hooks — antes, quem
+    // nunca tinha instalado via app não tinha cópia em <BASE_DIR> (removed=0) e o
+    // stop() nunca rodava: "Remover hooks" era silenciosamente um no-op.
+    kiroAdapter.stop();
+    if (hookInstaller.removeKiro(BASE_DIR).removed) parts.push('Kiro: ' + T('ntf_plugin_removed'));
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
   } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
 }

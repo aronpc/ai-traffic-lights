@@ -46,6 +46,18 @@ function readState(sid) {
   catch { return {}; }
 }
 
+// Escrita atômica tmp+rename com try/catch. TODA escrita passa por aqui:
+// um EACCES/ENOSPC/EROFS/EBUSY no state NÃO pode derrubar o processo main do
+// Electron (e com ele a tray e o monitoramento de todos os agentes).
+function atomicWrite(stateFile, st) {
+  try {
+    fs.writeFileSync(`${stateFile}.tmp`, JSON.stringify(st));
+    fs.renameSync(`${stateFile}.tmp`, stateFile);
+    return true;
+  } catch {}
+  return false;
+}
+
 function writeState(sid, evt, tool) {
   if (!sid || !SAFE_ID.test(sid)) return;
   try {
@@ -54,28 +66,33 @@ function writeState(sid, evt, tool) {
     const ex   = readState(sid);
     const now  = Math.floor(Date.now() / 1000);
     const st   = {
+      // golden rule do adapter: PRESERVA chaves de terceiros e os canais de
+      // foco do state existente (transcript_path vem do backfillModels() do
+      // main — não pode regridir pra null — e windowid/focus_url/tilix_id
+      // servem o click-to-focus).
+      ...ex,
       schema_version: 2,
       agent:          'kiro',
       session_id:     sid,
-      pid:            ex.pid   || null,
-      cwd:            ex.cwd   || null,
+      pid:            ex.pid || null,
+      cwd:            ex.cwd || null,
       model:          ex.model || null,
-      term_program:   null,
-      windowid:       null,
-      focus_url:      null,
-      tilix_id:       null,
-      zellij_session: null,
+      transcript_path: ex.transcript_path || null,
+      term_program:   ex.term_program   || null,
+      windowid:       ex.windowid       || null,
+      focus_url:      ex.focus_url      || null,
+      tilix_id:       ex.tilix_id       || null,
+      zellij_session: ex.zellij_session || null,
       last_event:     evt,
       last_event_ts:  now,
       last_tool:      tool || null,
-      notification_type: null,
+      notification_type: ex.notification_type || null,
       events: [
         ...(Array.isArray(ex.events) ? ex.events : []),
         { ts: now, event: evt, tool: tool || null },
       ].slice(-50),
     };
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify(st));
-    fs.renameSync(`${file}.tmp`, file);
+    atomicWrite(file, st);
   } catch {}
 }
 
@@ -94,12 +111,16 @@ function enrichFromSessionJson(sid) {
     const stateFile = path.join(STATE_DIR, `${sid}.json`);
     const ex = readState(sid);
     const enriched = { ...ex };
+    // Guarda por PRESENÇA de mudança, não por contagem de chaves: o .json do
+    // Kiro nasce depois do .jsonl — no 1º evento o enrich lança (engolido), o
+    // writeState grava com cwd:null, e nos próximos a contagem já bateria e o
+    // cwd real NUNCA chegaria (linha exibe o rótulo fallback "... · PID").
     if (meta.cwd)        enriched.cwd        = meta.cwd;
     if (meta.session_id) enriched.session_id = meta.session_id;
-    if (Object.keys(enriched).length > Object.keys(ex).length) {
-      fs.writeFileSync(`${stateFile}.tmp`, JSON.stringify(enriched));
-      fs.renameSync(`${stateFile}.tmp`, stateFile);
-    }
+    const changed =
+      (meta.cwd && enriched.cwd !== ex.cwd) ||
+      (meta.session_id && enriched.session_id !== ex.session_id);
+    if (changed) atomicWrite(stateFile, enriched);
   } catch {}
 }
 
@@ -160,7 +181,10 @@ function handleJsonl(sid) {
   try {
     const stat = fs.statSync(jsonlFile);
     const prevSize = _jsonlSizes.get(sid) || 0;
-    if (stat.size <= prevSize) return;
+    // Ignora apenas STAGNAÇÃO (tamanho igual). O Kiro compacta/reescreve o
+    // .jsonl (/clear, crash-recovery, rotação): se o arquivo ENCOLHEU, re-lemos
+    // normal — com `<=` a sessão ficava surda pra sempre após uma compactação.
+    if (stat.size === prevSize) return;
     _jsonlSizes.set(sid, stat.size);
     _lastSeen.set(sid, Date.now());
   } catch { return; }
@@ -173,6 +197,12 @@ function handleJsonl(sid) {
   // e evitar race com process discovery (duas linhas pro mesmo pid).
   const lock = readLock(sid);
 
+  // Sem pid (jsonl nasceu antes do .lock) NÃO grava: uma linha pid:null é
+  // invisível pra dedup do readSessions (exige agent+pid), vira zumbi que o
+  // reapDead() ignora e desvia do filtro do lock no discovery (linha duplicada).
+  // O handleLock(add) que vem em seguida cria o state com o pid do lock.
+  if (!lock && !readState(sid).pid) return;
+
   enrichFromSessionJson(sid);
 
   // writeState preserva ex.pid; como lemos o lock antes, ex.pid já vem populado
@@ -184,8 +214,7 @@ function handleJsonl(sid) {
     const ex = readState(sid);
     if (!ex.pid) {
       ex.pid = lock.pid;
-      fs.writeFileSync(`${stateFile}.tmp`, JSON.stringify(ex));
-      fs.renameSync(`${stateFile}.tmp`, stateFile);
+      atomicWrite(stateFile, ex);
     }
   }
 
@@ -224,8 +253,7 @@ function handleLock(sid, exists) {
       st.last_event = st.last_event || 'SessionStart';
       st.last_event_ts = st.last_event_ts || Math.floor(Date.now() / 1000);
       st.events = st.events || [{ ts: st.last_event_ts, event: 'SessionStart', tool: null }];
-      fs.writeFileSync(`${stateFile}.tmp`, JSON.stringify(st));
-      fs.renameSync(`${stateFile}.tmp`, stateFile);
+      atomicWrite(stateFile, st);
 
       // Avisa o main para invalidar cache de discovery imediatamente
       if (_onFirstWrite) _onFirstWrite();
@@ -303,15 +331,22 @@ function start(chokidar, onFirstWrite) {
   _staleTimer = setInterval(scanForStops, STALENESS_SCAN_MS);
 
   _watcher.on('all', (event, filePath) => {
-    const sid = sidFromFile(filePath);
-    if (!sid || !SAFE_ID.test(sid)) return;
+    try {
+      const sid = sidFromFile(filePath);
+      if (!sid || !SAFE_ID.test(sid)) return;
 
-    if (filePath.endsWith('.jsonl')) {
-      if (event === 'change' || event === 'add') handleJsonl(sid);
-    } else if (filePath.endsWith('.lock')) {
-      if (event === 'add' || event === 'change') handleLock(sid, true);
-      if (event === 'unlink')                    handleLock(sid, false);
-    }
+      if (filePath.endsWith('.jsonl')) {
+        if (event === 'change' || event === 'add') handleJsonl(sid);
+      } else if (filePath.endsWith('.lock')) {
+        if (event === 'add' || event === 'change') handleLock(sid, true);
+        if (event === 'unlink')                    handleLock(sid, false);
+      } else if (filePath.endsWith('.json')) {
+        // .json consolidado re-escrito pelo Kiro a cada mensagem: re-enriquece
+        // cwd/session_id (o add/change era descartado em silêncio, então o cwd
+        // real nunca chegava ao state file).
+        if (event === 'add' || event === 'change') enrichFromSessionJson(sid);
+      }
+    } catch {}
   });
 }
 
