@@ -134,6 +134,16 @@ main() {
   #  Tilix → TILIX_ID (uuid) via gdbus activate-terminal
   local win="${WINDOWID:-}" tp="${TERM_PROGRAM:-}" zs="${ZELLIJ_SESSION_NAME:-}"
   local furl="${WARP_FOCUS_URL:-}" tid="${TILIX_ID:-}"
+  # tmux: nome da sessão (p/ attach remoto "tmux attach -t <name>"). Só fork
+  # quando $TMUX está setado — agentes fora do tmux => zero custo.
+  # tmux_pane ($TMUX_PANE, ex "%3"): p/ FOCO do painel local (zero fork, é env).
+  local tmuxs="" tmuxp="${TMUX_PANE:-}"
+  # iTerm2 (macOS): ITERM_SESSION_ID = "w0t0p0:<uuid>" → foco de aba exato via
+  # osascript. Leitura de env já exportada: zero fork, orçamento intacto.
+  local iid="${ITERM_SESSION_ID:-}"
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    tmuxs=$(tmux display-message -p '#S' 2>/dev/null) || tmuxs=""
+  fi
 
   # windowid REAL: no UserPromptSubmit/SessionStart a janela focada do desktop
   # É o terminal da sessão (o usuário acabou de digitar nela). Resolve Warp
@@ -169,8 +179,8 @@ main() {
     --argjson pid "$agent_pid" \
     --argjson ts "$ts" \
     --arg agent "$AGENT" --arg cevt "$evt" \
-    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" \
-    --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
+    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" --arg iid "$iid" \
+    --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg tmuxs "$tmuxs" --arg tmuxp "$tmuxp" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
       (try ($exs | fromjson) catch {}) as $ex
       | ($in.session_id // "") as $sid
       | $cevt as $evt
@@ -188,6 +198,9 @@ main() {
           focus_url: (if $furl != "" then $furl else ($ex.focus_url // null) end),
           tilix_id: (if $tid != "" then $tid else ($ex.tilix_id // null) end),
           zellij_session: (if $zs == "" then null else $zs end),
+          tmux_session: (if $tmuxs == "" then null else $tmuxs end),
+          tmux_pane: (if $tmuxp == "" then null else $tmuxp end),
+          iterm_id: (if $iid != "" then $iid else ($ex.iterm_id // null) end),
           last_event: $evt, last_event_ts: $ts,
           last_tool: (if $tool == "" then null else $tool end),
           notification_type: (if $ntype == "" then null else $ntype end),

@@ -28,6 +28,13 @@ por sessão, clique para pular pro terminal — **janela _e_ aba**.
 
 ## Funcionalidades
 
+> Para o inventário completo — incluindo limites conhecidos, funcionalidades
+> implementadas na branch de sync e roadmap — veja o
+> [Catálogo de funcionalidades e roadmap](docs/FUNCIONALIDADES.md).
+>
+> 🧪 **Sincronização multi-máquina (beta):** mostre os agentes de outras
+> máquinas no seu overlay via Tailscale — [guia de configuração](docs/SYNC.md).
+
 - 🟢🟡🔴 Uma luz por sessão + luz agregada no cabeçalho
 - 🤖 **Quatro agentes, um overlay**: Claude Code, Antigravity, Codex e OpenCode
 - 🌐 Interface em inglês e português — segue o idioma do sistema, com troca
@@ -127,8 +134,11 @@ chmod +x AI-Traffic-Lights-*.AppImage
 Baixe o `.deb` da [última release](https://github.com/aronpc/ai-traffic-lights/releases/latest) e instale:
 
 ```bash
-sudo dpkg -i ai-traffic-lights_*.deb
+sudo apt install ./ai-traffic-lights_*.deb
 ```
+
+> Use `apt install ./arquivo.deb` (não `dpkg -i`) para que as dependências
+> sejam resolvidas automaticamente.
 
 ---
 
@@ -290,7 +300,9 @@ cat "${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state/t.json" | jq .
 - [x] Suíte de testes (`node:test`) + CI
 - [x] Click-to-focus confiável: validação do window-id + aba exata no Warp
   (`focus_url`) e Tilix (`TILIX_ID` via D-Bus)
-- [ ] Foco de aba para terminais sem canal nativo (GNOME Terminal, zellij/tmux)
+- [x] Foco de painel tmux — foca o painel do agente dentro do tmux, por cima
+  do canal de aba do Warp / Tilix (via `$TMUX_PANE`)
+- [ ] Foco de aba para terminais sem canal nativo (GNOME Terminal, zellij)
 - [ ] Foco de janela Wayland nativo completo (hoje: XWayland + URI de foco do
   Warp + relançar-para-alternar)
 - [x] Threshold de idle e atalho configuráveis (tray → Preferências — guardado

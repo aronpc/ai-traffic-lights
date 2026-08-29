@@ -14,12 +14,15 @@ const hookInstaller = require('./src/hook-installer');
 const kiroAdapter   = require('./adapters/kiro/ai-traffic-lights');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
+const collect = require('./src/collect');
+const net = require('./src/net');
+const transcript = require('./src/transcript');
 const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const { spawn } = require('child_process');
-const { desktopEscape } = require('./src/validate');
+const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 
 // Flags de sandbox/shared-memory (--no-sandbox --disable-dev-shm-usage) vão na
 // LINHA DE COMANDO: build.linux.executableArgs (packaged) e scripts.start (dev).
@@ -31,6 +34,10 @@ const { desktopEscape } = require('./src/validate');
 // e URL pública do repo (rodapé das Preferências + tooltip do tray).
 const APP_VERSION = app.getVersion();
 const REPO_URL = 'https://github.com/aronpc/ai-traffic-lights';
+// Feature de sync (P2P) é beta: só em build pre-release (0.7.4-beta.N, lida de
+// app.getVersion). Na estável/fonte (0.7.3) a aba Sincronização some e nada de
+// sync é gravado ou sobe.
+const SYNC_AVAILABLE = settingsLib.isPrerelease(APP_VERSION);
 
 // Instância única: relançar o app não duplica o overlay — TOGGLA o existente
 // e sai. Previne overlays duplicados (autostart + lançamento manual) e dá um
@@ -61,6 +68,7 @@ const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec
 const USAGE_FILE = path.join(BASE_DIR, 'usage.json'); // último uso conhecido (sobrevive a reinício; mostrado stale até refrescar)
 const CLAUDE_COOLDOWN_FILE = path.join(BASE_DIR, 'claude-cooldown.json'); // {until:<ms>} — cooldown do 429 da API de uso (SÓ o timestamp, nunca o token)
 const SETTINGS_BOUNDS_FILE = path.join(BASE_DIR, 'settings-window.json'); // {x, y, width, height}
+const TERM_BOUNDS_FILE = path.join(BASE_DIR, 'term-window.json'); // {x, y, width, height} da janela Terminal
 const AUTOSTART_FILE = path.join(process.env.HOME, '.config/autostart/ai-traffic-lights.desktop');
 
 // ---- migração da era claude-traffic-light (pré-rename) ----
@@ -86,15 +94,9 @@ function migrateOldBase() {
   } catch {}
 }
 
-// Mapas de detecção → agent id, derivados do registro (src/agents.js).
-// comm: nome do processo. argv: basename do script (p/ CLIs Node cujo comm
-// é "node" — ex.: gemini — identifica pelo caminho em /proc/<pid>/cmdline).
-const COMM_TO_AGENT = new Map();
-const ARGV_TO_AGENT = new Map();
-for (const [id, a] of Object.entries(AGENTS)) {
-  for (const c of a.comm || []) COMM_TO_AGENT.set(c, id);
-  for (const s of a.argv || []) ARGV_TO_AGENT.set(s, id);
-}
+// Mapas de detecção (COMM_TO_AGENT/ARGV_TO_AGENT/SHELLS) e a sonda /proc vivem
+// em src/collect.js (core Electron-free, reusado pelo futuro agent.js headless).
+// AGENTS ainda é usado aqui p/ UI/launcher/tray.
 
 const DEFAULT_W = 360;
 const HEADER_H = 58; // tem que casar com --header-h do CSS
@@ -103,224 +105,14 @@ const MIN_H = HEADER_H + 40, MAX_H = 640;
 
 let win;
 
+// Coleta de sessões: locais (collect) + remotas (peers, já com `origin` setada
+// pelo pollPeers). Wrapper preserva os call sites (sendSessions, timers, ipc).
+// Sessões remotas entram no MESMO pipeline — sessionKey (namespaced por origin,
+// em identity.js) as separa das locais, sem colisão de pid entre máquinas.
 function readSessions() {
-  try {
-    const files = fs.readdirSync(STATE_DIR).filter((f) => f.endsWith('.json'));
-    const stateFileSessions = [];
-    for (const f of files) {
-      try {
-        const s = JSON.parse(fs.readFileSync(path.join(STATE_DIR, f), 'utf8'));
-        if (s && s.session_id) stateFileSessions.push(s);
-      } catch { /* parcial/inválido — ignora */ }
-    }
-    // Mapa agent -> Set<PID> dos state files existentes (pra discovery ignorar
-    // processos filhos/auxiliares do mesmo agent que JÁ têm state file).
-    const existingAgentPids = new Map();
-    for (const s of stateFileSessions) {
-      if (s.agent && s.pid) {
-        if (!existingAgentPids.has(s.agent)) existingAgentPids.set(s.agent, new Set());
-        existingAgentPids.get(s.agent).add(s.pid);
-      }
-    }
-    // Merge + dedup (lógica pura em src/sessions.js). Sem filtro por
-    // term_program: Tilix não exporta TERM_PROGRAM e sumia do overlay.
-    // O gate de "interativo" é o parent=shell (sonda /proc) e o próprio
-    // state file (o hook só dispara em sessão interativa).
-    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids));
-  } catch { return []; }
-}
-
-// Acha o transcript de uma sessão pelo session_id (procura em .claude e .zclaude).
-function findTranscript(sid) {
-  for (const root of [
-    path.join(process.env.HOME, '.claude/projects'),
-    path.join(process.env.HOME, '.zclaude/projects'),
-  ]) {
-    try {
-      for (const proj of fs.readdirSync(root)) {
-        const p = path.join(root, proj, sid + '.jsonl');
-        if (fs.existsSync(p)) return p;
-      }
-    } catch {}
-  }
-  return null;
-}
-
-// Último model usado num transcript.
-function lastModel(tp) {
-  try {
-    if (!tp || !fs.existsSync(tp) || fs.statSync(tp).size > 50_000_000) return null;
-    const data = fs.readFileSync(tp, 'utf8');
-    let last = null, m;
-    const re = /"model":"([^"]+)"/g;
-    while ((m = re.exec(data))) last = m[1];
-    return last;
-  } catch { return null; }
-}
-
-// Backfill: sessões com model=null pegam o model do transcript (de cara, no startup).
-function backfillModels() {
-  let changed = false;
-  try {
-    for (const f of fs.readdirSync(STATE_DIR).filter((x) => x.endsWith('.json'))) {
-      try {
-        const p = path.join(STATE_DIR, f);
-        const s = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (s.model) continue;
-        const tp = s.transcript_path || findTranscript(s.session_id);
-        const m = tp && lastModel(tp);
-        if (m) {
-          s.transcript_path = tp; s.model = m;
-          // tmp+rename: mesma escrita atômica dos adapters (sem race com o hook)
-          fs.writeFileSync(p + '.tmp', JSON.stringify(s));
-          fs.renameSync(p + '.tmp', p);
-          changed = true;
-        }
-      } catch {}
-    }
-  } catch {}
-  return changed;
-}
-
-// Sonda /proc: descobre agentes rodando em terminal (parent = shell) que AINDA
-// NÃO têm state file — sessões idle ou iniciadas antes do adapter. Os nomes de
-// processo vêm do registro (src/agents.js). (cwd é ilegível por ptrace_scope →
-// essas entram com label fallback "<agente> · PID".)
-const SHELLS = new Set(['zsh', 'bash', 'sh', 'fish', 'dash']);
-const KIRO_LOCK_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
-
-// Lê o PID do .lock ativo do Kiro (se houver). Cache 4s.
-let _kiroLockPid = null, _kiroLockAt = 0;
-function getKiroLockPid() {
-  const fresh = Date.now() - _kiroLockAt < 4000;
-  if (fresh) {
-    if (_kiroLockPid) {
-      // Liveness do PID cacheado: um .lock esquecido em disco com o processo
-      // morto não pode blindar a descoberta (e o PID vivo do Kiro sumiria do
-      // `discoveredTerminalAgents` só porque um state antigo de kiro existe).
-      try { process.kill(_kiroLockPid, 0); return _kiroLockPid; } catch { _kiroLockPid = null; }
-    }
-    // Cache NEGATIVO também vale os 4s: sem Kiro no sistema, o readdirSync que
-    // dá ENOENT não é re-pago a cada refrescância de discovery.
-    return _kiroLockPid;
-  }
-  try {
-    const files = fs.readdirSync(KIRO_LOCK_DIR).filter(f => f.endsWith('.lock'));
-    for (const f of files) {
-      try {
-        const lock = JSON.parse(fs.readFileSync(path.join(KIRO_LOCK_DIR, f), 'utf8'));
-        if (lock && typeof lock.pid === 'number') {
-          try { process.kill(lock.pid, 0); } catch { continue; } // lock morto é lixo
-          _kiroLockPid = lock.pid;
-          _kiroLockAt = Date.now();
-          return _kiroLockPid;
-        }
-      } catch {}
-    }
-  } catch {}
-  _kiroLockPid = null;
-  _kiroLockAt = Date.now();   // sela o cache negativo (4s)
-  return null;
-}
-
-function discoverAgentProcs(existingAgentPids) {
-  const found = [];
-  const kiroLockPid = getKiroLockPid(); // PID válido do Kiro (ou null)
-
-  if (process.platform === 'darwin') {
-    try {
-      const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 2000 });
-      for (const line of output.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const m = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/);
-        if (!m) continue;
-        const pid = parseInt(m[1], 10);
-        const ppid = parseInt(m[2], 10);
-        const fullArgsStr = m[3];
-        const argv = fullArgsStr.split(/\s+/);
-        const execPath = argv[0] || '';
-        const comm = path.basename(execPath);
-        
-        let agent = COMM_TO_AGENT.get(comm);
-        if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
-          for (let i = 1; i < argv.length; i++) {
-            const scriptName = path.basename(argv[i] || '');
-            agent = ARGV_TO_AGENT.get(scriptName);
-            if (agent) break;
-          }
-        }
-        if (!agent) continue;
-        
-        // Kiro: o único PID de kiro "autorizado" sem state file é o PID vivo do
-        // lock. Demais kiro sujeitos: com state file já existente, o guard
-        // genérico de baixo dedupe; sem state file e sem ser o lock, é
-        // processo auxiliar/ruído → descarta. Nada disso depende de
-        // `existingAgentPids.has('kiro')`: gate com "há algum kiro em state"
-        // causava amnesia — o lock vivo (ou uma 2ª sessão nova) era descartado
-        // pra sempre enquanto UM state qualquer de kiro existisse no disco.
-        const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
-        if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
-        
-        // Demais agents: sem filtro aqui — um PID que já tem state file é
-        // dedupado pelo mergeSessions() (src/sessions.js:19); filtrar por
-        // `existingPids.has(pid)` era redundante e não passava do caso
-        // pid-igual (processo filho/auxiliar tem PID DIFERENTE, então passava
-        // na dedup anunciada de qualquer forma).
-        let pcomm = '';
-        try {
-          const parentOutput = execFileSync('ps', ['-p', ppid, '-o', 'comm='], { encoding: 'utf8', timeout: 1000 }).trim();
-          pcomm = path.basename(parentOutput);
-        } catch {}
-        
-        if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-        
-        if (SHELLS.has(pcomm)) {
-          found.push({ pid, agent });
-        }
-      }
-    } catch {}
-  } else {
-    try {
-      for (const ent of fs.readdirSync('/proc')) {
-        if (!/^\d+$/.test(ent)) continue;
-        try {
-          const pid = parseInt(ent, 10);
-          const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
-          let agent = COMM_TO_AGENT.get(comm);
-          if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
-            try {
-              const argv = fs.readFileSync(`/proc/${ent}/cmdline`, 'utf8').split('\0');
-              agent = ARGV_TO_AGENT.get(path.basename(argv[1] || ''));
-            } catch {}
-          }
-          if (!agent) continue;
-          
-          // Kiro: mesma lógica do darwin — autorizado o PID vivo do lock, dedup
-          // genérico para quem tem state file, descarta auxiliar/ruído.
-          const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
-          if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
-
-          // Demais agents: sem filtro (redundante — mergeSessions dedupe por pid).
-          const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
-          const m = status.match(/^PPid:\s+(\d+)/m);
-          if (!m) continue;
-          let pcomm = '';
-          try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
-          if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-          if (SHELLS.has(pcomm)) found.push({ pid, agent });
-        } catch {}
-      }
-    } catch {}
-  }
-  return found;
-}
-let _disc = null, _discAt = 0;
-function discoveredTerminalAgents(existingAgentPids) {
-  if (_disc && Date.now() - _discAt < 4000) return _disc; // cache 4s
-  _disc = discoverAgentProcs(existingAgentPids);
-  _discAt = Date.now();
-  return _disc;
+  const local = collect.readSessions();
+  if (!remoteSessions.size) return local;
+  return local.concat(Array.from(remoteSessions.values()).flat());
 }
 
 // ---- click-to-focus: ativa a janela (e a ABA, quando possível) da sessão ----
@@ -331,98 +123,7 @@ function discoveredTerminalAgents(existingAgentPids) {
 //  • ABA (canal nativo do terminal, invisível pro X11): tabChannel() escolhe
 //    Warp (`xdg-open warp://session/<uuid>`) ou Tilix (`gdbus activate-terminal
 //    <TILIX_ID>`). É a única forma de alcançar a aba/pane certa.
-// Ordem: no X11, raise a janela e então troca a aba. No Wayland, a aba primeiro
-// (wmctrl só enxerga XWayland) e o raise vira tentativa-bônus.
-function ancestorPidsOf(pid) {
-  const set = new Set();
-  let p = pid;
-  if (process.platform === 'darwin') {
-    for (let i = 0; i < 25 && p > 1; i++) {
-      set.add(p);
-      try {
-        const ppidStr = execFileSync('ps', ['-o', 'ppid=', '-p', p], { encoding: 'utf8', timeout: 1000 }).trim();
-        if (!ppidStr) break;
-        p = parseInt(ppidStr, 10);
-      } catch { break; }
-    }
-  } else {
-    for (let i = 0; i < 25 && p > 1; i++) {
-      set.add(p);
-      try {
-        const m = fs.readFileSync(`/proc/${p}/status`, 'utf8').match(/^PPid:\s+(\d+)/m);
-        if (!m) break;
-        p = parseInt(m[1], 10);
-      } catch { break; }
-    }
-  }
-  return set;
-}
-
-function findTerminalAppNameFromPid(pid) {
-  const ancestors = Array.from(ancestorPidsOf(pid));
-  for (const p of ancestors) {
-    try {
-      const commPath = execFileSync('ps', ['-p', p, '-o', 'comm='], { encoding: 'utf8', timeout: 500 }).trim();
-      const name = path.basename(commPath).toLowerCase();
-      if (name.includes('warp') || commPath.includes('Warp.app')) return 'Warp';
-      if (name.includes('iterm') || commPath.includes('iTerm.app')) return 'iTerm';
-      if (name.includes('terminal') || commPath.includes('Terminal.app')) return 'Terminal';
-      if (name.includes('ghostty') || commPath.includes('Ghostty.app')) return 'Ghostty';
-    } catch {}
-  }
-  return null;
-}
-
-function raiseWindow(windowid, pid) {
-  if (!pid) return false;
-  if (process.platform === 'darwin') {
-    const ancestors = Array.from(ancestorPidsOf(pid));
-    for (let i = ancestors.length - 1; i >= 0; i--) {
-      const apid = ancestors[i];
-      try {
-        const check = execFileSync('osascript', ['-e', `tell application "System Events" to get name of first process whose unix id is ${apid}`], { encoding: 'utf8', timeout: 500 }).trim();
-        if (check) {
-          execFileSync('osascript', ['-e', `tell application "System Events" to set frontmost of first process whose unix id is ${apid} to true`], { timeout: 1000 });
-          return true;
-        }
-      } catch {}
-    }
-    const appName = findTerminalAppNameFromPid(pid);
-    if (appName) {
-      try {
-        execFileSync('osascript', ['-e', `tell application "${appName}" to activate`], { timeout: 2000 });
-        return true;
-      } catch {}
-    }
-    return false;
-  }
-  let list = '';
-  try { list = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch { return false; }
-  const wins = [];
-  for (const line of list.split('\n')) {
-    const m = line.match(/^(\S+)\s+\S+\s+(\d+)\s/);
-    if (m) wins.push({ id: m[1], idNum: parseInt(m[1], 16), pid: parseInt(m[2], 10) });
-  }
-  const id = focus.pickWindow(windowid, wins, ancestorPidsOf(pid));
-  if (id) { try { execFileSync('wmctrl', ['-i', '-a', id], { timeout: 2000 }); return true; } catch { return false; } }
-  return false;
-}
-
-function focusTab(state) {
-  const ch = focus.tabChannel(state);
-  if (!ch) return;
-  try {
-    if (ch.kind === 'warp') {
-      const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
-      execFileSync(cmd, [ch.value], { timeout: 2000 });
-    } else if (ch.kind === 'tilix') {
-      execFileSync('gdbus', ['call', '--session', '--dest', 'com.gexperts.Tilix',
-        '--object-path', '/com/gexperts/Tilix', '--method', 'org.gtk.Actions.Activate',
-        'activate-terminal', `[<'${ch.value}'>]`, '{}'], { timeout: 2000 });
-    }
-  } catch {}
-}
-
+// focus (raiseWindow/focusTab/focusTmuxPane/enrichTarget/focusSession + ancestorPidsOf): extraído para src/ipc/focus.js (REF passo 4)
 function parseMacOSEnviron(content) {
   if (!content) return '';
   const regex = /(?<=\s|^)([A-Za-z0-9_]+)=/g;
@@ -445,10 +146,6 @@ function parseMacOSEnviron(content) {
   return envVars.join('\0');
 }
 
-function escapeAppleScriptString(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
 
 function getProcessEnviron(pid) {
   if (!pid) return '';
@@ -471,51 +168,8 @@ function getProcessEnviron(pid) {
   }
 }
 
-// Enriquece o alvo com os hints de foco lidos AO VIVO do processo.
-// O state file guarda um snapshot capturado no prompt; o environ é a fonte
-// viva — cobre sessões cujo evento veio antes do hook atual e as detectadas
-// só via /proc (sem focus_url/tilix_id no state). O state tem precedência.
-function enrichTarget(target) {
-  if (!target || !target.pid || (target.focus_url && target.tilix_id)) return target;
-  try {
-    const hints = focus.parseEnviron(getProcessEnviron(target.pid));
-    return {
-      ...target,
-      focus_url: target.focus_url || hints.focus_url,
-      tilix_id: target.tilix_id || hints.tilix_id,
-    };
-  } catch { return target; }
-}
-
-function focusSession(target) {
-  if (!target) return;
-  const t = enrichTarget(target);
-  const hasTab = !!focus.tabChannel(t);
-  let raised = false;
-  if (IS_WAYLAND) { focusTab(t); raised = raiseWindow(t.windowid, t.pid); }
-  else { raised = raiseWindow(t.windowid, t.pid); focusTab(t); }
-  // Wayland + sem canal de aba + sem janela alcançável pelo wmctrl (ex.: GNOME
-  // Terminal nativo) → o clique vira no-op silencioso. Avisamos em vez de parecer
-  // quebrado (issue: foco do terminal padrão do Ubuntu no Wayland).
-  if (focus.isFocusUnsupported({ wayland: IS_WAYLAND, raised, hasTab })) {
-    notifyUser(T('ntf_focus_unsupported_wayland'));
-  }
-}
-
-// ---- aliases (apelido manual por SESSÃO) ----
-// Chave = identidade da sessão (session_id, fallback pid) — a MESMA linha do
-// overlay, calculada em renderer.aliasKey. Antes era o cwd, o que fazia dois
-// terminais no mesmo diretório compartilharem o apelido (renomear um renomeava
-// todos). O main só persiste a chave opaca que o renderer manda.
-function loadAliases() {
-  try { return JSON.parse(fs.readFileSync(ALIASES_FILE, 'utf8')) || {}; } catch { return {}; }
-}
-function saveAlias(key, alias) {
-  const a = loadAliases();
-  if (alias && alias.trim()) a[key] = alias.trim();
-  else delete a[key];
-  try { fs.writeFileSync(ALIASES_FILE, JSON.stringify(a)); } catch {}
-}
+// aliases (loadAliases/saveAlias + handlers get-aliases/set-alias): extraídos
+// para src/ipc/aliases.js (REF passo 7). Registrados no boot via setupAliasesIpc.
 
 // ---- idioma (i18n) ----
 // Prioridade: escolha manual nas Preferências (settings.lang ≠ 'auto') >
@@ -563,12 +217,13 @@ function applyShortcut() {
 // Detecção por PATH scan (fork-free: só fs.access nos dirs do PATH). O Electron
 // roda fora do shell interativo, então não vê aliases — acha o binário real.
 // CLIs só-alias (sem bin no PATH) entram via override settings.launchers[id].
+// launcher (detectLaunchers/availableTerminals/launchAgent/openInWarp/openCmdInTerminal/escapeAppleScriptString): extraído para src/ipc/launcher.js (REF passo 5)
 function scanPathBin(bin) {
   const path = process.env.PATH || '';
   for (const dir of path.split(':')) {
     if (!dir) continue;
     const p = path_join(dir, bin);
-    try { if (fs.statSync(p).isFile() && (fs.accessSync(p, fs.X_OK), true)) return p; } catch {}
+    try { if (fs.statSync(p).isFile() && (fs.accessSync(p, fs.constants.X_OK), true)) return p; } catch {}
   }
   return null;
 }
@@ -576,52 +231,8 @@ function path_join(dir, bin) { // path.join local (sem sobrescrever o require)
   return dir.replace(/\/+$/, '') + '/' + bin;
 }
 
-// Quais agentes têm CLI disponível? Override do settings tem precedência sobre PATH.
-let _launchers = null, _launchersAt = 0;
-function detectLaunchers() {
-  if (_launchers && Date.now() - _launchersAt < 10000) return _launchers; // cache 10s
-  const out = [];
-  for (const [id, a] of Object.entries(AGENTS)) {
-    if (!a.bin) continue;
-    const override = settingsCfg.launchers && settingsCfg.launchers[id];
-    const path = (typeof override === 'string' && override) ? override : scanPathBin(a.bin);
-    if (path) out.push({ id, path, overridden: !!override });
-  }
-  _launchers = out;
-  _launchersAt = Date.now();
-  return out;
-}
-
-// Quais terminais suportados estão no PATH? (pra 'auto' e pra validar o seletor)
-function availableTerminals() {
-  if (process.platform === 'darwin') {
-    const list = [];
-    const homeApps = path.join(process.env.HOME || '/', 'Applications');
-    
-    if (fs.existsSync('/Applications/iTerm.app') || 
-        fs.existsSync(path.join(homeApps, 'iTerm.app')) || 
-        !!scanPathBin('iterm')) {
-      list.push('iterm2');
-    }
-    if (fs.existsSync('/System/Applications/Utilities/Terminal.app') || 
-        fs.existsSync('/Applications/Utilities/Terminal.app') || 
-        fs.existsSync(path.join(homeApps, 'Utilities/Terminal.app'))) {
-      list.push('terminal');
-    }
-    if (fs.existsSync('/Applications/Warp.app') || 
-        fs.existsSync(path.join(homeApps, 'Warp.app')) ||
-        !!scanPathBin('warp')) {
-      list.push('warp');
-    }
-    if (fs.existsSync('/Applications/Ghostty.app') || 
-        fs.existsSync(path.join(homeApps, 'Ghostty.app')) || 
-        !!scanPathBin('ghostty')) {
-      list.push('ghostty');
-    }
-    return list;
-  }
-  return launcher.TERMINAL_ORDER.filter((t) => !!scanPathBin(t));
-}
+// detectLaunchers + o cache (_launchers/_launchersAt): extraídos para
+// src/ipc/launcher.js (REF passo 5), junto com availableTerminals.
 
 // Cwd mais recente entre as sessões (pra onde o "+ agente" abre por padrão).
 function lastSessionCwd() {
@@ -639,87 +250,73 @@ function lastSessionCwd() {
 
 // Sobe o agente num terminal no cwd dado. Detached + unref: o overlay não é pai
 // do processo — a sessão entra no semáforo pelo caminho normal (hooks → state).
-function launchAgent({ agent, cwd }) {
-  const a = AGENTS[agent];
-  if (!a) return;
-  const entry = detectLaunchers().find((l) => l.id === agent);
-  if (!entry) { notifyUser(T('ntf_no_launcher', { agent: a.label })); return; }
-  const dir = (cwd && typeof cwd === 'string') ? cwd : (lastSessionCwd() || process.env.HOME || '/');
 
-  if (process.platform === 'darwin') {
-    const term = settingsCfg.terminal === 'auto' ? (availableTerminals()[0] || 'terminal') : settingsCfg.terminal;
-    
-    if (term === 'terminal') {
-      const escDir = escapeAppleScriptString(dir);
-      const escPath = escapeAppleScriptString(entry.path);
-      const appleScript = `
-        tell application "Terminal"
-          do script "cd " & quoted form of "${escDir}" & " && " & quoted form of "${escPath}"
-          activate
-        end tell
-      `;
-      try { spawn('osascript', ['-e', appleScript], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-      return;
-    }
-    
-    if (term === 'iterm2') {
-      const escDir = escapeAppleScriptString(dir);
-      const escPath = escapeAppleScriptString(entry.path);
-      const appleScript = `
-        tell application "iTerm"
-          create window with default profile
-          tell current session of current window
-            write text "cd " & quoted form of "${escDir}" & " && " & quoted form of "${escPath}"
-          end tell
-          activate
-        end tell
-      `;
-      try { spawn('osascript', ['-e', appleScript], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-      return;
-    }
-    
-    if (term === 'warp') {
-      const warpDir = path.join(process.env.HOME || '/', '.warp', 'launch_configurations');
-      try {
-        fs.mkdirSync(warpDir, { recursive: true });
-        const configName = `ai-traffic-lights-${agent}`;
-        const yamlPath = path.join(warpDir, `${configName}.yaml`);
-        const yamlContent = [
-          `name: AI Traffic Lights - ${agent}`,
-          `windows:`,
-          `  - tabs:`,
-          `      - panes:`,
-          `          - cwd: ${JSON.stringify(dir)}`,
-          `            commands:`,
-          `              - ${JSON.stringify(entry.path)}`
-        ].join('\n') + '\n';
-        fs.writeFileSync(yamlPath, yamlContent, 'utf8');
-        spawn('open', [`warp://launch/${configName}`], { detached: true, stdio: 'ignore' }).unref();
-      } catch (e) {
-        notifyUser(`Launch failed: ${e.message}`);
-      }
-      return;
-    }
-    
-    if (term === 'ghostty') {
-      try { spawn('open', ['-a', 'Ghostty', '--args', `--working-directory=${dir}`, `--initial-command=${entry.path}`], { detached: true, stdio: 'ignore' }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
-      return;
-    }
-  }
+// ---- attach remoto (tmux): abre um terminal LOCAL attachado a uma sessão tmux
+// (local direto, ou remota via SSH/Tailscale). Vivo e compartilhado (multi-
+// cliente): sem --resume, sem derrubar o terminal da outra máquina. Sanitiza
+// nome+host (vêm de config/peer — anti-injeção de shell no comando remoto).
+// Warp: launch-config YAML + warp://launch. O scheme warp:// costuma estar
+// registrado (dev.warp.Warp.desktop) MESMO quando o binário `warp` não está no
+// PATH — então xdg-open abre o app e roda o comando do config.
+// Nome da aba do Terminal. Ordem: alias > label da linha (o renderer manda o
+// MESMO labelFor que desenha na lista) > basename do cwd > 'tmux: <sessão>'.
+// O fallback pro nome tmux é último recurso: é id interno do multiplexador
+// ("41"), não diz nada pro usuário e não batia com o nome da lista.
+// Sessão remota leva o prefixo da máquina de origem.
+function termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal }) {
+  const base = alias
+    || label
+    || (cwd ? String(cwd).replace(/\/+$/, '').split('/').pop() : '')
+    || ('tmux: ' + (tmux_session || 'shell'));
+  return (isLocal ? '' : (origin || '') + ' · ') + base;
+}
 
-  const term = launcher.pickTerminal(settingsCfg.terminal, availableTerminals());
-  if (settingsCfg.terminal === 'custom' && settingsCfg.terminalCmd.trim()) {
-    // Custom: template com {cwd} e {cmd}. Split simples (sem shell, sem quoting rico).
-    const cmd = settingsCfg.terminalCmd
-      .replace(/\{cwd\}/g, dir)
-      .replace(/\{cmd\}/g, entry.path);
-    const parts = cmd.split(/\s+/).filter(Boolean);
-    try { spawn(parts[0], parts.slice(1), { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+// Religa uma aba cuja conexão morreu (pty encerrado / WS caído). Reusa o que a
+// sessão já guarda — não depende de nada vir da linha clicada, então funciona
+// mesmo quando o revive parte de um clique na aba, não na lista. Limpa a tela
+// antes: o buffer velho é de uma conexão que não existe mais.
+function reviveTermSession(tabId, s) {
+  sendTerm('pty-out', { tabId, data: '\x1b[2J\x1b[H\x1b[90m[reconectando…]\x1b[0m\r\n' });
+  if (s.kind === 'local') {
+    spawnPtyLocal(tabId, ['tmux', 'attach', '-t', s.tmux_session], s.cwd);
     return;
   }
-  if (!term) { notifyUser(T('ntf_no_terminal')); return; }
-  const args = launcher.terminalArgs(term, dir, [entry.path]);
-  try { spawn(term, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); } catch (e) { notifyUser(`Launch failed: ${e.message}`); }
+  const host = originToHost.get(s.origin) || '';
+  const cfg = (settingsCfg && settingsCfg.sync) || {};
+  if (!host || !cfg.token) {
+    sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem host/token para ' + (s.origin || '?') + '\x1b[0m\r\n' });
+    return;
+  }
+  openRemotePty(tabId, { host, port: cfg.port, token: cfg.token, tmux_session: s.tmux_session });
+}
+
+function attachRemote({ origin, tmux_session, cwd, alias, key, label }) {
+  if (!tmux_session) { notifyUser(T('ntf_attach_no_tmux')); return; }
+  const isLocal = !origin || origin === 'local';
+  const dupKey = (isLocal ? 'local' : origin) + '|' + tmux_session;
+  // dedupe: aba dessa sessão já existe → foca. Mas se a conexão MORREU (peer
+  // reiniciou, wifi caiu, sync desligado do outro lado), a aba fica órfã no Map
+  // com ws/proc null: focar sem religar deixava a aba VAZIA pra sempre, sem
+  // nenhuma forma de recuperar além de fechá-la na mão. Então reconecta.
+  for (const [id, s] of termSessions) {
+    if (((s.kind === 'local' ? 'local' : s.origin) + '|' + s.tmux_session) !== dupKey) continue;
+    ensureTermWin();
+    const dead = !s.ws && !s.proc;
+    if (dead) reviveTermSession(id, s);
+    sendTerm('term-tab-activated', { tabId: id });
+    return;
+  }
+  ensureTermWin();
+  const title = termTabTitle({ alias, label, cwd, tmux_session, origin, isLocal });
+  const tabId = addTermSession({ title, kind: isLocal ? 'local' : 'remote', origin: isLocal ? null : origin, tmux_session, sessionKey: key, label, cwd });
+  if (isLocal) {
+    spawnPtyLocal(tabId, ['tmux', 'attach', '-t', tmux_session], cwd);
+  } else {
+    const host = originToHost.get(origin) || '';
+    const s = (settingsCfg && settingsCfg.sync) || {};
+    if (!host || !s.token) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem host/token para ' + origin + '\x1b[0m\r\n' }); return; }
+    openRemotePty(tabId, { host, port: s.port, token: s.token, tmux_session });
+  }
 }
 
 // ---- autostart ----
@@ -910,10 +507,11 @@ function createWindow() {
   win.on('move', saveBounds);
 
   // Log do renderer só com ATL_DEBUG=1 (debug off em produção).
-  if (process.env.ATL_DEBUG) {
-    win.webContents.on('console-message', (_e, level, message) =>
-      fs.appendFileSync('/tmp/atl-renderer.log', `[${level}] ${message}\n`));
-  }
+  win.webContents.on('console-message', (_e, level, message) => {
+    if (process.env.ATL_DEBUG) {
+      try { fs.appendFileSync('/tmp/atl-renderer.log', `[${level}] ${message}\n`); } catch {}
+    }
+  });
 }
 
 // Mostrar/ocultar centralizado. No show, re-afirma skipTaskbar — alguns WMs
@@ -999,11 +597,9 @@ function removeHookFromApp() {
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
   } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
 }
-function notifyUser(body) {
-  try { new Notification({ title: 'AI Traffic Lights', body, silent: true }).show(); } catch {}
-}
-
-let tray = null;
+// notifyUser: implementação em src/ipc/tray.js (REF passo 8). Stub reatribuído
+// no boot p/ trayIpc.notifyUser (DI p/ update/focus/launcher).
+let notifyUser = () => {};
 // Menu reconstruível fora do createTray: os labels dependem do idioma, e a
 // troca nas Preferências re-renderiza o menu ao vivo (save-settings).
 function buildTrayMenu() {
@@ -1012,101 +608,31 @@ function buildTrayMenu() {
     { type: 'checkbox', label: T('tray_autostart'), checked: autostartEnabled(),
       click: (it) => { setAutostart(it.checked); } },
     // Quick Launcher: submenu com cada CLI detectado (abre o terminal e sobe).
-    ...(detectLaunchers().length ? [{
+    ...(launcherIpc.detectLaunchers().length ? [{
       label: T('launch_section'),
-      submenu: detectLaunchers().map((l) => ({
+      submenu: launcherIpc.detectLaunchers().map((l) => ({
         label: '+ ' + AGENTS[l.id].label,
-        click: () => launchAgent({ agent: l.id }),
+        click: () => launcherIpc.launchAgent({ agent: l.id }),
       })),
     }] : []),
     { type: 'separator' },
     { label: T('tray_install_hooks'), click: installHookFromApp },
     { label: T('tray_remove_hooks'), click: removeHookFromApp },
     { type: 'separator' },
-    { label: T('tray_preferences'), click: createSettingsWindow },
-    { label: T('tray_check_updates'), click: checkUpdatesManual },
+    { label: T('tray_preferences'), click: () => settingsIpc && settingsIpc.createSettingsWindow() },
+    { label: T('tray_check_updates'), click: () => updateIpc && updateIpc.checkUpdatesManual() },
     { label: T('tray_quit'), click: () => app.quit() },
   ]);
 }
-// ---- tray dinâmico: ícone pinta com a pior cor + tooltip com a contagem ----
-// Variante por nível (bolinha colorida no canto do ícone-base). Sem sessões,
-// cai no ícone neutro (não dá "tudo verde" com nada rodando).
-// No macOS usamos ícones coloridos com sufixo -mac.png (PNG com alpha, fundo
-// transparente, bolinhas coloridas) que ficam bem na menu bar em qualquer tema.
-// No Linux ficam os originais coloridos sem sufixo.
-const IS_MAC = process.platform === 'darwin';
-function trayIconFile(name) {
-  return IS_MAC ? name.replace('.png', '-mac.png') : name;
-}
-const TRAY_ICON_FILE = {
-  awaiting: trayIconFile('tray-icon-r.png'),
-  processing: trayIconFile('tray-icon-y.png'),
-  done: trayIconFile('tray-icon-g.png'),
-};
-const trayIcons = {};
-for (const [lvl, file] of Object.entries(TRAY_ICON_FILE)) {
-  const img = nativeImage.createFromPath(path.join(__dirname, 'assets', file));
-  trayIcons[lvl] = img.isEmpty() ? null : img;
-}
-const trayIconBase = (() => {
-  const img = nativeImage.createFromPath(path.join(__dirname, `assets/${trayIconFile('tray-icon.png')}`));
-  // macOS: ícone BOOT/zero-sessões vira template — a menu bar adapta o traço
-  // sozinha (claro/escuro). O PNG base é cinza de alpha baixo: sem template ele
-  // sumia na menu bar escura (a cor RGB é ignorada, só o alpha conta).
-  if (IS_MAC) img.setTemplateImage(true);
-  return img;
-})();
-function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {
-  if (!tray || tray.isDestroyed()) return;
-  const total = awaiting + processing + done;
-  const img = total > 0 ? trayIcons[level] : null;
-  tray.setImage(img || trayIconBase);
-  const parts = [];
-  if (awaiting) parts.push(`🔴${awaiting}`);
-  if (processing) parts.push(`🟡${processing}`);
-  if (done) parts.push(`🟢${done}`);
-  tray.setToolTip(total > 0 ? `AI Traffic Lights v${APP_VERSION}  ${parts.join(' ')}` : `AI Traffic Lights v${APP_VERSION}`);
-}
-
-function createTray() {
-  tray = new Tray(trayIconBase.isEmpty() ? nativeImage.createEmpty() : trayIconBase);
-  tray.setToolTip(`AI Traffic Lights v${APP_VERSION}`);
-  // macOS: NÃO seta context menu permanente — senão left-click abre o menu.
-  // Vamos controlar manualmente: left-click = toggleWin, right-click = popUpContextMenu.
-  if (process.platform !== 'darwin') {
-    tray.setContextMenu(buildTrayMenu());
-  }
-  // macOS: por padrão (ignoreDoubleClickEvents=false) o 2º clique rápido é
-  // COALESCIDO em double-click — o Mac suprime o 'click' e o toggle de ocultar
-  // nunca dispara (clique pra mostrar, sem clique pra esconder). Desligar a
-  // coalescência faz cada clique virar UM 'click'. É o método oficial p/ toggle.
-  if (process.platform === 'darwin') tray.setIgnoreDoubleClickEvents(true);
-  tray.on('click', toggleWin);                    // left-click (1 dedo) → toggle overlay
-  tray.on('right-click', () => {                  // right-click / 2 dedos → menu
-    if (process.platform === 'darwin') {
-      tray.popUpContextMenu(buildTrayMenu());
-    }
-  });
-}
+// (notifyUser/setTrayLevel/createTray/ícones tray + handlers notify/set-tray-level
+//  movidos para src/ipc/tray.js — REF passo 8. buildTrayMenu fica aqui: é o
+//  compositor do menu, injetado em createTray via callback.)
 
 // ---- janela de Preferências (threshold de idle + atalho) ----
-let settingsWin = null;
-let settingsBoundsTimer = null;
-function loadSettingsBounds() {
-  try { return JSON.parse(fs.readFileSync(SETTINGS_BOUNDS_FILE, 'utf8')); } catch { return null; }
-}
-function saveSettingsBounds() {
-  if (!settingsWin || settingsWin.isDestroyed()) return;
-  clearTimeout(settingsBoundsTimer);
-  settingsBoundsTimer = setTimeout(() => {
-    try {
-      const [x, y] = settingsWin.getPosition();
-      // Só a posição: o tamanho é fixo (SETTINGS_W/H) e ignorado no load —
-      // gravá-lo só persistiria dados mortos e confundiria versões futuras.
-      fs.writeFileSync(SETTINGS_BOUNDS_FILE, JSON.stringify({ x, y }));
-    } catch {}
-  }, 300);
-}
+// (settingsWin/settingsBoundsTimer vivem em src/ipc/settings.js — REF passo 9.
+//  Ficaram órfãos aqui quando createSettingsWindow foi extraído: o módulo os
+//  referenciava sem enxergá-los, e abrir Preferências jogava
+//  "ReferenceError: settingsWin is not defined" na cara do usuário.)
 // Tamanho FIXO da janela de Preferências (não redimensionável): travado na
 // altura da aba mais alta (Geral), medido no conteúdo real a 420px de largura.
 // As abas mais curtas (Integração) ficam com espaço vazio; nenhuma rola.
@@ -1115,48 +641,9 @@ function saveSettingsBounds() {
 // folga — header(abas)+rodapé consomem ~170px. As abas curtas (Integração) ficam
 // com espaço vazio; nenhuma rola. Em telas baixas (768px) o winH clampa à work
 // area e a aba rola (header/rodapé ficam fixos).
-const SETTINGS_W = 420, SETTINGS_H = 770;
-function createSettingsWindow() {
-  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
-  const b = loadSettingsBounds() || {};
-  // Clampa à altura da área útil do display: em telas baixas (ex.: 1366×768,
-  // work area ~728px) a altura ideal (761) não cabe e, com resizable:false, o
-  // rodapé/Fechar + o fim da aba Geral ficariam abaixo da tela, inalcançáveis.
-  // O .tab-body (overflow-y:auto) rola; header/abas/.actions (flex:0 0 auto)
-  // ficam fixos — o "Fechar" nunca some. Display mais próximo da posição salva
-  // cobre multi-monitor; sem posição, cai no primário.
-  const disp = (typeof b.x === 'number' && typeof b.y === 'number')
-    ? screen.getDisplayNearestPoint({ x: b.x, y: b.y })
-    : screen.getPrimaryDisplay();
-  const winH = Math.min(SETTINGS_H, disp.workAreaSize.height - 24); // 24 = respiro
-  settingsWin = new BrowserWindow({
-    width: SETTINGS_W, height: winH,
-    useContentSize: true,               // width/height = área web (o .prefs preenche)
-    resizable: false,                   // tamanho travado na maior aba (pedido do usuário)
-    maximizable: false, fullscreenable: false,
-    x: typeof b.x === 'number' ? b.x : undefined,   // posição é lembrada; tamanho não
-    y: typeof b.y === 'number' ? b.y : undefined,
-    title: T('prefs_title'),
-    icon: path.join(__dirname, 'build/icon.png'),
-    // Mesmo chrome custom do overlay (ver createWindow acima): sem moldura
-    // nativa + fundo transparente — o .prefs (settings.css) desenha o painel
-    // arredondado com borda e sombra, e o header .bar é arrastável.
-    frame: false,
-    transparent: true,
-    hasShadow: false,
-    backgroundColor: '#00000000',
-    autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
-  });
-  // O overlay é always-on-top nível 'screen-saver' — sem elevar as Preferências
-  // ao MESMO nível, elas abrem ATRÁS dele quando as janelas se sobrepõem.
-  // Mesmo nível + criada depois = fica na frente.
-  settingsWin.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'screen-saver');
-  settingsWin.loadFile(path.join(__dirname, 'src/settings.html'));
-  settingsWin.on('move', saveSettingsBounds);          // só posição (tamanho é fixo)
-  settingsWin.on('closed', () => { settingsWin = null; });
-}
+const SETTINGS_W = 520, SETTINGS_H = 770;   // 520: 5 abas (a 5ª veio com o sync) não cabem em 420
 
+// settings (loadSettingsBounds/saveSettingsBounds/createSettingsWindow): extraído p/ src/ipc/settings.js (REF passo 9). save-settings fica (aplicador).
 // ---- IPC ----
 ipcMain.on('request-sessions', sendSessions);
 
@@ -1206,32 +693,12 @@ ipcMain.on('resize-move', (_e, { dw }) => {
 ipcMain.on('quit', () => app.quit());
 
 // Click-to-focus: ativa o terminal da sessão ({pid, windowid}).
-ipcMain.on('focus', (_e, target) => focusSession(target));
+// (handler 'focus' movido para src/ipc/focus.js — REF passo 4)
 
-// Aliases (apelido por sessão — chave = session_id|pid, ver renderer.aliasKey).
-ipcMain.handle('get-aliases', () => loadAliases());
-ipcMain.on('set-alias', (_e, { key, alias }) => {
-  // valida no limite IPC: key é a identidade da sessão (session_id ou pid),
-  // alias é string curta. Ignora payload malformado em vez de gravar lixo.
-  if (typeof key !== 'string' || !key || key.length > 512) return;
-  if (alias != null && (typeof alias !== 'string' || alias.length > 256)) return;
-  saveAlias(key, alias);
-  sendSessions();
-});
+// (handlers get-aliases/set-alias movidos para src/ipc/aliases.js — REF passo 7)
 
 // Settings: leitura (Preferências), gravação (aplica atalho + avisa overlay),
-// e abertura da janela a partir do renderer (caso queira botão no overlay um dia).
-ipcMain.handle('get-settings', () => settingsCfg);
-ipcMain.handle('get-lang', () => LANG);
-ipcMain.handle('get-version', () => APP_VERSION);              // rodapé das Preferências
-// Abre URL externa no navegador padrão. Só aceita http(s) — o renderer passa
-// só o link do repo, mas o guarda evita que qualquer string vire comando/protocolo.
-ipcMain.on('open-external', (_e, url) => {
-  if (typeof url === 'string' && /^https?:\/\//.test(url)) {
-    try { shell.openExternal(url); } catch {}
-  }
-});
-ipcMain.handle('get-repo-url', () => REPO_URL);
+// (handlers get-settings/get-lang/get-version/open-external/get-repo-url movidos p/ src/ipc/settings.js — REF passo 9)
 ipcMain.on('save-settings', (_e, cfg) => {
   // No live-apply isto dispara a CADA mudança nas Preferências. Só refaz o
   // trabalho caro quando o valor relevante mudou de fato (evita re-registrar o
@@ -1239,19 +706,39 @@ ipcMain.on('save-settings', (_e, cfg) => {
   const prevShortcut = settingsCfg.shortcut, prevLang = settingsCfg.lang;
   const prevChannel = settingsCfg.updateChannel;
   settingsCfg = persistSettings(cfg);
+  applySync();                                                 // re-avalia servidor/poller (sync)
   if (settingsCfg.shortcut !== prevShortcut) applyShortcut();   // re-registra só se o atalho mudou
-  if (settingsCfg.updateChannel !== prevChannel) {              // trocou de canal → reflete e re-checa na hora
-    applyUpdateChannel();
-    _updateCache = null;                                        // o cache do fallback é por canal
-    checkForUpdates();
-  }
+  if (settingsCfg.updateChannel !== prevChannel && updateIpc) updateIpc.onChannelChanged();
   if (settingsCfg.lang !== prevLang) {                          // idioma só se mudou
     applyLang();
-    if (tray && process.platform !== 'darwin') tray.setContextMenu(buildTrayMenu()); // labels do tray no idioma novo (Linux/Windows)
+    if (trayIpc) trayIpc.refreshMenu();                          // labels do tray no idioma novo (no-op no macOS: o menu é montado a cada right-click)
   }
   sendToRenderer('settings-changed', settingsCfg);
 });
-ipcMain.on('open-settings', () => createSettingsWindow());
+// (handler 'open-settings' movido p/ src/ipc/settings.js — REF passo 9)
+
+// Sync multi-máquina: lê/gravar SÓ o sub-objeto sync (validado em persistSettings).
+// Sync é feature beta: get-sync devolve null fora de uma build beta (a aba de
+// Preferências some; ninguém lê/grava sync na estável).
+ipcMain.handle('get-sync', () => SYNC_AVAILABLE ? ((settingsCfg && settingsCfg.sync) || null) : null);
+ipcMain.on('set-sync', (_e, syncCfg) => {
+  if (!SYNC_AVAILABLE) return;
+  settingsCfg = persistSettings({ sync: syncCfg });
+  applySync();
+  sendToRenderer('settings-changed', settingsCfg);
+});
+// Ver prompt de uma sessão: local lê direto do disco; remoto busca /transcript no peer.
+ipcMain.handle('fetch-transcript', async (_e, { origin, key, n }) => {
+  const N = Math.max(1, Math.min(50, parseInt(n || 20, 10)));
+  if (!origin || origin === 'local') {
+    try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, N) : []; }
+    catch { return []; }
+  }
+  const s = (settingsCfg && settingsCfg.sync) || {};
+  const host = originToHost.get(origin);
+  if (!host) return [];
+  return net.fetchTranscriptFromPeer({ host, port: s.port, token: s.token, key, n: N });
+});
 
 // Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair
 // reusam os canais 'toggle-visibility' e 'quit' já registrados.
@@ -1261,48 +748,9 @@ ipcMain.on('install-hooks', () => installHookFromApp());
 ipcMain.on('remove-hooks', () => removeHookFromApp());
 
 // Notificação no vermelho.
-ipcMain.on('notify', (_e, { title, body }) => {
-  try { new Notification({ title, body, silent: true }).show(); } catch {}
-});
+// (handler 'notify' movido para src/ipc/tray.js — REF passo 8)
 
-// ---- som de alerta customizado ----
-// Escolher um arquivo de áudio: abre o diálogo nativo e COPIA o arquivo pra
-// BASE_DIR/sounds/alert.<ext> (sobrevive a mover/apagar o original). Devolve o
-// caminho da cópia (o que fica salvo em settings.soundFile) ou null se cancelou.
-ipcMain.handle('pick-sound-file', async () => {
-  try {
-    const r = await dialog.showOpenDialog({
-      title: 'Escolher som de alerta',
-      properties: ['openFile'],
-      filters: [{ name: 'Áudio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus'] }],
-    });
-    if (r.canceled || !r.filePaths || !r.filePaths[0]) return null;
-    const src = r.filePaths[0];
-    const dir = path.join(BASE_DIR, 'sounds');
-    fs.mkdirSync(dir, { recursive: true });
-    const ext = (path.extname(src).toLowerCase().match(/^\.[a-z0-9]{1,8}$/) || ['.snd'])[0];
-    const dest = path.join(dir, 'alert' + ext);
-    // limpa cópias antigas (alert.*) pra não acumular formatos
-    for (const f of fs.readdirSync(dir)) {
-      const p = path.join(dir, f);
-      if (/^alert\./.test(f) && p !== dest) { try { fs.unlinkSync(p); } catch { /* ignore */ } }
-    }
-    fs.copyFileSync(src, dest);
-    return dest;
-  } catch { return null; }
-});
-// Ler os bytes do som custom pro renderer decodificar (Web Audio). TRAVA DE
-// SEGURANÇA: só lê de dentro de BASE_DIR/sounds (nunca um caminho arbitrário),
-// pra que uma config podre não vire leitura de arquivo qualquer do disco.
-ipcMain.handle('get-sound-bytes', (_e, file) => {
-  try {
-    if (typeof file !== 'string') return null;
-    const soundsDir = path.join(BASE_DIR, 'sounds');
-    const resolved = path.resolve(file);
-    if (resolved !== soundsDir && !resolved.startsWith(soundsDir + path.sep)) return null;
-    return new Uint8Array(fs.readFileSync(resolved));
-  } catch { return null; }
-});
+// (handlers pick-sound-file/get-sound-bytes movidos p/ src/ipc/settings.js — REF passo 9)
 
 // Tray: mostrar/ocultar, autostart, sair.
 ipcMain.on('toggle-visibility', toggleWin);
@@ -1310,13 +758,400 @@ ipcMain.on('toggle-visibility', toggleWin);
 ipcMain.on('reveal-overlay', () => { if (settingsCfg.revealOnRed) revealIfHidden(); });
 
 // Tray dinâmico: renderer manda a pior cor + contagem a cada render.
-ipcMain.on('set-tray-level', (_e, info) => setTrayLevel(info || {}));
+// (handler 'set-tray-level' movido para src/ipc/tray.js — REF passo 8)
 
 // Quick Launcher: lista de agentes detectados + sobe um agente num terminal.
-ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
-ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));
+// (handlers get-launchers/launch-agent movidos para src/ipc/launcher.js — REF passo 5)
+ipcMain.on('attach-remote', (_e, t) => attachRemote(t || {}));   // attach tmux (local ou via peer)
+
+// ---- sync multi-máquina (P2P): servidor + poller, OPT-IN (fase 2) ----
+// Sessões remotas dos peers são mergeadas em readSessions(); chegam com `origin`
+// = nome do peer → sessionKey (namespaced) separa das locais. Idempotente: só
+// derruba/sobe o lado que mudou de desejo/config. Sem efeito com sync desligado
+// (superfície zero). Token vazio => nada sobe (fail-safe).
+let remoteSessions = new Map();   // peerHost -> sessions[] (já com origin)
+let originToHost = new Map();     // peerNodeName -> peerHost (p/ fetch-transcript remoto)
+const livePeers = new Set();      // hosts que responderam /sessions (ATL ligado) — o menu + só mostra vivos
+let syncServer = null, syncServerKey = null;
+// Derruba o servidor de sync E os shells /pty JÁ conectados. server.close()
+// sozinho só para de aceitar conexões novas: desligar o sync (ou revogar o
+// token) deixava um shell remoto em curso vivo indefinidamente — o oposto do
+// que o toggle promete (PR-32 #07). closeAllPty só existe com allowAttach.
+function closeSyncServer() {
+  if (!syncServer) return;
+  try { if (syncServer.closeAllPty) syncServer.closeAllPty(); } catch {}
+  try { syncServer.close(); } catch {}
+  syncServer = null; syncServerKey = null;
+}
+let stopPoll = null, pollKey = null;
+let settingsIpc = null;   // settings window module (src/ipc/settings.js) — setado no boot, lido no tray
+let trayIpc = null;   // tray+notify module (src/ipc/tray.js) — setado no boot PRIMEIRO (fornece notifyUser)
+let updateIpc = null;   // auto-update module (src/ipc/update.js) — setado no boot, lido no tray
+let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no boot, lido no tray
+let onlineSet = null, onlineTimer = null;   // peers online per Tailscale (gate do poller)
+function syncNodeName() { return (settingsCfg.sync && settingsCfg.sync.node) || os.hostname() || 'local'; }
+function applySync() {
+  if (!SYNC_AVAILABLE) return;   // feature beta: estável/fonte nunca sobem servidor/poller
+  const s = (settingsCfg && settingsCfg.sync) || {};
+  const tok = typeof s.token === 'string' ? s.token : '';
+  // SERVIDOR (compartilhar minhas sessões): binda no IP da tailnet
+  // (detectTailnetIP) — peers alcançam direto em http://<ip>:<porta>; auth por
+  // token + WireGuard E2E (sem tailscale serve). Reinicia só se a config mudou.
+  // O desligamento passa por closeSyncServer, que derruba TAMBÉM os shells /pty
+  // já conectados (PR-32 #07).
+  const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${s.allowAttach ? 1 : 0}|${syncNodeName()}` : '';
+  if (!srvKey && syncServer) { closeSyncServer(); }
+  if (srvKey && srvKey !== syncServerKey) {
+    if (syncServer) { closeSyncServer(); }
+    const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
+    try {
+      syncServer = net.startServer({
+        port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts, allowAttach: !!s.allowAttach, ptySpawn: createPty, bindHost,
+        getSessions: () => collect.readSessions(),
+        getTranscript: (key, n) => {
+          try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
+          catch { return []; }
+        },
+      });
+      syncServerKey = srvKey;
+      try { console.log('[sync] server up ' + (bindHost || '127.0.0.1') + ':' + s.port + ' (' + syncNodeName() + (bindHost ? '' : ' — localhost só, sem tailscale?') + ')'); } catch {}
+    } catch (e) { try { console.log('[sync] server falhou: ' + e.message); } catch {} syncServer = null; syncServerKey = null; }
+  }
+  // CLIENTE (observar peers): poll de /sessions a cada 5s.
+  const pKey = (s.enabled && Array.isArray(s.peers) && s.peers.length && tok) ? `${s.port}|${tok}|${s.peers.map((p) => p.host).join(',')}` : '';
+  if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; clearInterval(onlineTimer); onlineTimer = null; remoteSessions.clear(); livePeers.clear(); sendSessions(); }
+  if (pKey && pKey !== pollKey) {
+    if (stopPoll) { stopPoll(); }
+    // Gate Tailscale: só tenta rede em peers que o Tailscale diz online. Set
+    // refresh a cada 10s (barato, local); null => sem tailscale => sem gate (cai p/ backoff).
+    onlineSet = net.tailscaleOnlineSet();
+    clearInterval(onlineTimer);
+    onlineTimer = setInterval(() => { onlineSet = net.tailscaleOnlineSet(); }, 10000);
+    stopPoll = net.pollPeers({
+      peers: s.peers, port: s.port, token: tok,
+      isOnline: (h) => net.peerOnline(onlineSet, h),   // PR-32 #16: casa hostname curto / FQDN / host:porta / IP
+      onSessions: (host, sessions) => {
+        remoteSessions.set(host, sessions);
+        livePeers.add(host);   // ATL ligado no peer → habilita no menu + da termWin
+        for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto
+        sendSessions();
+      },
+      // Peer caiu → DESCARTA as sessões dele. Antes só saía de livePeers (menu
+      // da termWin) e remoteSessions ficava intacto: as sessões do peer morto
+      // seguiam na lista indefinidamente, com o idle crescendo — viravam
+      // fantasmas que escalam pra vermelho e apitam alerta falso. remoteSessions
+      // só era limpo no teardown global do sync (PR-32 #10; o fix anterior
+      // cobria só o desligar-o-sync, não a queda de um peer).
+      onPeerState: (host, online) => {
+        try { console.log('[sync] peer ' + host + ' ' + (online ? 'online' : 'offline (backoff)')); } catch {}
+        if (online) { livePeers.add(host); return; }
+        livePeers.delete(host);
+        if (remoteSessions.delete(host)) sendSessions();   // some da lista na hora
+      },
+    });
+    pollKey = pKey;
+  }
+}
+
+// ---- Janela Terminal (abas) — separada do overlay, maximizável ----
+// O overlay NÃO hospeda mais o terminal: o estado dos pty/ws vive aqui (Map
+// termSessions) e o renderer (src/term.html) só desenha abas + xterm, falando
+// por IPC (tabId). Assim o overlay fica leve (não cresce, não bloqueia cliques).
+let ptyLib = null;
+// PATH garantido pro pty: electron/Chromium no Linux pode herdar PATH restrito
+// (sem /usr/bin) → tmux/bash não achados → o auto-wrap em tmux falhava silenciosamente.
+// Acrescenta os dirs base no fim (não sobrescreve o que já tá lá).
+function ptyEnv() {
+  const env = Object.assign({}, process.env);
+  const cur = String(env.PATH || '').split(':').filter(Boolean);
+  for (const d of ['/usr/local/bin', '/usr/bin', '/bin']) if (!cur.includes(d)) cur.push(d);
+  env.PATH = cur.join(':');
+  return env;
+}
+// true se o bin existe no PATH do main OU nos dirs base (fallback robusto ao scanPathBin).
+function hasBin(bin) {
+  if (scanPathBin(bin)) return true;
+  for (const d of ['/usr/local/bin', '/usr/bin', '/bin']) { try { if (fs.existsSync(d + '/' + bin)) return true; } catch {} }
+  return false;
+}
+function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
+// factory p/ o SERVIDOR /pty (DI em net.startServer): 1 node-pty por conexão
+// remota (peer attachando em MIM). Devolve handle {write,resize,kill}.
+function createPty(cmd, cols, rows, { onData, onExit }) {
+  const p = ptyEnsure(); if (!p) throw new Error('node-pty indisponível');
+  const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: ptyEnv() });
+  proc.onData(onData); proc.onExit(onExit);
+  return { write: (d) => { try { proc.write(d); } catch {} }, resize: (c, r) => { try { proc.resize(c, r); } catch {} }, kill: () => { try { proc.kill(); } catch {} } };
+}
+
+let termWin = null;
+const termSessions = new Map();   // tabId -> { title, kind, origin, tmux_session, proc, ws, cols, rows }
+let tabSeq = 0;
+let termWinReady = false;         // term.html carregou? Fila de IPCs até did-finish-load — evita perder term-tab-added/pty-out na 1ª abertura (janela vinha vazia).
+const termQueue = [];
+// A termWin precisa estar VISÍVEL e ESTÁVEL (WM mapeou) quando o renderer cria o
+// xterm (term.open). Abrir o xterm durante a transição hide→show (X11 frameless
+// remapeia assíncrono) deixa o render quebrado: a aba vinha preta e nem resize
+// recuperava. O main SÓ entrega o term-tab-added quando a janela está estável;
+// até lá, guarda aqui. (document.hidden no renderer não detecta hide/show de
+// BrowserWindow — por isso o controle fica aqui, onde isVisible() é confiável.)
+let termWinStable = false;
+const pendingTermTabs = [];
+function flushPendingTermTabs() {
+  termWinStable = true;
+  if (!termWinReady || !termWin || termWin.isDestroyed()) return;
+  for (const p of pendingTermTabs.splice(0)) { try { termWin.webContents.send('term-tab-added', p); } catch {} }
+}
+function sendTerm(ch, payload) {
+  if (!termWin || termWin.isDestroyed()) return;
+  if (!termWinReady) { termQueue.push([ch, payload]); return; }
+  try { termWin.webContents.send(ch, payload); } catch {}
+}
+let termBoundsTimer = null;
+function loadTermBounds() {
+  try {
+    const b = JSON.parse(fs.readFileSync(TERM_BOUNDS_FILE, 'utf8'));
+    if (b && [b.x, b.y, b.width, b.height].every((n) => typeof n === 'number')) return b;
+  } catch {}
+  return null;
+}
+function saveTermBounds() {
+  if (!termWin || termWin.isDestroyed() || termWin.isMaximized()) return;   // não persiste maximizada (senão reabre do tamanho da tela sem estar max)
+  clearTimeout(termBoundsTimer);
+  termBoundsTimer = setTimeout(() => {
+    try {
+      const b = termWin.getBounds();
+      fs.writeFileSync(TERM_BOUNDS_FILE, JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height }));
+    } catch {}
+  }, 300);
+}
+// Reexibe a janela Terminal depois de um hide(). No Linux/X11 uma janela
+// `frame:false` + `transparent:true` costuma ficar presa em WM_STATE=Withdrawn:
+// o show() do Electron pede o mapeamento, mas o WM ignora e a janela some da
+// lista de janelas — o app parecia "não reabrir", ou reabrir vazio, quando na
+// verdade o conteúdo estava intacto e a JANELA é que nunca voltou.
+// showInactive()+show() força o remapeamento; o restore() cobre o caso de ela
+// ter sido minimizada antes de esconder.
+function revealTermWin() {
+  if (!termWin || termWin.isDestroyed()) return;
+  try {
+    termWinStable = false;   // transição hide→show: não criar xterms até o WM mapear
+    if (termWin.isMinimized()) termWin.restore();
+    termWin.showInactive();
+    termWin.show();
+    termWin.moveTop();
+    termWin.focus();
+    // Reabrir a termWin (hide→show): o WM no X11 frameless+transparent remapeia a
+    // janela de forma ASSÍNCRONA. Criar/repintar o xterm antes do remapeamento
+    // deixa o canvas preto. Com o delay o WM já mapeou → a janela está ESTÁVEL:
+    // libera os term-tab-added guardados e avisa o renderer pra repintar.
+    setTimeout(() => {
+      if (!termWin || termWin.isDestroyed() || !termWin.isVisible()) return;
+      flushPendingTermTabs();
+      sendTerm('term-shown');
+    }, 120);
+  } catch {}
+}
+
+function ensureTermWin() {
+  if (termWin && !termWin.isDestroyed()) { revealTermWin(); return termWin; }
+  const wa = screen.getPrimaryDisplay().workArea;
+  const b = loadTermBounds();
+  const w = (b && b.width) || Math.min(960, Math.max(640, Math.round(wa.width * 0.6)));
+  const h = (b && b.height) || Math.min(680, Math.max(380, Math.round(wa.height * 0.7)));
+  // Valida a posição salva contra TODAS as telas, não só a primária: num setup
+  // multi-monitor a janela movida pro monitor da esquerda (x menor) ou da direita
+  // (x além da largura do primário) tinha a posição DESCARTADA em silêncio a cada
+  // reabertura, anulando o persist (PR-32 #19). Fora de qualquer tela (monitor
+  // desconectado) → undefined, e o Electron centraliza no primário.
+  const keep = boundsOnScreen(b, screen.getAllDisplays());
+  const x = keep ? b.x : undefined;
+  const y = keep ? b.y : undefined;
+  termWin = new BrowserWindow({
+    width: w, height: h, minWidth: 560, minHeight: 320, title: 'ATL Terminal', x, y,
+    frame: false, transparent: true, resizable: true, maximizable: true, fullscreenable: true,
+    hasShadow: false, backgroundColor: '#00000000',
+    alwaysOnTop: false, skipTaskbar: false, autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  termWin.loadFile(path.join(__dirname, 'src/term.html'));
+  termWin.webContents.once('did-finish-load', () => {
+    termWinReady = true;
+    for (const [ch, p] of termQueue.splice(0)) { try { termWin.webContents.send(ch, p); } catch {} }
+    sendTerm('term-maximized', !!termWin.isMaximized());   // estado inicial: renderer tira o radius se maximizada
+    flushPendingTermTabs();   // 1ª carga: janela nasce visível/estável → libera abas guardadas
+  });
+  // Janela reapareceu (show do ensureTermWin, restore do WM): o renderer precisa
+  // REPINTAR o xterm — enquanto esteve oculta o canvas foi descartado e o buffer
+  // não. Sem isso a aba reabre em branco com o tmux vivo do outro lado.
+  termWin.on('restore', () => sendTerm('term-shown'));
+  // (re)mostrar a termWin (× = hide → clicar de novo = show): o canvas do xterm é
+  // descartado enquanto a janela esteve oculta e o renderer precisa repintar.
+  // No Linux/X11 o visibilitychange é unreliable pra hide/show de BrowserWindow,
+  // então avisamos pelo canal do main (igual ao restore) — sem isto a aba
+  // reabria em branco, com o tmux/pty vivo do outro lado.
+  termWin.on('show', () => sendTerm('term-shown'));
+  termWin.on('maximize', () => sendTerm('term-maximized', true));
+  termWin.on('unmaximize', () => sendTerm('term-maximized', false));
+  termWin.on('resize', saveTermBounds);   // persiste tamanho/posição (debounce; ignora se maximizada)
+  termWin.on('move', saveTermBounds);
+  // Fechar a janela (Alt+F4, X do WM, "Sair" no tray) MATA os ptys/WS antes de
+  // zerar o Map. Sem isso o clear() apagava as referências e o will-quit não
+  // tinha mais o que matar → vazava um node-pty + tmux por aba, a cada
+  // abre/fecha (PR-32 #08).
+  termWin.on('closed', () => {
+    for (const id of [...termSessions.keys()]) destroyTermSession(id);
+    termWin = null; termWinReady = false; termWinStable = false; termQueue.length = 0; pendingTermTabs.length = 0; termSessions.clear();
+  });
+  return termWin;
+}
+function destroyTermSession(tabId) {
+  const s = termSessions.get(tabId); if (!s) return;
+  try { if (s.proc) s.proc.kill(); } catch {}
+  if (s.ws) { try { s.ws.close(); } catch {} }
+  termSessions.delete(tabId);
+}
+function addTermSession({ title, kind, origin, tmux_session, sessionKey, label, cwd }) {
+  const tabId = ++tabSeq;
+  // label/cwd ficam guardados p/ RECONSTRUIR o título quando o alias é removido
+  // (rename pra vazio) — sem eles a aba cairia no 'tmux: <sessão>'.
+  termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, label: label || null, cwd: cwd || null, proc: null, ws: null, cols: 80, rows: 24 });
+  // Só entrega o term-tab-added com a termWin ESTÁVEL; criar o xterm antes (na
+  // transição hide→show) quebra o render. O pty-out que chega antes o renderer
+  // bufferiza (term ainda não existe lá).
+  if (termWinStable && termWinReady) sendTerm('term-tab-added', { tabId, title });
+  else pendingTermTabs.push({ tabId, title });
+  return tabId;
+}
+function closeTermSession(tabId) {
+  destroyTermSession(tabId);
+  sendTerm('term-tab-removed', { tabId });
+  if (!termSessions.size && termWin && !termWin.isDestroyed()) {
+    // FECHA (não hide) a termWin ao despovoar. Uma termWin REAPROVEITADA
+    // (hide→show) não volta a renderizar o xterm de uma aba reaberta (fica preta,
+    // mesmo com o ws mandando output e o write sendo chamado) — só uma janela
+    // NOVA, criada no próximo attach via did-finish-load, renderiza certo (é o
+    // caminho da 1ª aba, que sempre funcionou). O close descarta a page; o
+    // ensureTermWin recria uma fresca.
+    try { termWin.close(); } catch {}
+  }
+}
+// spawn node-pty local pra uma aba (shell novo ou tmux attach local).
+function spawnPtyLocal(tabId, cmd, cwd) {
+  const p = ptyEnsure(); const s = termSessions.get(tabId);
+  if (!p || !s) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mnode-pty indisponível\x1b[0m\r\n' }); return; }
+  try { console.log('[term] spawn tabId=' + tabId + ' cmd=' + JSON.stringify(cmd));
+    const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: cwd || process.env.HOME, env: ptyEnv() });
+    proc.onData((d) => sendTerm('pty-out', { tabId, data: d }));
+    // Zera s.proc no exit: sem isso a aba fica com uma referência a um processo
+    // MORTO e o teste de "conexão caiu" (!ws && !proc) nunca dispara — o revive
+    // não acontecia e a aba reabria vazia.
+    proc.onExit(() => { const cur = termSessions.get(tabId); if (cur && cur.proc === proc) cur.proc = null; sendTerm('pty-exit', { tabId }); });
+    s.proc = proc;
+    // mesma razão do remoto: o spawn usou s.cols/s.rows; re-fit pega o tamanho real.
+    sendTerm('term-refit', { tabId });
+  } catch (e) { console.log('[term] spawn FAIL tabId=' + tabId + ': ' + (e.message || e)); sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m' + (e.message || e) + '\x1b[0m\r\n' }); }
+}
+// cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
+function openRemotePty(tabId, { host, port, token, tmux_session }) {
+  const s = termSessions.get(tabId); if (!s) return;
+  const url = 'ws://' + host + ':' + (port || 47474) + '/pty';
+  let ws;
+  try { ws = new (require('ws'))(url, { headers: { Authorization: 'Bearer ' + token } }); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
+  s.ws = ws;
+  ws.on('open', () => {
+    try { ws.send(JSON.stringify({ type: 'start', tmux_session, cols: s.cols, rows: s.rows })); } catch {}
+    // o `start` usa s.cols/s.rows (possivelmente defasados). Pede ao renderer
+    // o tamanho REAL da janela e re-envia → tmux remoto desenha no tamanho certo.
+    sendTerm('term-refit', { tabId });
+  });
+  ws.on('message', (raw) => {
+    let m; try { m = JSON.parse(raw); } catch { return; }
+    if (m.type === 'out') sendTerm('pty-out', { tabId, data: m.data });
+    else if (m.type === 'exit') sendTerm('pty-exit', { tabId });
+    else if (m.type === 'error') sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + m.msg + '\x1b[0m\r\n' });
+  });
+  ws.on('error', (e) => sendTerm('pty-out', { tabId, data: '\r\n\x1b[31m[remoto] ' + (e.message || 'erro de conexão') + '\x1b[0m\r\n' }));
+  // Queda de conexão (peer dorme, wifi cai, sync desligado do outro lado) é o
+  // modo de falha MAIS comum e não emite 'error' — só 'close'. Sem tratar, a
+  // aba ficava "assombrada": parecia viva, não respondia, sem aviso nenhum
+  // (PR-32 #17). Avisa e encerra a aba, como no fim de um pty local.
+  ws.on('close', () => {
+    const cur = termSessions.get(tabId);
+    if (!cur || cur.ws !== ws) return;   // aba já fechada/reconectada — não polui a nova
+    cur.ws = null;
+    sendTerm('pty-out', { tabId, data: '\r\n\x1b[33m[remoto] conexão encerrada\x1b[0m\r\n' });
+    sendTerm('pty-exit', { tabId });
+  });
+}
+// ---- handlers IPC da janela Terminal (abas) ----
+ipcMain.on('term-new-shell', (_e, host) => {
+  ensureTermWin();
+  if (host && host !== 'local') {            // shell novo num peer remoto (via /pty, sem tmux_session)
+    const cfg = (settingsCfg && settingsCfg.sync) || {};
+    const tabId = addTermSession({ title: host + ' · shell', kind: 'remote', origin: host });
+    if (!cfg.token) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem token sync configurado\x1b[0m\r\n' }); return; }
+    openRemotePty(tabId, { host, port: cfg.port, token: cfg.token });   // sem tmux_session → shell novo no peer
+  } else {
+    const tabId = addTermSession({ title: 'shell', kind: 'local' });
+    const hasTmux = hasBin('tmux');
+    const cmd = hasTmux ? launcher.tmuxWrap([process.env.SHELL || 'bash'], launcher.tmuxSessionName('shell') + '-' + Date.now().toString(36)) : [process.env.SHELL || 'bash'];
+    spawnPtyLocal(tabId, cmd, process.env.HOME);
+  }
+});
+ipcMain.handle('term-hosts', () => {
+  const peers = ((settingsCfg && settingsCfg.sync) || {}).peers || [];
+  const live = peers.filter((p) => livePeers.has(p.host));   // só quem tem o ATL ligado (respondeu /sessions)
+  return [{ id: 'local', label: 'local' }, ...live.map((p) => ({ id: p.host, label: p.name || p.host }))];
+});
+ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/max/close
+  if (!termWin || termWin.isDestroyed()) return;
+  try {
+    if (op === 'min') termWin.minimize();
+    else if (op === 'max') termWin.isMaximized() ? termWin.unmaximize() : termWin.maximize();
+    else if (op === 'close') termWin.hide();
+  } catch {}
+});
+// ---- resize via grip (frameless+transparent não tem resize nativo no Linux) ----
+let termResizeStart = null;
+ipcMain.on('resize-term-start', () => { if (termWin && !termWin.isDestroyed()) termResizeStart = termWin.getSize(); });
+ipcMain.on('resize-term-move', (_e, { dw, dh }) => {
+  if (!termWin || termWin.isDestroyed() || !termResizeStart) return;
+  try { termWin.setSize(Math.max(560, Math.round(termResizeStart[0] + dw)), Math.max(320, Math.round(termResizeStart[1] + dh)), false); } catch {}
+});
+ipcMain.on('resize-term-end', () => { termResizeStart = null; });
+// Ativação é visual no renderer (roteamento é por tabId, que vem no input/resize),
+// mas aproveitamos pra RELIGAR a aba se a conexão dela tiver morrido — quem clica
+// numa aba vazia quer o conteúdo de volta, e sem isto o único caminho era fechar
+// e reabrir pela lista.
+ipcMain.on('term-switch-tab', (_e, tabId) => {
+  const s = termSessions.get(tabId);
+  if (s && !s.ws && !s.proc) reviveTermSession(tabId, s);
+});
+ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });
+ipcMain.on('term-input', (_e, { tabId, data }) => {
+  const s = termSessions.get(tabId); if (!s) return;
+  if (s.ws) { try { s.ws.send(JSON.stringify({ type: 'in', data })); } catch {} }
+  else if (s.proc) { try { s.proc.write(data); } catch {} }
+});
+ipcMain.on('term-resize', (_e, { tabId, cols, rows }) => {
+  const s = termSessions.get(tabId); if (!s) return;
+  if (cols > 0) s.cols = cols;
+  if (rows > 0) s.rows = rows;
+  if (s.ws) { try { s.ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {} }
+  else if (s.proc) { try { s.proc.resize(cols, rows); } catch {} }
+});
 
 app.whenReady().then(() => {
+  // Sem menu de aplicação: o menu default do Electron registra aceleradores
+  // globais (Ctrl+W fecha a janela, Ctrl+R recarrega o renderer, Ctrl+Q mata o
+  // app) que são teclas ORDINÁRIAS dentro de um shell na janela Terminal —
+  // digitá-las destruía a janela/sessão. autoHideMenuBar só ESCONDE a barra, os
+  // aceleradores seguem ativos; remover o menu é o que os desliga (PR-32 #15).
+  // NÃO no macOS: lá o menu é do sistema e carrega Cmd+C/V/Q/W — removê-lo
+  // quebraria o colar no campo de token das Preferências (Cmd+W/R/Q também não
+  // colidem com o shell, que usa Ctrl).
+  if (process.platform !== 'darwin') { try { Menu.setApplicationMenu(null); } catch {} }
   migrateOldBase();                              // dados da era claude-traffic-light
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch {}
   // mantém a cópia estável do hook em dia (o settings.json aponta pra ela)
@@ -1330,38 +1165,68 @@ app.whenReady().then(() => {
   settingsCfg = loadSettings();                      // threshold/atalho/idioma do usuário
   applyLang();                                       // Preferências (lang) > locale do sistema
   createWindow();
-  createTray();
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
-  if (backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
-  _stateWatcher = chokidar
+  if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
+  chokidar
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })
     .on('all', () => sendSessions());
   reapDead();
-  _sessionInterval = setInterval(() => { _discAt = 0; reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
+  setInterval(() => { collect.invalidateDiscovery(); reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
   // Consumo/reset dos agentes: GLM (rede, cache 30s) + Codex/Antigravity (disco).
   // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
   // O Claude é LAZY: o loop de fundo NÃO bate na API dele (limite agregado do
   // 429); só o boot e os gatilhos de UI (abrir/revelar overlay, ⟳) buscam o %.
-  collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o %
+  trayIpc = require('./src/ipc/tray').setupTrayIpc({   // tray extraído (REF passo 8) — PRIMEIRO: notifyUser p/ collectAndSendUsage e os demais
+    ipcMain, APP_VERSION, toggleWin, assetsDir: path.join(__dirname, 'assets'),
+    buildMenu: () => buildTrayMenu(),   // compositor (main): refs launcherIpc/updateIpc resolvidas só no call (createTray)
+  });
+  notifyUser = trayIpc.notifyUser;   // alias p/ update/focus/launcher (recebem por DI)
+  collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o % (notifyUser já resolvido)
   _usageInterval = setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
-  setupAutoUpdater();                            // update checker (boot + 1h) — AppImage auto-update
+  updateIpc = require('./src/ipc/update').setupUpdateIpc({   // auto-update extraído (REF passo 1)
+    getMainWindow: () => win, getSettings: () => settingsCfg,
+    T, revealIfHidden, REPO_URL, APP_VERSION, AUTOSTART_FILE,
+  });
+  require('./src/ipc/aliases').setupAliasesIpc({   // aliases extraído (REF passo 7)
+    ipcMain, ALIASES_FILE, sendSessions,
+    onAliasSaved: (key, alias) => {   // atualiza o título da aba Terminal (alias é o nome da aba)
+      for (const [id, s] of termSessions) {
+        if (s.sessionKey === key) {
+          const t = termTabTitle({ alias, label: s.label, cwd: s.cwd, tmux_session: s.tmux_session, origin: s.origin, isLocal: s.kind === 'local' });
+          s.title = t; sendTerm('term-tab-title', { tabId: id, title: t });
+        }
+      }
+    },
+  });
+  require('./src/ipc/focus').setupFocusIpc({   // focus extraído (REF passo 4)
+    ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND,
+  });
+  launcherIpc = require('./src/ipc/launcher').setupLauncherIpc({   // launcher extraído (REF passo 5)
+    ipcMain, getSettings: () => settingsCfg, notifyUser, T, scanPathBin, hasBin, lastSessionCwd,
+    ensureTermWin, addTermSession, spawnPtyLocal,
+  });
+  settingsIpc = require('./src/ipc/settings').setupSettingsIpc({   // settings extraído (REF passo 9) — antes do createTray (tray referencia createSettingsWindow)
+    ipcMain, getSettings: () => settingsCfg, getLang: () => LANG, T, APP_VERSION, REPO_URL,
+    SETTINGS_BOUNDS_FILE, BASE_DIR, appDir: __dirname, SETTINGS_W, SETTINGS_H,
+  });
+  trayIpc.createTray();   // DEPOIS de launcherIpc/updateIpc/settingsIpc: buildTrayMenu os referencia
+  applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
 
 // Referências para cleanup no encerramento.
 let _stateWatcher = null;
 let _sessionInterval = null;
 let _usageInterval = null;
-let _updaterInterval = null;
 
 app.on('window-all-closed', () => app.quit());
-// macOS: re-abrir ao clicar no ícone do app (faz sentido pro dev run — no build
+// macOS: re-abrir ao clicar no ícone do app (faz sentido no dev run — no build
 // empacotado o LSUIElement remove o ícone do Dock; aqui é reveal, não toggle).
 app.on('activate', () => { if (win && !win.isDestroyed()) revealIfHidden(); });
 app.on('will-quit', () => {
+  for (const id of [...termSessions.keys()]) destroyTermSession(id);
   globalShortcut.unregisterAll();
   if (_sessionInterval) clearInterval(_sessionInterval);
   if (_usageInterval) clearInterval(_usageInterval);
-  if (_updaterInterval) clearInterval(_updaterInterval);
   if (_stateWatcher) _stateWatcher.close().catch(() => {});
   kiroAdapter.stop();
 });
@@ -1687,204 +1552,4 @@ ipcMain.on('force-usage', () => {
   } catch { /* ignore */ }
   collectAndSendUsage({ claudeFetch: true });   // ⟳: gatilho de UI → busca o % agora
 });
-
-// ---- update checker (versão + release mais nova do GitHub) ----
-// Detecta COMO o app foi instalado pra oferecer o caminho de atualização certo.
-//   appimage → AppImage type 2 (execPath em /tmp/.mount_<nome>, ou *.AppImage)
-//   deb      → instalado em /opt (electronic-builder deb vira /opt/AI Traffic Lights)
-//   npm      → rodando de node_modules (npm install / dev)
-//   source   → clone do repo (dev direto)
-//
-// A detecção de AppImage NÃO depende só da env APPIMAGE: o Electron 43 às vezes
-// a perde no re-exec do sandbox, então conferimos também o execPath (mount point
-// /tmp/.mount_<nome>). Quando detectamos AppImage sem a env, recuperamos o caminho
-// do .AppImage e re-exportamos em process.env.APPIMAGE — o electron-updater
-// depende dela pra (a) saber que é AppImage e (b) qual arquivo substituir na
-// instalação. Sem isto, o auto-update nunca aparecia (sempre caía em "abrir release").
-function detectInstallMethod() {
-  if (process.env.APPIMAGE) return 'appimage';
-  const exe = process.execPath || '';
-  if (/^\/tmp\/\.mount_[^/]+\//.test(exe) || /\.AppImage$/i.test(exe)) {
-    const resolved = resolveAppImagePath();
-    if (resolved && !process.env.APPIMAGE) process.env.APPIMAGE = resolved;
-    return 'appimage';
-  }
-  const appPath = app.getAppPath();
-  if (/\/opt\/AI Traffic Lights/.test(exe) || appPath.includes('/opt/')) return 'deb';
-  if (appPath.includes('node_modules')) return 'npm';
-  return 'source';
-}
-
-// Recupera o caminho absoluto do .AppImage em execução quando o runtime perdeu a
-// env APPIMAGE. Cascata: env → execPath (*.AppImage) → Exec= do .desktop do app
-// (fonte confiável mantida pelo próprio app) → busca por basename do mount em
-// locais canônicos (~/Applications, ~/.local/bin, ~/Downloads, /opt).
-function resolveAppImagePath() {
-  if (process.env.APPIMAGE) return process.env.APPIMAGE;
-  const exe = process.execPath || '';
-  if (/\.AppImage$/i.test(exe)) return exe;
-  try {
-    const home = app.getPath('home');
-    const desktops = [
-      path.join(home, '.local', 'share', 'applications', 'ai-traffic-lights.desktop'),
-      AUTOSTART_FILE,
-    ];
-    for (const dp of desktops) {
-      try {
-        const m = fs.readFileSync(dp, 'utf8').match(/^Exec=(\S+\.AppImage)\b/m);
-        if (m && fs.existsSync(m[1])) return m[1];
-      } catch {}
-    }
-    const mm = exe.match(/\/tmp\/\.mount_([^/]+)/);
-    if (mm) {
-      const dirs = [path.join(home, 'Applications'), path.join(home, '.local', 'bin'), path.join(home, 'Downloads'), '/opt'];
-      for (const d of dirs) {
-        let ents; try { ents = fs.readdirSync(d); } catch { continue; }
-        for (const f of ents) if (/\.AppImage$/i.test(f) && /ai.?traffic.?lights/i.test(f)) return path.join(d, f);
-      }
-    }
-  } catch {}
-  return null;
-}
-// Compara versões semver ('0.3.2' vs '0.4.0'); >0 se a>b, 0 se iguais, <0 se a<b.
-function semverCmp(a, b) {
-  const pa = String(a || '').replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = String(b || '').replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
-  return 0;
-}
-// ---- auto-updater (AppImage) + estado de update ----
-// electron-updater só auto-atualiza AppImage no Linux; deb/npm/source caem no
-// fallback GitHub-API (só informativo → abre a release no navegador).
-let autoUpdater = null;
-let _manualCheck = false;   // verificação manual pelo tray → notifica o resultado
-let updateState = {
-  hasUpdate: false, latest: null, method: null,
-  status: 'idle', progress: 0, url: null,
-  canAutoInstall: false, error: null,
-};
-function emitUpdateState() {
-  if (win && !win.isDestroyed()) win.webContents.send('update-state', updateState);
-}
-function setUpdateState(patch) { updateState = { ...updateState, ...patch }; emitUpdateState(); }
-
-// Aplica o canal escolhido nas Preferências ao autoUpdater. Chamado no setup e
-// de novo sempre que o toggle muda (as Preferências aplicam ao vivo), porque as
-// flags são lidas a cada checagem — não só na construção.
-// A tradução canal→flags é pura e vive em src/settings.js (updaterFlags).
-function applyUpdateChannel() {
-  if (!autoUpdater) return;                    // deb/npm/source: fallback GitHub-API, sempre estável
-  const f = settingsLib.updaterFlags(settingsCfg.updateChannel, APP_VERSION);
-  autoUpdater.allowPrerelease = f.allowPrerelease;
-  autoUpdater.allowDowngrade = f.allowDowngrade;
-}
-
-// Configura o autoUpdater (eventos) e dispara a 1ª checagem + scheduler 1h.
-// Chamado no app.whenReady (precisa de app pronto p/ detectInstallMethod/getAppPath).
-function setupAutoUpdater() {
-  const method = detectInstallMethod();
-  updateState.method = method;
-  // Auto-update via electron-updater SÓ para AppImage (DECISÃO, PR #46 P3).
-  // .dmg e .zip não são assinados/notarizados (sem Apple Developer ID), então
-  // o electron-updater NÃO é instanciado neles: o acquireSquirrelMac baixaria
-  // o zip, mas o code-sign check falharia e a instalação quebraria. DMG/
-  // deb/source usam o fallback GitHub-API (checa/release + link manual) —
-  // atualização é "baixa o novo DMG e troca", documentado no CHANGELOG.
-  if (method === 'appimage') {
-    try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { console.error('[auto-update] require electron-updater falhou:', e && e.message); autoUpdater = null; }
-  }
-  updateState.canAutoInstall = !!autoUpdater;
-  if (autoUpdater) {
-    autoUpdater.autoDownload = true;           // baixa sozinho ao detectar (instala no clique "↻" ou no quit)
-    autoUpdater.autoInstallOnAppQuit = true;
-    applyUpdateChannel();                      // stable (default) ou dev, conforme as Preferências
-    autoUpdater.on('update-available', (info) => {
-      const v = ((info && info.version) || '').replace(/^v/, '');
-      setUpdateState({ hasUpdate: true, latest: v, url: REPO_URL + '/releases/tag/v' + v, status: 'available', error: null });
-      if (_manualCheck) _notifyManualResult(true, v, null);
-      if (settingsCfg.revealOnUpdate) revealIfHidden(); // traz à frente se oculto
-    });
-    autoUpdater.on('update-not-available', () => { setUpdateState({ hasUpdate: false, status: 'idle' }); if (_manualCheck) _notifyManualResult(false, null, null); });
-    autoUpdater.on('download-progress', (p) => setUpdateState({ status: 'downloading', progress: Math.round((p && p.percent) || 0) }));
-    autoUpdater.on('update-downloaded', () => setUpdateState({ status: 'ready', progress: 100 }));
-    autoUpdater.on('error', (e) => { const msg = String((e && e.message) || e); setUpdateState({ status: 'error', error: msg }); if (_manualCheck) _notifyManualResult(false, null, msg); });
-  }
-  checkForUpdates();                            // 1ª checagem no boot
-  _updaterInterval = setInterval(checkForUpdates, 60 * 60 * 1000); // re-checa a cada 1h
-}
-
-// Cache da checagem GitHub-API (fallback não-appimage): 30min pra não spammar.
-let _updateCache = null;
-async function checkUpdateGithub() {
-  const now = Date.now();
-  if (_updateCache && now - _updateCache.checkedAt < 30 * 60 * 1000) return _updateCache.info;
-  const info = { current: APP_VERSION, method: updateState.method, latest: null, hasUpdate: false, url: null, error: null };
-  try {
-    const https = require('https');
-    const body = await new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: 'api.github.com',
-        path: '/repos/aronpc/ai-traffic-lights/releases/latest',
-        method: 'GET',
-        headers: { 'User-Agent': 'ai-traffic-lights', Accept: 'application/vnd.github+json' },
-        timeout: 5000,
-      }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(d)); });
-      req.on('error', reject);
-      req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.end();
-    });
-    const j = JSON.parse(body);
-    info.latest = (j.tag_name || '').replace(/^v/, '');
-    info.url = j.html_url || (REPO_URL + '/releases/latest');
-    info.hasUpdate = info.latest ? semverCmp(info.latest, APP_VERSION) > 0 : false;
-  } catch (e) {
-    info.error = String(e.message || e); // offline/timeout → sem update, sem quebrar
-  }
-  _updateCache = { checkedAt: now, info };
-  return info;
-}
-
-// Dispara a verificação (AppImage → autoUpdater; demais → GitHub-API). Nunca lança.
-async function checkForUpdates() {
-  try {
-    if (autoUpdater) { await autoUpdater.checkForUpdates(); return; }
-    const info = await checkUpdateGithub();
-    setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
-  } catch (e) {
-    setUpdateState({ status: 'error', error: String((e && e.message) || e) });
-  }
-}
-
-// Verificação MANUAL pelo tray: ignora o cache e notifica o resultado.
-async function checkUpdatesManual() {
-  _manualCheck = true;
-  _updateCache = null;
-  try {
-    if (autoUpdater) { await autoUpdater.checkForUpdates(); return; } // resultado → eventos + _notifyManualResult
-    const info = await checkUpdateGithub();
-    setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
-    _notifyManualResult(info.hasUpdate, info.latest, info.error);
-  } catch (e) {
-    _notifyManualResult(false, null, String((e && e.message) || e));
-  } finally {
-    if (!autoUpdater) _manualCheck = false; // AppImage: é o evento quem limpa a flag
-  }
-}
-// Notificação de fim da verificação manual (achou / em dia / erro).
-function _notifyManualResult(hasUpdate, latest, error) {
-  _manualCheck = false;
-  try {
-    let n;
-    if (error) n = new Notification({ title: 'AI Traffic Lights', body: T('ntf_update_error'), silent: true });
-    else if (hasUpdate) {
-      n = new Notification({ title: 'AI Traffic Lights', body: T('ntf_update_available', { v: latest }), silent: false });
-      n.on('click', () => { try { if (updateState.url) shell.openExternal(updateState.url); } catch {} });
-    } else n = new Notification({ title: 'AI Traffic Lights', body: T('ntf_up_to_date'), silent: true });
-    n.show();
-  } catch {}
-}
-
-ipcMain.handle('get-update', () => { if (updateState.status === 'idle' && !updateState.latest) checkForUpdates(); return updateState; });
-ipcMain.on('check-update', () => { _updateCache = null; checkForUpdates(); });   // "verificar agora" ignora o cache
-ipcMain.on('download-update', () => { if (autoUpdater) { try { autoUpdater.downloadUpdate(); } catch {} } });
-ipcMain.on('install-update', () => { if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch {} } });
+// ---- auto-update: extraído para src/ipc/update.js (REF passo 1) ----

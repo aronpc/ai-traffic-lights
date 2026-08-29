@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATL Terminal</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <style>
+    :root {
+      --bg-alpha: 0.97;
+      --bg: rgba(18, 21, 28, var(--bg-alpha));
+      --bg-solid: #12151c;
+      --ink: #f4f6f9; --ink-dim: #8a93a6;
+      --border: rgba(255,255,255,.10);
+      --border-bright: rgba(255,255,255,.18);
+      --row-hover: rgba(255,255,255,.07);
+      --accent: #4f8cff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    /* mesmo chrome do overlay: card arredondado translúcido, header arrastável */
+    .term-app { position: relative; height: 100%; background: var(--bg); backdrop-filter: blur(8px);
+      border: 1px solid var(--border-bright); border-radius: 14px; overflow: hidden;
+      display: flex; flex-direction: column; color: var(--ink); }
+    .term-app.maximized { border-radius: 0; border-color: transparent; }
+    .term-tabs { position: relative; -webkit-app-region: drag; display: flex; align-items: center;
+      gap: 4px; padding: 6px 8px; background: rgba(255,255,255,.03);
+      border-bottom: 1px solid var(--border); min-height: 38px; flex: 0 0 auto; }
+    .term-drag { -webkit-app-region: drag; flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+      padding: 0 12px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .03em; color: var(--ink-dim);
+      cursor: default; user-select: none; }
+    .term-drag-logo { width: 14px; height: 14px; border-radius: 3px; background: linear-gradient(135deg, var(--accent), #8a5cff); }
+    .term-tabs-list { display: flex; align-items: center; gap: 4px; flex: 1; overflow-x: auto; }
+    .term-tabs-list::-webkit-scrollbar { height: 6px; }
+    .term-tabs-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .tab { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+      background: transparent; border: 1px solid transparent; border-radius: 7px; color: var(--ink-dim);
+      font-size: 12px; cursor: pointer; white-space: nowrap; max-width: 220px; }
+    .tab:hover { background: var(--row-hover); color: var(--ink); }
+    .tab.active { background: rgba(79,140,255,.16); color: var(--ink); border-color: rgba(79,140,255,.4); }
+    .tab-title { overflow: hidden; text-overflow: ellipsis; }
+    .tab-close { background: transparent; border: none; color: inherit; cursor: pointer; font-size: 14px;
+      line-height: 1; padding: 0 2px; border-radius: 4px; opacity: .7; }
+    .tab-close:hover { opacity: 1; background: rgba(255,255,255,.12); }
+    .tab-new { -webkit-app-region: no-drag; flex: 0 0 auto; width: 28px; height: 26px; background: transparent;
+      border: 1px dashed var(--border); color: var(--ink-dim); font-size: 16px; cursor: pointer; border-radius: 7px; }
+    .tab-new:hover { color: var(--ink); border-color: var(--accent); background: var(--row-hover); }
+    .win-ctrls { -webkit-app-region: no-drag; display: flex; align-items: center; gap: 2px; margin-left: 4px; }
+    .win-btn { width: 26px; height: 26px; background: transparent; border: none; color: var(--ink-dim);
+      cursor: pointer; border-radius: 7px; font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+    .win-btn:hover { background: var(--row-hover); color: var(--ink); }
+    .win-btn.close:hover { background: rgba(255,107,107,.16); color: #ff6b6b; }
+    .host-menu { position: absolute; top: 100%; right: 52px; margin-top: 2px; background: var(--bg-solid);
+      border: 1px solid var(--border-bright); border-radius: 8px; padding: 4px; min-width: 170px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 20; -webkit-app-region: no-drag; }
+    .host-menu[hidden] { display: none; }
+    .host-item { display: block; width: 100%; text-align: left; background: transparent; border: none;
+      color: var(--ink); padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .host-item:hover { background: var(--row-hover); }
+    .term-area { flex: 1; padding: 6px; overflow: hidden; min-height: 0; }
+    .term-holder { height: 100%; padding: 2px 4px; overflow: hidden; }
+    .term-holder[hidden] { display: none; }
+    .term-holder .xterm { height: 100%; }
+    .term-holder .xterm-viewport { background-color: transparent !important; }
+    .term-grip { position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; cursor: nwse-resize;
+      -webkit-app-region: no-drag; z-index: 30; }
+    .term-grip::after { content: ''; position: absolute; right: 4px; bottom: 4px; width: 9px; height: 9px;
+      border-right: 2px solid var(--ink-dim); border-bottom: 2px solid var(--ink-dim); opacity: .55; }
+  </style>
+</head>
+<body>
+  <div class="term-app" id="termApp">
+    <header class="term-tabs">
+      <span class="term-drag" title="arraste para mover a janela"><span class="term-drag-logo"></span>ATL</span>
+      <div class="term-tabs-list" id="tabs"></div>
+      <button class="tab-new" id="newTabBtn" title="novo terminal (local ou servidor)">+</button>
+      <div class="win-ctrls">
+        <button class="win-btn" id="winMinBtn" title="minimizar">&#8211;</button>
+        <button class="win-btn" id="winMaxBtn" title="maximizar">&#9633;</button>
+        <button class="win-btn close" id="winCloseBtn" title="ocultar">&times;</button>
+      </div>
+      <div class="host-menu" id="hostMenu" hidden></div>
+    </header>
+    <div class="term-area" id="termArea"></div>
+    <div class="term-grip" id="termGrip" title="arraste para redimensionar"></div>
+  </div>
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="term-renderer.js"></script>
+</body>
+</html>

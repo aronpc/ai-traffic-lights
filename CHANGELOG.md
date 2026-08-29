@@ -8,14 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
+- **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
+  validado em macOS.
+- **Botão na linha só quando ele não repete o clique.** O clique já abre o
+  padrão de cada tipo de sessão, então sobrou um único botão (⧉ embutido) e só
+  em sessão local com tmux, onde ele é o outro caminho.
+
 ### Changed
+- **O canal de foco de aba exige prova.** Um hint (`focus_url`, `tilix_id`,
+  `iterm_id`) só é usado quando o terminal correspondente está de fato na
+  árvore de processos da âncora. Sem prova, o clique degrada para apenas
+  levantar a janela — nunca abre o app errado.
+- **O clique sem efeito passou a avisar**, com a razão (`remote` / `detached` /
+  `wayland` / `nowindow`). Antes só o caso Wayland era reportado.
 - **Overlay em todos os Spaces (macOS).** O overlay vivia num único Space:
   clicar no tray (ou o reveal) estando em outro Space não mostrava nada — a
   janela existia, mas fora do Space atual. `setVisibleOnAllWorkspaces` faz a
   janela pertencer a todos os Spaces; o show() aparece no Space em uso.
   Trade-off: também aparece sobre apps em tela cheia — aceitável pra um overlay.
+
 ### Fixed
+- **Clicar numa sessão dentro do tmux abria o Warp em vez do terminal real.**
+  O `WARP_FOCUS_URL` fica congelado no environ do servidor tmux (herdado do dia
+  em que ele nasceu) e vazava para todo pane novo. Reancorar no cliente não
+  bastava: quando o servidor nasceu num Warp e hoje é attachado do Tilix, o
+  cliente não tem `focus_url` nenhum, e o merge com `||` deixava o valor morto
+  passar. Agora os hints do cliente substituem os do state em bloco, e cada
+  canal de aba exige que o terminal correspondente esteja provado na árvore de
+  processos.
+- **Clique em sessão de outra máquina não tenta mais focar nada localmente.**
+  O `pid` de um peer é de outro kernel; interpretá-lo aqui focava um processo
+  local homônimo. O clique agora recusa antes de qualquer I/O e orienta a usar
+  a aba de terminal.
+- **`iterm_id` não vaza mais para os peers.** Era um hint machine-local que
+  ficou de fora de `LOCAL_ONLY` e atravessava o sync apontando para nada.
 - **Toggle do overlay pelo tray no macOS.** O ícone da bandeja alternava
   mostrar/ocultar de forma aparentemente aleatória: a janela nascia visível,
   `alwaysOnTop('screen-saver')` cobria os ícones do menu bar e o macOS
@@ -120,6 +146,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock cascateia pelo próprio `writeState` (um read+write a menos por evento)
   e o bootstrap é deferido com `setImmediate` — a janela abre na frente e o
   state inicial chega na primeira refresh.
+
+## [0.8.0] - 2026-08-27
+
+### Added
+- **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
+  validado em macOS.
+- **Sincronização P2P multi-máquina via Tailscale (opt-in).** Nós podem
+  compartilhar sessões por HTTP autenticado com Bearer token, observar peers,
+  identificar a origem de cada linha e evitar colisões de PID entre máquinas.
+  O poller usa o status local do Tailscale, backoff exponencial e ordenação
+  estável por origem/sessão.
+- **Painel “ver prompt” sob demanda.** Exibe as últimas mensagens de transcripts
+  locais ou remotos; compartilhamento remoto é uma permissão separada e
+  desligada por padrão. O leitor processa apenas o final do JSONL em chunks e
+  agrega blocos de streaming por `message.id`.
+- **Agente headless (`agent.js`).** Servidores sem display podem participar como
+  fonte do mesh sem Electron, com overrides `ATL_SYNC_*` e unit systemd de
+  exemplo.
+- **Captura de `tmux_session`** nos adapters como fundação para um futuro fluxo
+  de attach remoto.
+- **Foco de painel tmux.** Clicar no semáforo foca o painel exato do agente
+  dentro do tmux (via `$TMUX_PANE`), por cima do foco de janela e do canal de
+  aba (Warp/Tilix). O pane é validado (`/^%[0-9]+$/`) antes de virar argumento
+  do `tmux` e não cruza a rede (local-only).
+- **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
+- **Dicas de foco/tmux nas Preferências (aba Integração).** Como o clique acha
+  o agente (janela → aba → painel tmux) e os casos que "não funcionam" com
+  causa conhecida: sessão tmux detached (sem cliente anexado não há aba para
+  focar), painel recriado (o hook regrava no próximo evento) e GNOME Terminal
+  no Wayland (inalcançável para apps de terceiros).
+- **Requisito de Tailscale documentado na aba Sincronização.** Como instalar,
+  conferir (`tailscale status`) e endereçar peers (IPs 100.x.y.z ou MagicDNS).
+
+### Changed
+- **Identidade de sessão agora inclui a origem** no merge, alertas, snooze e
+  marca de lido. Sessões remotas não podem ser renomeadas/focadas localmente e
+  a primeira hidratação de um peer não dispara alertas em massa.
+- **Ordem estável dentro do mesmo nível de urgência.** Tool calls deixam de
+  fazer as linhas pularem continuamente; local vem antes dos peers e a chave
+  de sessão decide a ordem.
+
+### Fixed
+- **Instalador do macOS mentia "Concluído" sem instalar nada.** Quando o release
+  não publica `.dmg` (hoje: sempre, pois o `release.yml` só builda Linux), o
+  `install_macos.sh` apenas avisava e seguia — gravava os aliases apontando para
+  um app inexistente, imprimia "✓ Concluído!" e ainda sugeria `xattr`/`codesign`
+  num caminho que não existe, levando o usuário direto a `No such file`. Agora
+  aborta com `die` e instruções de build do fonte (paridade com o `install.sh`
+  do Linux, que já morria sem o asset). Dentro do repo o script segue em modo
+  desenvolvimento, onde o alias cai para `npx electron .` e de fato funciona.
+- **Aba Sincronização em branco nas Preferências.** A aba vinha aninhada dentro
+  de "Atualizações" por uma tag `</section>` ausente no `settings.html`, o que
+  fazia o painel inteiro sumir ao ser selecionado.
+- **Aceitar o canal beta reage na hora, sem reiniciar.** A troca já era aplicada
+  a quente, mas silenciosamente; agora o estado "verificando" aparece imediatamente.
+- **Aba Sincronização (sync P2P) só existe em builds beta.** Feature não lançada
+  na estável: removida do DOM e dos IPCs (`get-sync`/`set-sync`/`applySync`)
+  fora de uma versão `-beta.N`.
+- **Ativação de janela imune à prevenção de roubo de foco do Mutter.** O raise
+  usava `wmctrl -i -a`, que manda `_NET_ACTIVE_WINDOW` na forma legada; com
+  `focus-new-windows='smart'` o Mutter podia ignorar a partir do 2º clique
+  consecutivo e a janela apenas piscava na dock. Passa a usar
+  `xdotool windowactivate --sync`, cujo `xdo_activate_window` manda source
+  indication *pager* (`data.l[0]=2`, conferido no `.rodata` do libxdo), com o
+  wmctrl como fallback.
+- **O clique sem efeito deixa de ser silencioso no X11.** `isFocusUnsupported`
+  exigia `wayland: true`, então quando o raise falhava no X11 — árvore de
+  processos passando por um multiplexador, ou o WM recusando a ativação — o
+  clique não fazia nada e não dizia nada. O gate passa a perguntar só "teve
+  algum efeito?", e a mensagem deixa de citar Wayland/GNOME Terminal.
+- **O auto-updater deixa de destruir builds locais.** No Linux o
+  electron-updater atualiza SUBSTITUINDO o arquivo apontado por `$APPIMAGE` —
+  então rodar um AppImage recém-gerado a partir do `dist/`, com uma release mais
+  nova publicada, fazia ele reescrever o próprio artefato de build no quit. O
+  updater só é instanciado quando `app.isPackaged` (guarda recomendada pela doc
+  oficial) e o AppImage **não** está num diretório de saída do electron-builder
+  (`builder-effective-config.yaml` / `builder-debug.yml` / `linux-unpacked` ao
+  lado). Nos dois casos a checagem informativa via GitHub API continua, e a UI
+  já cai sozinha no "abrir a release" quando `canAutoInstall` é falso.
+- **Instalador macOS deixa de omitir o `jq` (hook morto em silêncio).** O
+  `install_macos.sh` declarava que jq não era exigido — verdade para o
+  instalador, mas o `traffic-hook.sh` que o app instala **requer** jq (não vem
+  de fábrica no macOS). Sem ele o hook roda em todo tool call, falha na
+  gravação do state e o overlay fica silenciosamente vazio. Agora o
+  instalador instala via Homebrew quando dá, ou avisa com o comando manual.
+  Os dois instaladores também ganharam dicas de Tailscale (sync multi-máquina)
+  e o Linux a de "Install/update hooks" (paridade com o macOS).
+- **Instaladores garantem o primeiro arranque ("instala e não abre").** Linux:
+  runtime AppImage estático (dispensa `libfuse2`) + preflight que instala
+  `libfuse2`/`libfuse2t64` e as libs do Electron por distro + launcher com
+  fallback sem FUSE (`--appimage-extract-and-run`) + verificação de checksum
+  (sha512) + opção `ATL_PKG=deb` (apt resolve as dependências). macOS: `xattr`
+  + `codesign` ad-hoc destravam o Gatekeeper de app não-notarizado, sem depender
+  de Homebrew/`jq`.
 
 ## [0.7.3] - 2026-07-29
 

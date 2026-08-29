@@ -8,7 +8,8 @@ Overlay de desktop (Electron) com um semáforo 🟢🟡🔴 **por sessão** de a
 ## Key Files
 | File | Description |
 |------|-------------|
-| `main.js` | Processo **main** do Electron: coleta (state files + `/proc`), IPC, tray, settings, uso, foco de aba, auto-update. Ponto quente do repo. |
+| `main.js` | Processo **main** do Electron: coleta (state files + `/proc`), IPC, tray, settings, uso, foco de aba, auto-update, sync P2P (`applySync`). Ponto quente do repo. |
+| `agent.js` | **Sync headless** (Node puro, sem `require('electron')`) — servidor sem display entra no mesh como fonte. Reusa `src/collect.js`+`net.js`+`transcript.js`. Roda via systemd (ver `scripts/atl-agent.service`). |
 | `preload.js` | Ponte `contextBridge` (`window.trafficLight.*`) entre renderer e main. |
 | `package.json` | Manifesto + `electron-builder` (`build.publish`=GitHub). Scripts: `start` (`electron . --no-sandbox …`), `test` (`node --test`), `dist`. |
 | `install.sh` / `install_macos.sh` | Instaladores CLI (instalam o app + hooks nos settings dos agentes). |

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { TERMINALS, TERMINAL_ORDER, pickTerminal, terminalArgs } = require('../src/launcher.js');
+const { TERMINALS, TERMINAL_ORDER, pickTerminal, terminalArgs, tmuxSessionName, tmuxWrap } = require('../src/launcher.js');
 
 test('pickTerminal: auto escolhe o 1º presente na ordem', () => {
   assert.equal(pickTerminal('auto', ['gnome-terminal', 'ghostty']), 'gnome-terminal');
@@ -37,4 +37,24 @@ test('terminalArgs: agentCmd com args próprios é preservado', () => {
 
 test('TERMINAL_ORDER: tilix vem antes de gnome-terminal e ghostty', () => {
   assert.equal(TERMINAL_ORDER[0], 'tilix');
+});
+
+// ---- auto-wrap em tmux (attach de sessões lançadas pelo ATL) ----
+test('tmuxSessionName: prefixa atl- e saneia o agentId', () => {
+  assert.equal(tmuxSessionName('claude'), 'atl-claude');
+  assert.equal(tmuxSessionName('codex-cli'), 'atl-codex-cli');
+  assert.equal(tmuxSessionName('a b/c'), 'atl-abc');     // remove inválidos
+  assert.equal(tmuxSessionName(undefined), 'atl-agent');
+});
+
+test('tmuxWrap: envolve o comando em tmux new-session -s <nome>', () => {
+  assert.deepEqual(tmuxWrap(['/bin/claude'], 'atl-claude-xyz'),
+    ['tmux', 'new-session', '-s', 'atl-claude-xyz', '/bin/claude']);
+  assert.deepEqual(tmuxWrap(['codex', '--flag'], 'atl-codex-1'),
+    ['tmux', 'new-session', '-s', 'atl-codex-1', 'codex', '--flag']);
+});
+
+test('tmuxWrap: REJEITA nome de sessão malicioso (fallback atl-agent)', () => {
+  assert.equal(tmuxWrap(['claude'], 'evil; rm -rf /')[3], 'atl-agent');
+  assert.equal(tmuxWrap(['claude'], '$(reboot)')[3], 'atl-agent');
 });

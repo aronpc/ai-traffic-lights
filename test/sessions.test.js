@@ -58,3 +58,33 @@ test('inputs vazios/nulos → []', () => {
   assert.deepEqual(mergeSessions([], []), []);
   assert.deepEqual(mergeSessions(null, null), []);
 });
+
+// ---- fase 1 (sync P2P): dedup namespaced por origin ----
+test('mesmo pid em origens diferentes NÃO colide (namespacing)', () => {
+  // Duas máquinas podem ter o mesmo pid (ex.: 1234). Sem o prefixo origin,
+  // uma sobrescreveria a outra no dedup. Elas são linhas distintas.
+  const out = mergeSessions([
+    { session_id: 'local-a', pid: 1234, origin: 'local', last_event_ts: 10 },
+    { session_id: 'peer-a', pid: 1234, origin: 'alienware', last_event_ts: 20 },
+  ], []);
+  assert.equal(out.length, 2, 'mesmo pid, origens diferentes → 2 linhas');
+  assert.ok(out.some((s) => s.origin === 'local' && s.session_id === 'local-a'));
+  assert.ok(out.some((s) => s.origin === 'alienware' && s.session_id === 'peer-a'));
+});
+
+test('origin default = local quando ausente (state file legado / proc)', () => {
+  const out = mergeSessions([{ session_id: 's', pid: 7, last_event_ts: 1 }], []);
+  assert.equal(out[0].origin, 'local', 'recebe origin=local');
+  // discovered (proc) também
+  const p = mergeSessions([], [{ pid: 99, agent: 'claude' }]);
+  assert.equal(p[0].origin, 'local');
+});
+
+test('mesmo pid + mesma origin ainda dedupe (mantém mais recente)', () => {
+  const out = mergeSessions([
+    { session_id: 'a', pid: 5, origin: 'local', last_event_ts: 100 },
+    { session_id: 'b', pid: 5, origin: 'local', last_event_ts: 200 },
+  ], []);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].session_id, 'b');
+});

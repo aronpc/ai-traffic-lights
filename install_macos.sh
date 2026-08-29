@@ -67,7 +67,34 @@ verify_checksum() {
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 [ "$OS" = "Darwin" ] || die "Este instalador é exclusivo do macOS. SO atual: $OS"
-need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq/brew NÃO são exigidos
+need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq é verificado abaixo
+
+# O hook de eventos que o app instala (traffic-hook.sh) REQUER jq para gravar o
+# state de cada sessão — e jq não vem de fábrica no macOS. Sem ele o hook roda
+# em todo tool call, falha na escrita e o overlay fica silenciosamente vazio.
+# Instalamos via Homebrew quando dá; sem brew, aviso forte com o comando manual.
+ensure_jq() {
+  # command -v aprova um jq quebrado (shim corrompido): sonda executabilidade.
+  if command -v jq >/dev/null 2>&1 && jq --version >/dev/null 2>&1; then
+    ok "jq presente (o hook de eventos exige)"
+    return 0
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    info "instalando jq via Homebrew (o hook de eventos exige)..."
+    # Re-checa o PATH pós-install: brew via wrapper pode linkar fora do PATH.
+    if brew install jq && command -v jq >/dev/null 2>&1; then
+      ok "jq instalado"
+    else
+      warn "jq não ficou utilizável após o brew — reabra o terminal ou instale manualmente."
+      warn "Sem jq o app NÃO monitora nenhuma sessão (overlay vazio)."
+    fi
+  else
+    warn "jq AUSENTE e Homebrew não encontrado."
+    warn "O hook de eventos exige jq — sem ele o app abre vazio (nenhuma sessão no overlay). Instale:"
+    warn '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && brew install jq'
+  fi
+}
+ensure_jq
 
 # O build publicado é Apple Silicon (arm64). Em Intel, o .dmg arm64 não abre
 # (Rosetta não traduz arm64→x86). Avisamos forte; a verificação pós-install
@@ -94,6 +121,14 @@ rm -f "$GH_ERR"
 download_url="$(printf '%s\n' "$json" | grep -oE '"browser_download_url":[[:space:]]*"[^"]+\.dmg"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')" || true
 version="$(printf '%s\n' "$json" | grep -oE '"tag_name":[[:space:]]*"v?[^"]+"' | head -1 | sed -E 's/.*"v?([^"]+)"$/\1/')" || true
 
+# Detecta o modo dev ANTES de decidir o que fazer sem .dmg: dentro do repo a
+# ausência do build é tolerável (o alias cai para 'npx electron .'); via
+# curl|bash não é — sem app instalado o alias aponta para o vazio.
+LOCAL_REPO=""
+if [ -f "package.json" ] && grep -q '"name": "ai-traffic-lights"' package.json 2>/dev/null; then
+  LOCAL_REPO="$(pwd)"
+fi
+
 # --- diretório temporário com limpeza garantida (detach do dmg + rm) ---
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/atl-install.XXXXXX")"
 MOUNT_POINT="$TMP_DIR/mount"
@@ -105,6 +140,7 @@ trap cleanup EXIT INT TERM
 DMG_PATH="$TMP_DIR/$DMG_NAME"
 
 DEST="/Applications/$APP_NAME"
+APP_INSTALLED=0
 if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   info "baixando v${version:-?}..."
   curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 -o "$DMG_PATH" "$download_url"
@@ -127,6 +163,7 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   fi
   hdiutil detach -force "$MOUNT_POINT" >/dev/null 2>&1 || true
   ok "app copiado para $DEST"
+  APP_INSTALLED=1
 
   # --- destrava o Gatekeeper: remove quarantine + re-assina ad-hoc LOCALMENTE ---
   # Sem isto, um app não-notarizado baixado via curl é bloqueado com
@@ -149,16 +186,27 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
       *) warn "o binário ($archs) não casa com seu Mac ($ARCH) — pode não abrir. Compile do fonte se necessário." ;;
     esac
   fi
+elif [ -n "$LOCAL_REPO" ]; then
+  # Dentro do repo há plano B: o alias cai para 'npx electron .', que roda sem
+  # o .app. Seguimos para instalar deps e escrever os aliases.
+  warn "nenhum .dmg no release ${version:+v$version }do GitHub — seguindo em modo desenvolvimento."
+  warn "Para gerar o .app: npm run dist:mac (o bundle sai em dist/)."
 else
-  warn "nenhum .dmg encontrado no release do GitHub ainda."
-  warn "Se estiver compilando local, rode 'npm run dist:mac' e copie o app para /Applications."
+  # Via curl|bash NÃO há plano B: sem .dmg nada foi instalado. Falhar aqui é o
+  # que impede o script de gravar aliases órfãos e imprimir "✓ Concluído!" —
+  # o usuário seguia as dicas de xattr/codesign e batia em "No such file".
+  # Paridade com o install.sh do Linux, que já morre sem o asset .AppImage.
+  printf '\n' >&2
+  warn "o release ${version:+v$version }de $REPO não publica .dmg para macOS."
+  warn "NADA foi instalado. Para rodar no seu Mac, compile do fonte:"
+  warn "  git clone https://github.com/$REPO"
+  warn "  cd ai-traffic-lights && npm install && npm run dist:mac"
+  warn "  cp -R dist/mac*/\"$APP_NAME\" /Applications/"   # arm64: dist/mac-arm64/
+  warn "  bash install_macos.sh   # rode de novo AQUI DENTRO para os aliases"
+  die "instalação abortada — sem build macOS publicado."
 fi
 
 # --- modo dev: rodando dentro do repo → instala deps Node ---
-LOCAL_REPO=""
-if [ -f "package.json" ] && grep -q '"name": "ai-traffic-lights"' package.json 2>/dev/null; then
-  LOCAL_REPO="$(pwd)"
-fi
 if [ -n "$LOCAL_REPO" ]; then
   need node; need npm
   info "modo desenvolvimento — instalando dependências Node..."
@@ -188,15 +236,26 @@ setup_profile_aliases() {
 setup_profile_aliases "$HOME/.zshrc"
 [ -f "$HOME/.bash_profile" ] && setup_profile_aliases "$HOME/.bash_profile"
 
+# As dicas de Gatekeeper só fazem sentido com o .app no disco: imprimi-las sem
+# instalação levava o usuário a rodar xattr/codesign num path inexistente.
+GATEKEEPER_TIP=""
+[ "$APP_INSTALLED" = 1 ] && GATEKEEPER_TIP="
+  Se o macOS disser que o app \"não pôde ser aberto\" ou está \"danificado\":
+    xattr -dr com.apple.quarantine \"$DEST\"
+    codesign --force --deep --sign - \"$DEST\"
+"
+
 printf '\n\033[1;32m✓ Concluído!\033[0m\n\n'
 cat <<EOF
   Abra um novo terminal (ou rode: source ~/.zshrc) e inicie com:
     atl
-
-  Se o macOS disser que o app "não pôde ser aberto" ou está "danificado":
-    xattr -dr com.apple.quarantine "$DEST"
-    codesign --force --deep --sign - "$DEST"
-
+$GATEKEEPER_TIP
   Monitorar Claude Code, Antigravity, etc.: abra o app → engrenagem
   (Preferências) → "Install/update hooks".
+
+  Opcional — melhor foco e multi-máquina:
+    • tmux      — brew install tmux · o clique no semáforo foca o PAINEL exato
+                  do agente (dentro do tmux), além da aba do terminal
+    • Tailscale — https://tailscale.com · sincronize o overlay entre máquinas
+                  (aba "Sincronização" nas Preferências, builds beta)
 EOF

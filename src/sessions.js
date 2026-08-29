@@ -10,27 +10,34 @@
 //     daemons/MCP servers cujo parent é node/claude.
 // Logo nenhuma filtragem extra por term_program é necessária.
 
-// Dedupe por pid (1 processo = 1 terminal = 1 linha). Mesmo pid com 2
-// session_ids (job roteando 2 contextos): mantém o evento mais recente.
-// pid ausente: dedupe por session_id (cabeça-de-série, nunca colide).
+const { sessionKey } = require('./identity.js');
+
+// Dedupe por sessionKey (origin:pid||session_id) — 1 processo = 1 terminal =
+// 1 linha. Mesmo pid com 2 session_ids (job roteando 2 contextos): mantém o
+// evento mais recente. pid ausente: dedupe por session_id (nunca colide).
+// O prefixo `origin` é o que IMPEDE a colisão entre máquinas: dois terminais
+// em máquinas diferentes com o mesmo pid viram chaves distintas. Default
+// 'local' quando a sessão vem sem origin (state file legado / sonda /proc).
 function mergeSessions(stateFileSessions, discovered) {
-  const sessions = [...(stateFileSessions || [])];
+  const sessions = (stateFileSessions || []).map((s) => (s.origin ? s : { ...s, origin: 'local' }));
   for (const { pid, agent } of discovered || []) {
-    if (pid && !sessions.some((s) => s.pid === pid)) {
+    if (pid && !sessions.some((s) => s.pid === pid && originOfLocal(s))) {
       sessions.push({
-        session_id: `proc-${pid}`, pid, agent,
+        session_id: `proc-${pid}`, pid, agent, origin: 'local',
         cwd: null, term_program: 'terminal',
         last_event: 'ativo', last_event_ts: 0,
       });
     }
   }
-  const byPid = new Map();
+  const byKey = new Map();
   for (const s of sessions) {
-    const key = s.pid || s.session_id;
-    const prev = byPid.get(key);
-    if (!prev || (s.last_event_ts || 0) >= (prev.last_event_ts || 0)) byPid.set(key, s);
+    const key = sessionKey(s);
+    const prev = byKey.get(key);
+    if (!prev || (s.last_event_ts || 0) >= (prev.last_event_ts || 0)) byKey.set(key, s);
   }
-  return [...byPid.values()];
+  return [...byKey.values()];
 }
+// helper local: sessão é local (não entrou como discovery duplicado de outra origem)
+function originOfLocal(s) { return (s.origin || 'local') === 'local'; }
 
 if (typeof module !== 'undefined') module.exports = { mergeSessions };
