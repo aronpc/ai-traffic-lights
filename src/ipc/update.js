@@ -195,6 +195,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
       if (autoUpdater) { await autoUpdater.checkForUpdates(); return; }
       const info = await checkUpdateGithub();
       setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, dmgUrl: info.dmgUrl || null, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
+      if (info.hasUpdate && updateState.method === 'dmg') baixarUpdateMac();   // autoDownload, como no Linux
     } catch (e) {
       setUpdateState({ status: 'error', error: String((e && e.message) || e) });
     }
@@ -209,6 +210,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
       const info = await checkUpdateGithub();
       setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, dmgUrl: info.dmgUrl || null, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
       _notifyManualResult(info.hasUpdate, info.latest, info.error);
+      if (info.hasUpdate && updateState.method === 'dmg') baixarUpdateMac();   // autoDownload, como no Linux
     } catch (e) {
       _notifyManualResult(false, null, String((e && e.message) || e));
     } finally {
@@ -299,40 +301,58 @@ rm -rf "$DEST.old" "$DMG"
 open "$DEST"
 `;
 
-  async function instalarUpdateMac() {
+  // Mesma POLÍTICA do AppImage no Linux, onde o electron-updater roda com
+  // autoDownload=true e autoInstallOnAppQuit=true: o update baixa sozinho assim
+  // que aparece, a UI mostra o progresso pelos mesmos campos de estado, e a
+  // troca acontece ao sair do app — pelo botão "↻" (que só encerra) ou no quit
+  // normal. A diferença é só quem executa a troca: lá o Squirrel, aqui o script.
+  let _macStaged = null;      // { dmg, sh, dest } pronto para trocar no quit
+  let _macBaixando = false;
+
+  async function baixarUpdateMac() {
+    if (_macStaged || _macBaixando) return;      // já pronto, ou em andamento
     const dest = bundleEmUso();
     const url = updateState.dmgUrl;
-    if (!dest || !url) {                       // sem alvo ou sem asset: cai no manual
-      try { shell.openExternal(updateState.url || REPO_URL + '/releases/latest'); } catch {}
-      return;
-    }
+    if (!dest || !url) return;                   // sem alvo/asset: fica no manual
+    _macBaixando = true;
     try {
-      const tmp = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
+      const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
       setUpdateState({ status: 'downloading', progress: 0, error: null });
-      await baixarArquivo(url, tmp);
+      await baixarArquivo(url, dmg);
       const sh = path.join(app.getPath('temp'), `atl-swap-${Date.now()}.sh`);
       fs.writeFileSync(sh, SCRIPT_TROCA, { mode: 0o755 });
-      const filho = spawn('/bin/bash', [sh, String(process.pid), tmp, dest], {
-        detached: true, stdio: 'ignore',
-      });
-      filho.unref();
+      _macStaged = { dmg, sh, dest };
       setUpdateState({ status: 'ready', progress: 100 });
-      setTimeout(() => { try { app.quit(); } catch {} }, 400);
     } catch (e) {
-      const msg = String((e && e.message) || e);
-      setUpdateState({ status: 'error', error: msg });
-      try { shell.openExternal(updateState.url || REPO_URL + '/releases/latest'); } catch {}
+      setUpdateState({ status: 'error', error: String((e && e.message) || e) });
+    } finally {
+      _macBaixando = false;
     }
   }
+
+  // Equivalente ao autoInstallOnAppQuit: a troca dispara no encerramento, seja
+  // ele pelo "↻", pelo menu ou pelo fechamento normal. O script espera este pid
+  // morrer antes de tocar no bundle, então registrar aqui é seguro.
+  function trocarNoQuit() {
+    if (!_macStaged) return;
+    const { dmg, sh, dest } = _macStaged;
+    _macStaged = null;                           // não dispara duas vezes
+    try {
+      spawn('/bin/bash', [sh, String(process.pid), dmg, dest], { detached: true, stdio: 'ignore' }).unref();
+    } catch {}
+  }
+
+  if (process.platform === 'darwin') app.on('will-quit', trocarNoQuit);
 
   ipcMain.on('check-update', () => { _updateCache = null; checkForUpdates(); });   // "verificar agora" ignora o cache
   ipcMain.on('download-update', () => {
     if (autoUpdater) { try { autoUpdater.downloadUpdate(); } catch {} return; }
-    if (updateState.method === 'dmg') instalarUpdateMac();
+    if (updateState.method === 'dmg') baixarUpdateMac();
   });
   ipcMain.on('install-update', () => {
     if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch {} return; }
-    if (updateState.method === 'dmg') instalarUpdateMac();
+    // macOS: só encerra — o hook de quit faz a troca, como o autoInstallOnAppQuit.
+    if (updateState.method === 'dmg' && _macStaged) { try { app.quit(); } catch {} }
   });
 
   setupAutoUpdater();   // configura eventos + 1ª checagem + scheduler 1h (igual ao boot antigo)
