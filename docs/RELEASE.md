@@ -162,3 +162,29 @@ canal só haveria o download manual do AppImage da página da pre-release.
 Corolário: **toda branch que for virar beta precisa conter o toggle**. Uma beta
 cortada de uma branch anterior à 0.7.3 tiraria a aba Atualizações de quem a
 instalasse, deixando a pessoa sem como sair do canal pela UI.
+
+---
+
+## macOS: por que não usamos o Squirrel
+
+O `electron-updater` delega a atualização do macOS ao **Squirrel.Mac**, que exige
+assinatura Developer ID válida — e exige que a assinatura do update satisfaça o
+*designated requirement* do app em execução. Aqui o app é assinado **ad-hoc**
+pelo `install_macos.sh` (sem Team ID) e o artefato do CI não é assinado, então a
+verificação nunca casa. Não há como desligá-la: só o `NsisUpdater` (Windows)
+expõe um gancho de verificação; no macOS a checagem vive no código nativo.
+
+Em vez de assinatura, o updater do macOS ([`src/ipc/update.js`](../src/ipc/update.js))
+baixa o **`.dmg`** da release e reproduz os passos que o `install_macos.sh` já
+executa: monta o dmg, troca o bundle com `ditto` (com rollback), remove a
+quarentena e re-assina ad-hoc. O script roda destacado porque o app precisa sair
+antes de ser substituído; ele espera o pid morrer e relança no fim.
+
+Por isso o build do macOS gera **só o `.dmg`**. O `-mac.zip` e o `latest-mac.yml`
+existem exclusivamente para o Squirrel e eram publicados sem nenhum leitor.
+
+**Se um dia houver Developer ID**, o caminho certo passa a ser o Squirrel: some
+o script de troca, voltam `hardenedRuntime: true` + `notarize` no `package.json`,
+entram `CSC_LINK`/`APPLE_ID`/`APPLE_TEAM_ID` no workflow, e o `codesign` ad-hoc
+sai do instalador — ele deixa de ser necessário e passa a atrapalhar.
+

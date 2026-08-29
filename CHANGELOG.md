@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Atualização automática no macOS, sem Developer ID.** O `electron-updater`
+  delega ao Squirrel.Mac, que exige assinatura válida — inviável com o app
+  assinado ad-hoc. O updater agora baixa o `.dmg` da release e reproduz os
+  passos do `install_macos.sh` (monta, troca o bundle com rollback, tira a
+  quarentena, re-assina, relança). Antes o macOS só abria a página da release.
 - **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
   validado em macOS.
 - **Botão na linha só quando ele não repete o clique.** O clique já abre o
@@ -15,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   em sessão local com tmux, onde ele é o outro caminho.
 
 ### Changed
+- **O build do macOS gera só o `.dmg`.** O `-mac.zip` e o `latest-mac.yml`
+  existiam para o Squirrel.Mac, que nunca é instanciado: eram cerca de 100 MB
+  por release sem nenhum leitor.
 - **O adapter do Kiro usa o `validSessionId()` compartilhado** em vez de uma
   quarta cópia da mesma regex — a validação de id passa a ser a testada em
   `src/validate.js`.

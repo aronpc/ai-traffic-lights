@@ -9,7 +9,8 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   const path = require('path');
   const fs = require('fs');
   const { app, ipcMain, Notification, shell } = require('electron');
-  const settingsLib = require('../settings');   // updaterFlags (canal → flags), lógica pura
+  const settingsLib = require('../settings');
+  const { spawn } = require('child_process');   // updaterFlags (canal → flags), lógica pura
 
   // ---- update checker (versão + release mais nova do GitHub) ----
   // Detecta COMO o app foi instalado pra oferecer o caminho de atualização certo.
@@ -35,6 +36,9 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     const appPath = app.getAppPath();
     if (/\/opt\/AI Traffic Lights/.test(exe) || appPath.includes('/opt/')) return 'deb';
     if (appPath.includes('node_modules')) return 'npm';
+    // macOS empacotado: o executável vive em <algo>.app/Contents/MacOS/. Antes isto
+    // caía em 'source' e o app ficava sem NENHUM caminho de atualização.
+    if (process.platform === 'darwin' && app.isPackaged && /\.app\/Contents\//.test(exe)) return 'dmg';
     return 'source';
   }
 
@@ -127,7 +131,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     } else if (method === 'appimage') {
       console.log('[auto-update] auto-instalação desligada: build local ou não empacotado (' + (process.env.APPIMAGE || process.execPath) + ')');
     }
-    updateState.canAutoInstall = !!autoUpdater;
+    updateState.canAutoInstall = !!autoUpdater || method === 'dmg';
     if (autoUpdater) {
       autoUpdater.autoDownload = true;           // baixa sozinho ao detectar (instala no clique "↻" ou no quit)
       autoUpdater.autoInstallOnAppQuit = true;
@@ -172,6 +176,12 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
       info.latest = (j.tag_name || '').replace(/^v/, '');
       info.url = j.html_url || (REPO_URL + '/releases/latest');
       info.hasUpdate = info.latest ? semverCmp(info.latest, APP_VERSION) > 0 : false;
+      // .dmg da arquitetura em uso — é o que o updater do macOS instala. Um nome
+      // sem marca de arquitetura serve às duas (build universal).
+      if (process.platform === 'darwin') {
+        const alvo = pickMacDmg(j.assets, process.arch);
+        if (alvo) { info.dmgUrl = alvo.browser_download_url; info.dmgName = alvo.name; }
+      }
     } catch (e) {
       info.error = String(e.message || e); // offline/timeout → sem update, sem quebrar
     }
@@ -184,7 +194,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     try {
       if (autoUpdater) { await autoUpdater.checkForUpdates(); return; }
       const info = await checkUpdateGithub();
-      setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
+      setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, dmgUrl: info.dmgUrl || null, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
     } catch (e) {
       setUpdateState({ status: 'error', error: String((e && e.message) || e) });
     }
@@ -197,7 +207,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     try {
       if (autoUpdater) { await autoUpdater.checkForUpdates(); return; } // resultado → eventos + _notifyManualResult
       const info = await checkUpdateGithub();
-      setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
+      setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, dmgUrl: info.dmgUrl || null, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
       _notifyManualResult(info.hasUpdate, info.latest, info.error);
     } catch (e) {
       _notifyManualResult(false, null, String((e && e.message) || e));
@@ -220,9 +230,110 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   }
 
   ipcMain.handle('get-update', () => { if (updateState.status === 'idle' && !updateState.latest) checkForUpdates(); return updateState; });
+
+  // ---- atualização no macOS SEM Developer ID (PR #46, achado 03) ----
+  // O electron-updater delega ao Squirrel.Mac, que EXIGE assinatura válida: o app
+  // instalado é assinado ad-hoc pelo install_macos.sh (sem Team ID) e o artefato
+  // do CI não é assinado, então a verificação nunca casa. Não há gancho para
+  // desligá-la (só o NsisUpdater expõe verifyUpdateCodeSignature; o macOS
+  // resolve no nativo). Em vez de assinatura, reproduzimos os passos do
+  // install_macos.sh — que já instala de verdade — a partir do .dmg da release.
+  //
+  // O script roda DESTACADO porque o app precisa sair antes de ser substituído.
+  // Ele espera o pid morrer, monta o dmg, troca o bundle com rollback, tira a
+  // quarentena, re-assina ad-hoc e relança.
+  function baixarArquivo(url, dest, saltos = 0) {
+    return new Promise((resolve, reject) => {
+      if (saltos > 5) return reject(new Error('redirecionamentos demais'));
+      const https = require('https');
+      https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          return resolve(baixarArquivo(res.headers.location, dest, saltos + 1));
+        }
+        if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+        const total = parseInt(res.headers['content-length'] || '0', 10);
+        let lidos = 0;
+        const out = fs.createWriteStream(dest);
+        res.on('data', (c) => {
+          lidos += c.length;
+          if (total) setUpdateState({ status: 'downloading', progress: Math.round((lidos / total) * 100) });
+        });
+        res.pipe(out);
+        out.on('finish', () => out.close(() => resolve(dest)));
+        out.on('error', reject);
+      }).on('error', reject);
+    });
+  }
+
+  // O bundle .app em execução, a partir do execPath (…/X.app/Contents/MacOS/bin).
+  function bundleEmUso() {
+    const m = (process.execPath || '').match(/^(.*\.app)\/Contents\//);
+    return m ? m[1] : null;
+  }
+
+  const SCRIPT_TROCA = `#!/bin/bash
+# Gerado pelo AI Traffic Lights para trocar o próprio bundle. Roda destacado,
+# depois que o app sai. Passos idênticos aos do install_macos.sh.
+set -u
+PID="$1"; DMG="$2"; DEST="$3"
+# espera o app sair (máx. 30 s) — não dá pra substituir um bundle em uso
+for _ in $(seq 1 150); do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done
+MNT="$(mktemp -d)"
+hdiutil attach -nobrowse -readonly -quiet -mountpoint "$MNT" "$DMG" || exit 1
+SRC="$(ls -d "$MNT"/*.app 2>/dev/null | head -1)"
+if [ -z "$SRC" ]; then hdiutil detach -force "$MNT" >/dev/null 2>&1; exit 1; fi
+# rollback: só apaga o antigo depois que o novo estiver inteiro no lugar
+rm -rf "$DEST.old"
+mv "$DEST" "$DEST.old" 2>/dev/null || true
+if ! ditto "$SRC" "$DEST" 2>/dev/null; then
+  rm -rf "$DEST"
+  mv "$DEST.old" "$DEST" 2>/dev/null || true
+  hdiutil detach -force "$MNT" >/dev/null 2>&1
+  exit 1
+fi
+hdiutil detach -force "$MNT" >/dev/null 2>&1
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+codesign --force --deep --sign - "$DEST" 2>/dev/null || true
+rm -rf "$DEST.old" "$DMG"
+open "$DEST"
+`;
+
+  async function instalarUpdateMac() {
+    const dest = bundleEmUso();
+    const url = updateState.dmgUrl;
+    if (!dest || !url) {                       // sem alvo ou sem asset: cai no manual
+      try { shell.openExternal(updateState.url || REPO_URL + '/releases/latest'); } catch {}
+      return;
+    }
+    try {
+      const tmp = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
+      setUpdateState({ status: 'downloading', progress: 0, error: null });
+      await baixarArquivo(url, tmp);
+      const sh = path.join(app.getPath('temp'), `atl-swap-${Date.now()}.sh`);
+      fs.writeFileSync(sh, SCRIPT_TROCA, { mode: 0o755 });
+      const filho = spawn('/bin/bash', [sh, String(process.pid), tmp, dest], {
+        detached: true, stdio: 'ignore',
+      });
+      filho.unref();
+      setUpdateState({ status: 'ready', progress: 100 });
+      setTimeout(() => { try { app.quit(); } catch {} }, 400);
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      setUpdateState({ status: 'error', error: msg });
+      try { shell.openExternal(updateState.url || REPO_URL + '/releases/latest'); } catch {}
+    }
+  }
+
   ipcMain.on('check-update', () => { _updateCache = null; checkForUpdates(); });   // "verificar agora" ignora o cache
-  ipcMain.on('download-update', () => { if (autoUpdater) { try { autoUpdater.downloadUpdate(); } catch {} } });
-  ipcMain.on('install-update', () => { if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch {} } });
+  ipcMain.on('download-update', () => {
+    if (autoUpdater) { try { autoUpdater.downloadUpdate(); } catch {} return; }
+    if (updateState.method === 'dmg') instalarUpdateMac();
+  });
+  ipcMain.on('install-update', () => {
+    if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch {} return; }
+    if (updateState.method === 'dmg') instalarUpdateMac();
+  });
 
   setupAutoUpdater();   // configura eventos + 1ª checagem + scheduler 1h (igual ao boot antigo)
 
@@ -254,4 +365,17 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   return { checkUpdatesManual, onChannelChanged };
 }
 
-module.exports = { setupUpdateIpc };
+// Escolhe o .dmg da release para a arquitetura em uso. PURA e exportada porque
+// errar aqui instala o binário da arquitetura errada — e um Mac Intel rodando um
+// bundle arm64 (ou vice-versa) não abre. Preferência: nome com a arquitetura
+// exata; senão um nome sem marca nenhuma (build universal); senão nada.
+function pickMacDmg(assets, arch) {
+  if (!Array.isArray(assets)) return null;
+  const alvo = arch === 'arm64' ? 'arm64' : 'x64';
+  const dmgs = assets.filter((a) => a && typeof a.name === 'string' && /\.dmg$/i.test(a.name));
+  const exato = dmgs.find((a) => a.name.includes(alvo));
+  if (exato) return exato;
+  return dmgs.find((a) => !/arm64|x64/i.test(a.name)) || null;
+}
+
+module.exports = { setupUpdateIpc, pickMacDmg };
