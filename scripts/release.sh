@@ -373,8 +373,8 @@ release_upload_mac() {
   if [ "$DRY" = 0 ]; then
     # Seleção ANCORADA na versão do build (não apenas "qualquer .dmg"):
     # `ls *.dmg | head -1` pregaria o primeiro em ordem alfabética.
-    dmg="$(ls "$out"/*"-$VERSION-"*.dmg 2>/dev/null | head -1)"
-    zip_mac="$(ls "$out"/*"-$VERSION-mac".zip 2>/dev/null | head -1)"
+    dmg="$(ls "$out"/*"-$VERSION-"*.dmg 2>/dev/null | head -1 || true)"
+    zip_mac="$(ls "$out"/*"-$VERSION-mac".zip 2>/dev/null | head -1 || true)"
     [ -n "$dmg" ]     || die "não encontrei .dmg da versão $VERSION em $out/"
     [ -n "$zip_mac" ] || die "não encontrei -mac.zip da versão $VERSION em $out/"
     [ -f "$yml_mac" ] || die "não encontrei $yml_mac"

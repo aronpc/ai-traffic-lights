@@ -192,11 +192,17 @@ const KIRO_LOCK_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
 // Lê o PID do .lock ativo do Kiro (se houver). Cache 4s.
 let _kiroLockPid = null, _kiroLockAt = 0;
 function getKiroLockPid() {
-  if (_kiroLockPid && Date.now() - _kiroLockAt < 4000) {
-    // Liveness do PID cacheado: um .lock esquecido em disco com o processo
-    // morto não pode blindar a descoberta (e o PID vivo do Kiro sumiria do
-    // `discoveredTerminalAgents` só porque um state antigo de kiro existe).
-    try { process.kill(_kiroLockPid, 0); return _kiroLockPid; } catch { _kiroLockPid = null; }
+  const fresh = Date.now() - _kiroLockAt < 4000;
+  if (fresh) {
+    if (_kiroLockPid) {
+      // Liveness do PID cacheado: um .lock esquecido em disco com o processo
+      // morto não pode blindar a descoberta (e o PID vivo do Kiro sumiria do
+      // `discoveredTerminalAgents` só porque um state antigo de kiro existe).
+      try { process.kill(_kiroLockPid, 0); return _kiroLockPid; } catch { _kiroLockPid = null; }
+    }
+    // Cache NEGATIVO também vale os 4s: sem Kiro no sistema, o readdirSync que
+    // dá ENOENT não é re-pago a cada refrescância de discovery.
+    return _kiroLockPid;
   }
   try {
     const files = fs.readdirSync(KIRO_LOCK_DIR).filter(f => f.endsWith('.lock'));
@@ -213,7 +219,7 @@ function getKiroLockPid() {
     }
   } catch {}
   _kiroLockPid = null;
-  _kiroLockAt = Date.now();
+  _kiroLockAt = Date.now();   // sela o cache negativo (4s)
   return null;
 }
 
@@ -256,12 +262,11 @@ function discoverAgentProcs(existingAgentPids) {
         const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
         if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
         
-        // Demais agents: se já existe state file para este agent com este PID, ignora
-        // (evita processos filhos/auxiliares criarem linhas duplicadas).
-        // Permite descoberta se for um PID NOVO do mesmo agent (ex.: 2ª sessão Claude).
-        const existingPids = existingAgentPids.get(agent);
-        if (existingPids && existingPids.has(pid)) continue;
-        
+        // Demais agents: sem filtro aqui — um PID que já tem state file é
+        // dedupado pelo mergeSessions() (src/sessions.js:19); filtrar por
+        // `existingPids.has(pid)` era redundante e não passava do caso
+        // pid-igual (processo filho/auxiliar tem PID DIFERENTE, então passava
+        // na dedup anunciada de qualquer forma).
         let pcomm = '';
         try {
           const parentOutput = execFileSync('ps', ['-p', ppid, '-o', 'comm='], { encoding: 'utf8', timeout: 1000 }).trim();
@@ -292,16 +297,11 @@ function discoverAgentProcs(existingAgentPids) {
           if (!agent) continue;
           
           // Kiro: mesma lógica do darwin — autorizado o PID vivo do lock, dedup
-        // genérico para quem tem state file, descarta auxiliar/ruído.
-        const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
-        if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
-          
-          // Demais agents: se já existe state file para este agent com este PID, ignora
-          // (evita processos filhos/auxiliares criarem linhas duplicadas).
-          // Permite descoberta se for um PID NOVO do mesmo agent (ex.: 2ª sessão Claude).
-          const existingPids = existingAgentPids.get(agent);
-          if (existingPids && existingPids.has(pid)) continue;
-          
+          // genérico para quem tem state file, descarta auxiliar/ruído.
+          const kiroStatePids = existingAgentPids.has('kiro') ? existingAgentPids.get('kiro') : null;
+          if (agent === 'kiro' && kiroLockPid !== pid && kiroStatePids && !kiroStatePids.has(pid)) continue;
+
+          // Demais agents: sem filtro (redundante — mergeSessions dedupe por pid).
           const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
           const m = status.match(/^PPid:\s+(\d+)/m);
           if (!m) continue;
@@ -1772,6 +1772,12 @@ function applyUpdateChannel() {
 function setupAutoUpdater() {
   const method = detectInstallMethod();
   updateState.method = method;
+  // Auto-update via electron-updater SÓ para AppImage (DECISÃO, PR #46 P3).
+  // .dmg e .zip não são assinados/notarizados (sem Apple Developer ID), então
+  // o electron-updater NÃO é instanciado neles: o acquireSquirrelMac baixaria
+  // o zip, mas o code-sign check falharia e a instalação quebraria. DMG/
+  // deb/source usam o fallback GitHub-API (checa/release + link manual) —
+  // atualização é "baixa o novo DMG e troca", documentado no CHANGELOG.
   if (method === 'appimage') {
     try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { console.error('[auto-update] require electron-updater falhou:', e && e.message); autoUpdater = null; }
   }

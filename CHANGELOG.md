@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vivo quando o state do 1º expirasse, ficavam amnésicos no overlay. Agora o
   PID vivo do lock é o único kiro autorizado sem state file; quem tem state
   passa pela dedup genérica; o gate `existingAgentPids.has('kiro')` saiu.
+  Também: cache negativo selado por 4s (sem recurso ao readdirSync com ENOENT
+  a cada refrescância quando não há Kiro) e o filtro `existingPids.has(pid)`
+  removido — passava só no caso pid-igual, já coberto pelo `mergeSessions()`.
 - **CI/release — o CI cobre hoje o que a PR-46 toca.** Syntax checks passam a
   incluir `adapters/**` e o `install_macos.sh` (a correção do pipefail ficava
   fora do CI); o job `build-mac` do release.yml ganhou `needs: [release]` —
@@ -89,7 +92,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release.sh escondia a corrida); e o `upload-mac` limpa `.dmg`/`.zip`
   velhos de `dist-mac`, ancora a seleção do artefato na versão do build
   (`ls *.dmg | head -1` pegava o primeiro em ordem alfabética) e ancora o
-  `grep` do `latest-mac.yml` no começo da linha.
+  `grep` do `latest-mac.yml` no começo da linha; globs ganharam `|| true`
+  (um `ls` sem casar não morre mais com exit 2 silencioso antes do `die`
+  amigável).
+- **Auto-update macOS — decisão documentada no código.** Os builds `.dmg`/
+  `.zip` não são assinados/notarizados (exigiria Apple Developer ID ~US$99/
+  ano na conta do mantenedor), então o electron-updater foi confirmado como
+  AppImage-only e isso virou decisão explícita em `setupAutoUpdater()`. DMG/
+  deb/fonte seguem com o fallback GitHub-API: checam release e abrem o link
+  para baixar o novo build — atualização é "troca o app", nunca instalação
+  in-place (que falharia no code-sign check). Se um dia houver Developer ID,
+  é trocar a condição e remover o comment.
 
 ## [0.7.3] - 2026-07-29
 
