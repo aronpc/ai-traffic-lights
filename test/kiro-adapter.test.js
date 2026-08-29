@@ -78,7 +78,13 @@ function loadAdapter(mfs, clock = { now: 0 }) {
     Date: class extends Date {
       static now() { return clock.now; }
     },
-    require: (name) => ({ fs: mfs, path, os: { homedir: () => HOME } }[name]),
+    // O adapter usa o validate.js compartilhado (em vez de uma 4ª cópia da regex
+    // de id), então o stub precisa entregar o módulo REAL — validar id é parte
+    // do comportamento sob teste, não algo a mockar.
+    require: (name) => ({
+      fs: mfs, path, os: { homedir: () => HOME },
+      '../../src/validate.js': require('../src/validate.js'),
+    }[name]),
     process: { env: { XDG_DATA_HOME: '/data' } },
     setInterval,
     clearInterval,

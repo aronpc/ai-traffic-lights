@@ -355,6 +355,11 @@ release_upload_mac() {
   [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
   local tag="v$VERSION"
 
+  # Mesmos gates do beta e do promote. Este modo publica artefato numa release
+  # real (com --clobber), entao nao ha motivo para ser o unico caminho de
+  # publicacao sem arvore limpa, sem commit empurrado e sem a suite verde.
+  guard_tree; guard_pushed; run_tests
+
   # Aguarda a release existir (o job Linux pode ainda estar finalizando).
   # Em dry-run pula a espera — a release pode não existir ainda.
   if [ "$DRY" = 0 ]; then

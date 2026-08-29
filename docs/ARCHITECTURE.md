@@ -245,12 +245,20 @@ myagent: {
 ### Step 2 — write an adapter that writes state files
 
 The adapter translates the agent's native events into the **canonical
-vocabulary** and writes the state file. Two proven shapes:
+vocabulary** and writes the state file. Three proven shapes:
 
 | Shape | Reference | When |
 |---|---|---|
 | Native **hook** (out-of-process) | [`hooks/traffic-hook.sh`](../hooks/traffic-hook.sh) | The agent can run a shell command per event (Claude Code / Gemini / Codex). |
 | In-process **plugin** | [`adapters/opencode/ai-traffic-lights.js`](../adapters/opencode/ai-traffic-lights.js) | The agent loads plugins in its own process (OpenCode). |
+| **File watcher** (in the overlay) | [`adapters/kiro/ai-traffic-lights.js`](../adapters/kiro/ai-traffic-lights.js) | The agent offers no hook and no plugin API, but leaves session files on disk (Kiro). |
+
+The watcher shape is the fallback of last resort, and it carries costs the other
+two don't: it runs inside the overlay's own process (so an unhandled exception
+takes the whole app down, not just one agent's monitoring), and it has to
+*infer* events the agent never emits. Kiro, for instance, has no end-of-turn
+marker at all — the adapter synthesises `Stop` from a quiet `.jsonl`. Prefer a
+hook or a plugin whenever the agent supports one.
 
 **Canonical event vocabulary** (translate the agent's dialect into this):
 
