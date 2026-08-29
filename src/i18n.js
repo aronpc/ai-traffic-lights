@@ -61,7 +61,11 @@ const STRINGS = {
     ntf_no_terminal: 'No supported terminal found (install tilix / gnome-terminal / ghostty)',
     ntf_attach_no_tmux: 'No tmux session to attach (agent not running in tmux)',
     ntf_attach_no_host: 'Unknown host for peer "{origin}"',
-    ntf_focus_unsupported_wayland: "Can't focus this terminal on Wayland (GNOME Terminal isn't reachable). Use Tilix, or run under X11/XWayland.",
+    // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    ntf_focus_remote: 'This session runs on another machine — there is no window to focus here. Use the terminal tab to attach.',
+    ntf_focus_detached: 'This session lives in a tmux with no client attached — there is no window to focus. Attach it first (tmux attach).',
+    ntf_focus_wayland: "Can't focus this terminal on Wayland — it isn't reachable from outside. Use Tilix or Warp, or run under X11/XWayland.",
+    ntf_focus_nowindow: "Couldn't find this session's window. It may have been closed, or this terminal isn't reachable.",
     // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
     ntf_tokens_reset: '🟢 {name}: quota reset — you can go again',
     launch_label: 'Terminal to launch agents',
@@ -194,7 +198,11 @@ const STRINGS = {
     ntf_no_terminal: 'Nenhum terminal suportado (instale tilix / gnome-terminal / ghostty)',
     ntf_attach_no_tmux: 'Sem sessão tmux para attach (agente não está no tmux)',
     ntf_attach_no_host: 'Host desconhecido para o peer "{origin}"',
-    ntf_focus_unsupported_wayland: 'Não foi possível focar este terminal no Wayland (o GNOME Terminal não é alcançável). Use o Tilix ou rode em X11/XWayland.',
+    // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    ntf_focus_remote: 'Esta sessão roda em outra máquina — não há janela para focar aqui. Use a aba de terminal para dar attach.',
+    ntf_focus_detached: 'Esta sessão está num tmux sem cliente attachado — não existe janela para focar. Faça o attach primeiro (tmux attach).',
+    ntf_focus_wayland: 'Não foi possível focar este terminal no Wayland — ele não é alcançável de fora. Use Tilix ou Warp, ou rode em X11/XWayland.',
+    ntf_focus_nowindow: 'Não encontrei a janela desta sessão. Ela pode ter sido fechada, ou este terminal não é alcançável.',
     // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
     ntf_tokens_reset: '🟢 {name}: cota liberada — pode voltar a usar',
     launch_label: 'Terminal para abrir agentes',

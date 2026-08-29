@@ -77,7 +77,13 @@ function isLocal(s) { return !s.origin || s.origin === 'local'; }
 //   embutido → attacha o tmux numa aba do terminal do ATL (xterm+pty). Exige
 //              tmux_session; pra remota é o ÚNICO caminho (via WebSocket /pty).
 function openExternal(s) {
-  window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+  // `origin` é o que barra o foco de sessão remota no main (o pid dela é de
+  // outro kernel). Os hints vão como estão; o main revalida tudo contra os
+  // processos vivos no clique.
+  window.trafficLight.focus({
+    pid: s.pid, origin: s.origin, windowid: s.windowid,
+    focus_url: s.focus_url, tilix_id: s.tilix_id, iterm_id: s.iterm_id, tmux_pane: s.tmux_pane,
+  });
 }
 
 function openEmbedded(s) {

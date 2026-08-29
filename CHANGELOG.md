@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Clicar numa sessão dentro do tmux abria o Warp em vez do terminal real.**
+  O `WARP_FOCUS_URL` fica congelado no environ do servidor tmux (herdado do dia
+  em que ele nasceu) e vazava para todo pane novo. Reancorar no cliente não
+  bastava: quando o servidor nasceu num Warp e hoje é attachado do Tilix, o
+  cliente não tem `focus_url` nenhum, e o merge com `||` deixava o valor morto
+  passar. Agora os hints do cliente substituem os do state em bloco, e cada
+  canal de aba exige que o terminal correspondente esteja provado na árvore de
+  processos.
+- **Clique em sessão de outra máquina não tenta mais focar nada localmente.**
+  O `pid` de um peer é de outro kernel; interpretá-lo aqui focava um processo
+  local homônimo. O clique agora recusa antes de qualquer I/O e orienta a usar
+  a aba de terminal.
+
+### Changed
+- **O canal de foco de aba exige prova.** Um hint (`focus_url`, `tilix_id`,
+  `iterm_id`) só é usado quando o terminal correspondente está de fato na
+  árvore de processos da âncora. Sem prova, o clique degrada para apenas
+  levantar a janela — nunca abre o app errado.
+- **O clique sem efeito passou a avisar**, com a razão (`remote` / `detached` /
+  `wayland` / `nowindow`). Antes só o caso Wayland era reportado.
+
 ### Added
+- **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
+  validado em macOS.
 - **Sincronização P2P multi-máquina via Tailscale (opt-in).** Nós podem
   compartilhar sessões por HTTP autenticado com Bearer token, observar peers,
   identificar a origem de cada linha e evitar colisões de PID entre máquinas.
