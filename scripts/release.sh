@@ -7,7 +7,8 @@
 #   scripts/release.sh beta --base 0.8.0        # força a base (default: patch+1 do package.json)
 #   scripts/release.sh promote                 # promove a última beta pra stable
 #   scripts/release.sh promote --version 0.7.3
-#   scripts/release.sh upload-mac --version 0.7.3  # build macOS + upload p/ release já criada
+#   scripts/release.sh upload-mac --version 0.7.3        # build macOS + upload p/ release já criada
+#   scripts/release.sh upload-mac --version 0.8.0-beta.3 # idem, numa pre-release
 #   scripts/release.sh upload-mac                  # idem, versão resolvida do último -beta.N
 #   scripts/release.sh <modo> --dry-run        # mostra o que faria, não publica
 #   scripts/release.sh <modo> --skip-tests     # pula o gate `npm test` (use com consciência)
@@ -287,7 +288,11 @@ release_promote() {
     VERSION="$(printf '%s' "$last_beta" | sed -E 's/^v//; s/-beta\.[0-9]+$//')"
     info "última beta: $last_beta → promovendo para $VERSION"
   fi
-  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
+  # Aceita X.Y.Z (estável) E X.Y.Z-beta.N. Sem a beta, o canal beta nunca tinha
+  # artefato macOS: o build só existia no promote, então o código em teste não
+  # tinha como chegar a um Mac — inclusive o próprio updater do macOS.
+  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] \
+    || die "versão inválida: '$VERSION' (esperado X.Y.Z ou X.Y.Z-beta.N)"
   local tag="v$VERSION"
 
   # Pré-requisitos editoriais do runbook — o script NÃO os inventa.

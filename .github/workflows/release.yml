@@ -91,7 +91,9 @@ jobs:
   build-mac:
     runs-on: macos-latest
     needs: [release]
-    if: ${{ inputs.mode == 'promote' }}
+    # Roda em beta E em promote. Enquanto era só promote, o canal beta nunca teve
+    # artefato macOS — o código em teste não tinha como chegar a um Mac, o que
+    # inclui o próprio updater do macOS.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,10 +109,20 @@ jobs:
       - name: Build macOS e upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IN_MODE: ${{ inputs.mode }}
           IN_VERSION: ${{ inputs.version }}
           IN_DRY: ${{ inputs.dry_run }}
         run: |
           args=(upload-mac)
-          if [ -n "$IN_VERSION" ]; then args+=(--version "$IN_VERSION"); fi
+          if [ -n "$IN_VERSION" ]; then
+            args+=(--version "$IN_VERSION")
+          elif [ "$IN_MODE" = "beta" ]; then
+            # a beta recém-publicada é a tag -beta.N mais nova; sem resolvê-la aqui o
+            # upload-mac cairia no default (última beta SEM sufixo = a estável).
+            tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName -q '.[].tagName' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -1)"
+            [ -n "$tag" ] || { echo "nenhuma pre-release -beta.N encontrada"; exit 1; }
+            args+=(--version "${tag#v}")
+          fi
           if [ "$IN_DRY" = "true" ]; then args+=(--dry-run); fi
           bash scripts/release.sh "${args[@]}"
