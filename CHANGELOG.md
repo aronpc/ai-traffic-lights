@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   em sessão local com tmux, onde ele é o outro caminho.
 
 ### Changed
+- **A regra "preserve, don't regress" virou função testada.** Quem escreve state
+  file de dentro do overlay usa o `mergeState()`/`atomicWrite()` de
+  `src/state-writer.js`: chaves de terceiros, `transcript_path` e os campos de
+  foco sobrevivem a um evento que não os carrega, por construção. Hook e plugin
+  do OpenCode seguem com cópia própria — rodam em outro processo e não alcançam
+  o repo.
+- **O watcher do Kiro passou a exigir instalação explícita.** Antes bastava o
+  Kiro existir na máquina, então "Remover hooks" não desligava nada: o watcher
+  voltava no próximo launch. Agora ele depende do adapter estar instalado, igual
+  ao plugin do OpenCode — e a cópia em `<BASE_DIR>`, que não era carregada por
+  ninguém, virou o marcador desse opt-in.
 - **O build do macOS gera só o `.dmg`.** O `-mac.zip` e o `latest-mac.yml`
   existiam para o Squirrel.Mac, que nunca é instanciado: eram cerca de 100 MB
   por release sem nenhum leitor.

@@ -88,6 +88,7 @@ function loadAdapter(mfs, clock = { now: 0 }) {
     require: (name) => ({
       fs: mfs, path, os: { homedir: () => HOME },
       '../../src/validate.js': require('../src/validate.js'),
+      '../../src/state-writer.js': require('../src/state-writer.js'),
     }[name]),
     process: { env: { XDG_DATA_HOME: '/data' } },
     setInterval,

@@ -1163,7 +1163,15 @@ app.whenReady().then(() => {
   // Watcher do Kiro DEPOIS da janela: o bootstrap() dele é síncrono (readdir +
   // stat + leitura do tail de cada sessão viva) e antes do createWindow atrasava
   // o overlay aparecer, em benefício de nada — o watcher não precisa preceder a UI.
-  if (hookInstaller.kiroAvailable()) kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
+  // O watcher do Kiro exige as DUAS coisas: o Kiro existir na máquina E o adapter
+  // ter sido instalado (a cópia em BASE_DIR). Antes bastava a primeira, e por isso
+  // "Remover hooks" não desligava nada — o watcher voltava no próximo launch, sem
+  // opt-out nenhum (achado 11 do review da PR #46). De quebra, a cópia deixa de
+  // ser peso morto: ela É o marcador de "o usuário optou por isto", igual ao
+  // plugin do OpenCode.
+  if (hookInstaller.kiroAvailable() && hookInstaller.kiroInstalled(BASE_DIR)) {
+    kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
+  }
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
   chokidar

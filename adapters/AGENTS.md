@@ -23,6 +23,6 @@ Há **duas formas** aqui, e elas rodam em processos diferentes:
 - O adapter escreve no **mesmo contrato** do hook bash: `${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/state/<session_id>.json`, `schema_version: 2`, eventos canônicos.
 - **Regra de ouro:** NUNCA quebrar o agente hospedeiro — todo handler engole exceções (`try {} catch {}`).
 - Anti-path-traversal: `session_id` validado antes de virar nome de arquivo. Use o `validSessionId()` de `src/validate.js` quando o adapter rodar no overlay (é testado); o plugin do OpenCode carrega a própria cópia porque roda fora da app e não alcança esse módulo.
-- **Preserve, don't regress:** ao reescrever um state file, faça merge do que já está lá — `transcript_path`, campos de foco e chaves de terceiros não podem ser apagados por um evento que não os carrega.
+- **Preserve, don't regress:** ao reescrever um state file, faça merge do que já está lá — `transcript_path`, campos de foco e chaves de terceiros não podem ser apagados por um evento que não os carrega. Quem roda **no overlay** obtém isso de graça com o `mergeState()`/`atomicWrite()` de `src/state-writer.js` (testado em `test/state-writer.test.js`); quem roda em outro processo precisa reimplementar — e é por isso que a regra tem teste.
 
 <!-- MANUAL: -->
