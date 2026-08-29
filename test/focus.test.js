@@ -158,6 +158,32 @@ test('tmuxClientPid: pane desconhecido / entradas inválidas → null', () => {
   assert.equal(tmuxClientPid('%41', panes, [{ session: '41', pid: NaN, activity: 1 }]), null);
 });
 
+// ---- fronteira de confiança dos canais ----
+// O valor sai de um environ (ou de um campo mandado pelo renderer via IPC) e
+// vira argumento de um programa externo. `valid` roda DEPOIS de `map` e checa o
+// formato — é mais seguro que escapar.
+
+test('tabChannel: iterm_id com newline é REJEITADO (seria injeção no osascript)', () => {
+  // o uuid é interpolado no corpo do AppleScript: um \n fecharia o `if` e as
+  // linhas seguintes rodariam como comandos na conta do usuário.
+  const injecao = 'w0t0p0:abc"\nend if\ndo shell script "touch /tmp/PWNED"\nif true then\n';
+  assert.equal(tabChannel({ terminal: 'iterm', iterm_id: injecao }), null);
+  assert.equal(tabChannel({ terminal: 'iterm', iterm_id: 'w0t0p0:a b' }), null);
+  assert.equal(tabChannel({ terminal: 'iterm', iterm_id: 'w0t0p0:' }), null);
+});
+
+test('tabChannel: tilix_id com aspa é REJEITADO (quebraria a variant D-Bus)', () => {
+  assert.equal(tabChannel({ terminal: 'tilix', tilix_id: "a'b" }), null);
+  assert.equal(tabChannel({ terminal: 'tilix', tilix_id: 'a\nb' }), null);
+});
+
+test('tabChannel: ids legítimos seguem passando', () => {
+  assert.deepEqual(tabChannel({ terminal: 'iterm', iterm_id: 'w0t0p0:1E0A8E10-3EA8-4FCA' }),
+    { kind: 'iterm', value: '1E0A8E10-3EA8-4FCA' });
+  assert.deepEqual(tabChannel({ terminal: 'tilix', tilix_id: '133c6df8-2213-4fe9-a912-845e794766f3' }),
+    { kind: 'tilix', value: '133c6df8-2213-4fe9-a912-845e794766f3' });
+});
+
 test('#1 tabChannel: sem canal e entradas degeneradas → null', () => {
   assert.equal(tabChannel({}), null);
   assert.equal(tabChannel(null), null);

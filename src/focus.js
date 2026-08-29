@@ -81,11 +81,23 @@ function parseEnviron(text) {
 //
 // ADICIONAR UM TERMINAL = uma linha aqui + o comm em TERMINALS (ipc/focus.js)
 // + o executor em focusTab. Nada mais.
+// `valid` roda DEPOIS de `map` e é a fronteira de confiança do canal: o valor
+// sai de um environ (ou, via IPC, de um campo mandado pelo renderer) e vira
+// argumento de um programa externo. Validar o FORMATO é mais seguro que
+// escapar, do mesmo jeito que tmuxTarget faz com o "%N" do pane.
+const ID = /^[A-Za-z0-9-]{1,64}$/;
 const TAB_CHANNELS = [
   { kind: 'warp',  app: 'warp',  field: 'focus_url', valid: (v) => v.startsWith('warp://') },
-  // ITERM_SESSION_ID é "w0t0p0:<uuid>"; o AppleScript quer só o uuid.
-  { kind: 'iterm', app: 'iterm', field: 'iterm_id', map: (v) => (v.includes(':') ? v.slice(v.indexOf(':') + 1) : v) },
-  { kind: 'tilix', app: 'tilix', field: 'tilix_id' },
+  // ITERM_SESSION_ID é "w0t0p0:<uuid>"; o AppleScript quer só o uuid. Esse uuid
+  // é INTERPOLADO no corpo do script — um valor com \n fecharia a linha do `if`
+  // e injetaria comandos executados pelo osascript na conta do usuário.
+  { kind: 'iterm', app: 'iterm', field: 'iterm_id',
+    map: (v) => (v.includes(':') ? v.slice(v.indexOf(':') + 1) : v),
+    valid: (v) => ID.test(v) },
+  // O tilix_id vira uma variant D-Bus (`[<'…'>]`): uma aspa simples quebraria o
+  // parse do gvariant. Não é shell (execFileSync não passa por shell), mas o
+  // argumento malformado faz a chamada falhar em silêncio.
+  { kind: 'tilix', app: 'tilix', field: 'tilix_id', valid: (v) => ID.test(v) },
 ];
 
 function tabChannel(state) {
@@ -95,9 +107,9 @@ function tabChannel(state) {
     const raw = state[ch.field];
     if (!raw) continue;
     let value = String(raw);
-    if (ch.valid && !ch.valid(value)) continue;
     if (ch.map) value = ch.map(value);
     if (!value) continue;
+    if (ch.valid && !ch.valid(value)) continue;
     return { kind: ch.kind, value };
   }
   return null;
