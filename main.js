@@ -873,6 +873,14 @@ function createWindow() {
   // o 2º clique ("esconder") nunca chegaria a ele. 'floating' fica acima das
   // janelas comuns, mas abaixo do menu bar. Linux mantém 'screen-saver' (X11).
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'screen-saver');
+  // macOS/Space: sem isto o overlay vive num único Space — clicar no tray (ou o
+  // reveal) estando em OUTRO Space não mostrava nada (a janela existe, mas fora
+  // do Space atual). visibleOnAllWorkspaces faz a janela pertencer a todos os
+  // Spaces, então o show() aparece no Space em uso. Trade-off: também aparece
+  // sobre apps em tela cheia — aceitável pra um overlay.
+  if (process.platform === 'darwin') {
+    try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch {}
+  }
   // Linux/Mutter ignora `maximizable` → reverte na hora qualquer maximize
   // (Super+↑, drag no topo da tela, tiling). Overlay nunca vira tela cheia.
   win.on('maximize', () => { try { win.unmaximize(); } catch {} });
@@ -1042,6 +1050,10 @@ for (const [lvl, file] of Object.entries(TRAY_ICON_FILE)) {
 }
 const trayIconBase = (() => {
   const img = nativeImage.createFromPath(path.join(__dirname, `assets/${trayIconFile('tray-icon.png')}`));
+  // macOS: ícone BOOT/zero-sessões vira template — a menu bar adapta o traço
+  // sozinha (claro/escuro). O PNG base é cinza de alpha baixo: sem template ele
+  // sumia na menu bar escura (a cor RGB é ignorada, só o alpha conta).
+  if (IS_MAC) img.setTemplateImage(true);
   return img;
 })();
 function setTrayLevel({ level, awaiting = 0, processing = 0, done = 0 }) {

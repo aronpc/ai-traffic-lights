@@ -19,7 +19,7 @@ function makeFs() {
   const dirs = new Set([KDIR, STATE]);
   let failTmp = false;
   const mk = (code, msg) => Object.assign(new Error(msg), { code });
-  return {
+  const mfs = {
     existsSync: (p) => store.has(p) || dirs.has(p),
     mkdirSync: (p) => { dirs.add(p); },
     writeFileSync: (p, data) => {
@@ -44,13 +44,27 @@ function makeFs() {
     },
     statSync: (p) => {
       if (!store.has(p)) throw mk('ENOENT', p);
-      return { size: store.get(p).length, mtimeMs: Date.now() };
+      return { size: Buffer.byteLength(store.get(p), 'utf8'), mtimeMs: Date.now() };
     },
     unlinkSync: (p) => { store.delete(p); },
+    // lastJsonlEvent lê o TAIL do .jsonl via fd (s8) — espelha o readSync real.
+    _fds: new Map(),
+    _nextFd: 1,
+    openSync: (p) => { const fd = mfs._nextFd++; mfs._fds.set(fd, p); return fd; },
+    closeSync: (fd) => { mfs._fds.delete(fd); },
+    readSync: (fd, buf, offset, len, pos) => {
+      const p = mfs._fds.get(fd);
+      if (!store.has(p) || pos >= store.get(p).length) return 0;
+      const bytes = Buffer.from(store.get(p), 'utf8');
+      const end = Math.min(pos + len, bytes.length);
+      bytes.copy(buf, offset, pos, end);
+      return end - pos;
+    },
     _read: (p) => JSON.parse(store.get(p)),
     _list: () => [...store.keys()],
     _failTmp: (on) => { failTmp = on; },
   };
+  return mfs;
 }
 
 function loadAdapter(mfs, clock = { now: 0 }) {
@@ -68,6 +82,11 @@ function loadAdapter(mfs, clock = { now: 0 }) {
     process: { env: { XDG_DATA_HOME: '/data' } },
     setInterval,
     clearInterval,
+    setImmediate,
+    clearImmediate,
+    // Buffer: o lastJsonlEvent agora lê só o tail do .jsonl (s8) — o Buffer
+    // não vem no contexto do vm por padrão.
+    Buffer,
     module: { exports: {} },
     console,
   };

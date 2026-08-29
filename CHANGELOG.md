@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
 ### Changed
+- **Overlay em todos os Spaces (macOS).** O overlay vivia num único Space:
+  clicar no tray (ou o reveal) estando em outro Space não mostrava nada — a
+  janela existia, mas fora do Space atual. `setVisibleOnAllWorkspaces` faz a
+  janela pertencer a todos os Spaces; o show() aparece no Space em uso.
+  Trade-off: também aparece sobre apps em tela cheia — aceitável pra um overlay.
 ### Fixed
 - **Toggle do overlay pelo tray no macOS.** O ícone da bandeja alternava
   mostrar/ocultar de forma aparentemente aleatória: a janela nascia visível,
@@ -20,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a janela nasce oculta, usa nível `floating` no macOS, o handler de `blur`
   fica restrito ao Linux e o tray chama `setIgnoreDoubleClickEvents(true)`, com
   cada clique virando exatamente um `click` e o toggle ficando 1:1.
-<<<<<<< HEAD
 - **Visibilidade de boot restaurada no Linux/Windows.** O `show:false` da fix
   do tray (feita para o 1º clique do tray revelar no macOS) escondia a janela
   também nas demais plataformas — o AppImage abria "sem nada" até achar o ícone
@@ -103,6 +107,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   para baixar o novo build — atualização é "troca o app", nunca instalação
   in-place (que falharia no code-sign check). Se um dia houver Developer ID,
   é trocar a condição e remover o comment.
+- **Ícone da tray sumia na menu bar escura (macOS).** O PNG base (boot/zero
+  sessões) é cinza de alpha baixo e sem template — na menu bar escura o traço
+  desaparecia. `setTemplateImage(true)` no darwin faz a menu bar renderizar o
+  ícone na cor adaptativa (claro/escuro); os ícones coloridos de status
+  (r/y/g) ficam como estão.
+- **Leitura do `.jsonl` do Kiro linear no boot e a cada evento.** O
+  `lastJsonlEvent()` lia o arquivo INTEIRO (sessões longas passam de MB) com
+  `readFileSync`+`trimEnd`+`split` de forma síncrona na main thread do Electron
+  a cada evento, e o `bootstrap()` atrasava o `createWindow()`. Agora só os
+  últimos 64KB são lidos (a linha mais nova sempre está no tail), o pid do
+  lock cascateia pelo próprio `writeState` (um read+write a menos por evento)
+  e o bootstrap é deferido com `setImmediate` — a janela abre na frente e o
+  state inicial chega na primeira refresh.
 
 ## [0.7.3] - 2026-07-29
 

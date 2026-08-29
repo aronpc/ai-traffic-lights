@@ -58,7 +58,7 @@ function atomicWrite(stateFile, st) {
   return false;
 }
 
-function writeState(sid, evt, tool) {
+function writeState(sid, evt, tool, pid) {
   if (!sid || !SAFE_ID.test(sid)) return;
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -74,7 +74,7 @@ function writeState(sid, evt, tool) {
       schema_version: 2,
       agent:          'kiro',
       session_id:     sid,
-      pid:            ex.pid || null,
+      pid:            pid || ex.pid || null,
       cwd:            ex.cwd || null,
       model:          ex.model || null,
       transcript_path: ex.transcript_path || null,
@@ -146,9 +146,18 @@ function sidFromFile(file) {
 function lastJsonlEvent(sid) {
   const file = path.join(KIRO_SESSIONS_DIR, `${sid}.jsonl`);
   try {
-    const content = fs.readFileSync(file, 'utf8');
-    const lines = content.trimEnd().split('\n');
-    // busca a última linha válida
+    const stat = fs.statSync(file);
+    // Lê só os últimos 64KB, nunca o arquivo inteiro: uma sessão longa do Kiro
+    // passa de MB e o readFileSync + trimEnd + split inteiro rodava SÍNCRONO na
+    // main thread do Electron a CADA evento (s8 do review da PR-46). A linha
+    // mais nova sempre está no tail.
+    const len = Math.min(stat.size, 65536);
+    const buf = Buffer.alloc(len);
+    const fd  = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, stat.size - len); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf8').split('\n');
+    // busca a última linha válida (a do fim pode vir cortada se o Kiro estava
+    // no meio da escrita — aí retorna a anterior, que a próxima escrita re-lê)
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const d = JSON.parse(lines[i]);
@@ -205,20 +214,9 @@ function handleJsonl(sid) {
 
   enrichFromSessionJson(sid);
 
-  // writeState preserva ex.pid; como lemos o lock antes, ex.pid já vem populado
-  // pelo enrichFromSessionJson (que lê o state file existente) ou será null
-  // se for a primeira escrita — mas o lock já foi lido acima.
-  // Força o pid do lock no state file se ainda não tiver.
-  if (lock) {
-    const stateFile = path.join(STATE_DIR, `${sid}.json`);
-    const ex = readState(sid);
-    if (!ex.pid) {
-      ex.pid = lock.pid;
-      atomicWrite(stateFile, ex);
-    }
-  }
-
-  writeState(sid, evt, null);
+  // O pid do lock cascateia pelo próprio writeState (evita o read+write extra
+  // do antigo bloco de correção) — sem lock, preserva ex.pid (SIGA-sem-pid).
+  writeState(sid, evt, null, lock && lock.pid);
 }
 
 function handleLock(sid, exists) {
@@ -320,7 +318,10 @@ function start(chokidar, onFirstWrite) {
 
   _onFirstWrite = onFirstWrite || null;
 
-  bootstrap();
+  // bootstrap DEFERIDO: os reads de sessões já abertas NÃO podem travar o
+  // createWindow() do ready (s8 da PR-46) — o watcher entra ativo antes, e a
+  // janela abre na frente; o state inicial chega na primeira sendSessions.
+  setImmediate(bootstrap);
 
   _watcher = chokidar.watch(KIRO_SESSIONS_DIR, {
     ignoreInitial:    true,
