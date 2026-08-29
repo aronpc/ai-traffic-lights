@@ -66,16 +66,19 @@ function mergeState(existente, patch, evento) {
   const pt = (patch && typeof patch === 'object') ? patch : {};
   const out = { ...ex, ...pt };
   for (const k of PRESERVADOS) {
-    if (pt[k] === undefined || pt[k] === null) {
-      if (ex[k] !== undefined) out[k] = ex[k];
-      else if (!(k in out)) out[k] = null;
+    if (pt[k] == null) {                      // undefined OU null no patch
+      // `== null` e não `!== undefined`: um `undefined` EXPLÍCITO no patch
+      // deixava a chave presente-porém-undefined, e o JSON.stringify a omitia
+      // do arquivo. O contrato pede o campo com null, não a ausência dele.
+      out[k] = (ex[k] == null) ? null : ex[k];
     }
   }
-  // O contrato é explícito: `notification_type` é null a menos que o evento
-  // ATUAL seja Notification. Tirá-lo de PRESERVADOS não bastava — o spread do
-  // state existente o carregava assim mesmo, e o discriminador da notificação
-  // anterior classificaria a próxima (computeState decide por este campo).
-  if (out.last_event !== 'Notification') out.notification_type = null;
+  // O contrato é explícito: `notification_type` descreve o evento ATUAL. Ele
+  // vem do patch ou não existe — nunca do state anterior. Guardar só o caso
+  // não-Notification deixava o furo mais estreito e igualmente real: uma
+  // Notification NOVA sem tipo herdava o discriminador da anterior, e o
+  // computeState a classificava pelo motivo errado.
+  out.notification_type = (pt.notification_type != null) ? pt.notification_type : null;
 
   if (evento) {
     const antes = Array.isArray(ex.events) ? ex.events : [];

@@ -122,7 +122,10 @@ sha512_sidecar() {
     warn "sidecar de $(basename "$f") saiu malformado — descartado"
     return 1
   fi
-  mv "$tmp" "$out"
+  # `mv` que falha (dir read-only, cross-device, permissao) nao pode reportar
+  # sucesso: o chamador anexaria um arquivo inexistente e o `gh` abortaria — no
+  # promote, DEPOIS do push da tag, deixando tag publicada sem release.
+  mv "$tmp" "$out" || { rm -f "$tmp"; warn "não consegui mover o sidecar de $(basename "$f")"; return 1; }
   printf '%s' "$out"
 }
 

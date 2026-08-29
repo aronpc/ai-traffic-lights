@@ -782,6 +782,7 @@ function closeSyncServer() {
 }
 let stopPoll = null, pollKey = null;
 let settingsIpc = null;   // settings window module (src/ipc/settings.js) — setado no boot, lido no tray
+let _kiroPrecisaInstalar = false;   // Kiro na máquina, adapter não instalado
 let trayIpc = null;   // tray+notify module (src/ipc/tray.js) — setado no boot PRIMEIRO (fornece notifyUser)
 let updateIpc = null;   // auto-update module (src/ipc/update.js) — setado no boot, lido no tray
 let launcherIpc = null;   // launcher module (src/ipc/launcher.js) — setado no boot, lido no tray
@@ -1172,17 +1173,7 @@ app.whenReady().then(() => {
   if (hookInstaller.kiroAvailable() && hookInstaller.kiroInstalled(BASE_DIR)) {
     kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
   } else if (hookInstaller.kiroAvailable()) {
-    // Kiro na máquina mas adapter não instalado. Antes o watcher subia sozinho,
-    // então quem só usa Kiro nunca teve motivo pra clicar em "Instalar hooks" —
-    // e perderia o monitoramento em SILÊNCIO nesta atualização. Avisa uma vez.
-    try {
-      const marca = path.join(BASE_DIR, '.kiro-aviso-instalar');
-      if (!fs.existsSync(marca)) {
-        fs.mkdirSync(BASE_DIR, { recursive: true });
-        fs.writeFileSync(marca, String(Date.now()));
-        notifyUser(T('ntf_kiro_needs_install'));
-      }
-    } catch {}
+    _kiroPrecisaInstalar = true;   // avisado depois, quando notifyUser existir
   }
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
@@ -1200,6 +1191,22 @@ app.whenReady().then(() => {
     buildMenu: () => buildTrayMenu(),   // compositor (main): refs launcherIpc/updateIpc resolvidas só no call (createTray)
   });
   notifyUser = trayIpc.notifyUser;   // alias p/ update/focus/launcher (recebem por DI)
+
+  // Aviso de migração do Kiro: SÓ AQUI, porque até a linha acima `notifyUser` é
+  // o no-op de main.js — chamá-lo antes engolia a notificação em silêncio, e o
+  // marcador gravado antes da chamada fazia com que ela nunca mais fosse
+  // tentada. Um aviso criado para impedir uma regressão silenciosa que era, ele
+  // próprio, silencioso. Marca só depois que a notificação de fato saiu.
+  if (_kiroPrecisaInstalar) {
+    try {
+      const marca = path.join(BASE_DIR, '.kiro-aviso-instalar');
+      if (!fs.existsSync(marca)) {
+        notifyUser(T('ntf_kiro_needs_install'));
+        fs.mkdirSync(BASE_DIR, { recursive: true });
+        fs.writeFileSync(marca, String(Date.now()));
+      }
+    } catch {}
+  }
   collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o % (notifyUser já resolvido)
   _usageInterval = setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
   updateIpc = require('./src/ipc/update').setupUpdateIpc({   // auto-update extraído (REF passo 1)

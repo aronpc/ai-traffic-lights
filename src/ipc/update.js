@@ -275,18 +275,24 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   // A distinção importa: aqui o sidecar é o ÚNICO controle de integridade antes
   // de um script substituir o .app inteiro, sem ninguém olhando. Tratar uma
   // falha de rede como "não existe" instalaria sem verificação nenhuma.
-  function buscarTexto(url, saltos = 0) {
+  function buscarSidecar(url, saltos = 0) {
     return new Promise((resolve) => {
-      if (saltos > 5) return resolve(null);
+      if (saltos > 5) return resolve({ estado: 'falha', corpo: '' });
       const https = require('https');
       https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' }, timeout: 15000 }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume(); return resolve(buscarTexto(res.headers.location, saltos + 1));
+          res.resume(); return resolve(buscarSidecar(res.headers.location, saltos + 1));
         }
-        if (res.statusCode === 404) { res.resume(); return resolve(''); }   // ausente de verdade
-        if (res.statusCode !== 200) { res.resume(); return resolve(null); } // 5xx, 403, …
-        let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(d.trim()));
-      }).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+        if (res.statusCode === 404) { res.resume(); return resolve({ estado: 'ausente', corpo: '' }); }
+        if (res.statusCode !== 200) { res.resume(); return resolve({ estado: 'falha', corpo: '' }); }
+        let d = ''; res.on('data', (c) => { d += c; });
+        // 200 com corpo VAZIO não é ausência: um proxy transparente ou uma borda
+        // de CDN respondendo 200 sem conteúdo desligaria o único controle que
+        // guarda a troca do .app. Volta como 'ok' e o corpo vazio reprova no
+        // formato — que é o desfecho certo.
+        res.on('end', () => resolve({ estado: 'ok', corpo: d.trim() }));
+      }).on('error', () => resolve({ estado: 'falha', corpo: '' }))
+        .on('timeout', function () { this.destroy(); resolve({ estado: 'falha', corpo: '' }); });
     });
   }
 
@@ -347,27 +353,41 @@ open "$DEST"
     const url = updateState.dmgUrl;
     if (!dest || !url) return;                   // sem alvo/asset: fica no manual
     _macBaixando = true;
+    let dmgTmp = null;                 // p/ o catch externo poder limpar
     try {
-      const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
-      setUpdateState({ status: 'downloading', progress: 0, error: null });
-      await baixarArquivo(url, dmg);
-
       // Integridade: o mesmo sidecar <artefato>.sha512 que os instaladores de
       // shell consomem. Este é o download que MAIS precisa dele — ninguém está
-      // olhando, e o resultado substitui o app inteiro. Sidecar ausente segue
-      // (releases antigas não o têm, mesma política dos instaladores); sidecar
-      // presente que NÃO confere aborta e não encena troca nenhuma.
-      const esperado = await buscarTexto(`${url}.sha512`);
-      const obtido = (esperado && esperado !== '') ? await sha512Base64(dmg) : null;
-      const veredito = decidirIntegridade(esperado, obtido);
+      // olhando, e o resultado substitui o app inteiro.
+      //
+      // Buscado ANTES do .dmg: uma release cujo sidecar nunca confere faria o
+      // ciclo de 1h rebaixar ~100 MB indefinidamente se a checagem viesse depois.
+      const busca = await buscarSidecar(`${url}.sha512`);
       const RECUSAS = {
-        indisponivel: 'não consegui buscar o checksum do update — tentarei de novo depois',
-        malformado:   'checksum do update veio malformado — download descartado',
-        divergente:   'checksum do update NÃO confere — download descartado',
+        indisponivel: 'ntf_update_checksum_indisponivel',
+        malformado:   'ntf_update_checksum_malformado',
+        divergente:   'ntf_update_checksum_divergente',
       };
+      let veredito = decidirIntegridade(busca, null);
+      if (veredito !== 'ok' && veredito !== 'sem-sidecar') {
+        setUpdateState({ status: 'error', error: T(RECUSAS[veredito]) });
+        return;                                     // nem baixa
+      }
+
+      const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
+      dmgTmp = dmg;
+      setUpdateState({ status: 'downloading', progress: 0, error: null });
+      try {
+        await baixarArquivo(url, dmg);
+        if (veredito !== 'sem-sidecar') {
+          veredito = decidirIntegridade(busca, await sha512Base64(dmg));
+        }
+      } catch (e) {
+        try { fs.unlinkSync(dmg); } catch {}       // não deixa 100 MB no temp
+        throw e;
+      }
       if (RECUSAS[veredito]) {
         try { fs.unlinkSync(dmg); } catch {}
-        setUpdateState({ status: 'error', error: RECUSAS[veredito] });
+        setUpdateState({ status: 'error', error: T(RECUSAS[veredito]) });
         return;
       }
 
@@ -376,6 +396,9 @@ open "$DEST"
       _macStaged = { dmg, sh, dest };
       setUpdateState({ status: 'ready', progress: 100 });
     } catch (e) {
+      // Qualquer falha depois do download (escrita do script de troca, hash
+      // ilegível) não pode deixar ~100 MB no temp — e o ciclo de 1h repetiria.
+      try { if (dmgTmp) fs.unlinkSync(dmgTmp); } catch {}
       setUpdateState({ status: 'error', error: String((e && e.message) || e) });
     } finally {
       _macBaixando = false;
@@ -444,13 +467,14 @@ open "$DEST"
 // Decide o que fazer com o sidecar antes de encenar a troca do bundle. PURA e
 // exportada porque é o ÚNICO controle de integridade do auto-update do macOS —
 // não há electron-updater neste caminho, e o build não emite mais latest-mac.yml.
-//   esperado: string do sidecar · '' = 404 (não existe) · null = não deu pra buscar
+//   busca: { estado: 'ok'|'ausente'|'falha', corpo }  ·  obtido: hash do arquivo
 // Devolve: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
-function decidirIntegridade(esperado, obtido) {
-  if (esperado === null || esperado === undefined) return 'indisponivel';
-  if (esperado === '') return 'sem-sidecar';
-  if (!/^[A-Za-z0-9+/]{86}==$/.test(esperado)) return 'malformado';
-  return esperado === obtido ? 'ok' : 'divergente';
+function decidirIntegridade(busca, obtido) {
+  const b = busca || {};
+  if (b.estado === 'ausente') return 'sem-sidecar';   // release antiga, sem sidecar
+  if (b.estado !== 'ok') return 'indisponivel';       // rede/TLS/5xx: não dá pra saber
+  if (!/^[A-Za-z0-9+/]{86}==$/.test(b.corpo || '')) return 'malformado';
+  return b.corpo === obtido ? 'ok' : 'divergente';
 }
 
 function pickMacDmg(assets, arch) {

@@ -40,35 +40,44 @@ test('pickMacDmg: entrada degenerada → null, nunca lança', () => {
   }
 });
 
-// ---- integridade do auto-update (achado 03 + review do sidecar) ----
+// ---- integridade do auto-update (achado 03 + reviews do sidecar) ----
 // Este é o ÚNICO controle antes de um script substituir o .app inteiro, sem
 // ninguém olhando: não há electron-updater neste caminho e o build do macOS não
-// emite mais latest-mac.yml.
+// emite mais latest-mac.yml. A busca devolve {estado, corpo} porque distinguir
+// "não existe" de "não deu pra buscar" é o que impede instalar sem verificação.
 const HASH = 'A'.repeat(86) + '==';
+const achou = (corpo) => ({ estado: 'ok', corpo });
 
 test('decidirIntegridade: hash confere → ok', () => {
-  assert.equal(decidirIntegridade(HASH, HASH), 'ok');
+  assert.equal(decidirIntegridade(achou(HASH), HASH), 'ok');
 });
 
 test('decidirIntegridade: hash diverge → recusa', () => {
-  assert.equal(decidirIntegridade(HASH, 'B'.repeat(86) + '=='), 'divergente');
+  assert.equal(decidirIntegridade(achou(HASH), 'B'.repeat(86) + '=='), 'divergente');
 });
 
 test('decidirIntegridade: 404 é release antiga sem sidecar, não erro', () => {
-  // '' significa "perguntei e não existe" — instala, mesma política dos
-  // instaladores de shell, senão nenhuma release anterior atualizaria.
-  assert.equal(decidirIntegridade('', null), 'sem-sidecar');
+  // instala: mesma política dos instaladores de shell, senão nenhuma release
+  // anterior ao sidecar conseguiria atualizar.
+  assert.equal(decidirIntegridade({ estado: 'ausente', corpo: '' }, null), 'sem-sidecar');
 });
 
 test('decidirIntegridade: falha de rede NÃO vira "sem sidecar"', () => {
   // o ponto do achado: timeout/TLS/5xx tratados como ausência instalariam sem
-  // verificação nenhuma. null = não deu pra saber → recusa.
+  // verificação nenhuma.
+  assert.equal(decidirIntegridade({ estado: 'falha', corpo: '' }, null), 'indisponivel');
   assert.equal(decidirIntegridade(null, null), 'indisponivel');
   assert.equal(decidirIntegridade(undefined, null), 'indisponivel');
 });
 
+test('decidirIntegridade: 200 com corpo VAZIO não é ausência — reprova', () => {
+  // um proxy transparente ou borda de CDN respondendo 200 sem conteúdo
+  // desligaria o controle inteiro se isso passasse por "sem sidecar".
+  assert.equal(decidirIntegridade(achou(''), HASH), 'malformado');
+});
+
 test('decidirIntegridade: corpo fora do formato → recusa (portal cativo, truncado)', () => {
   for (const lixo of ['truncado', '<html>502</html>', 'A'.repeat(87) + '==', HASH + 'x']) {
-    assert.equal(decidirIntegridade(lixo, HASH), 'malformado', `aceitou: ${lixo.slice(0, 20)}`);
+    assert.equal(decidirIntegridade(achou(lixo), HASH), 'malformado', `aceitou: ${lixo.slice(0, 20)}`);
   }
 });

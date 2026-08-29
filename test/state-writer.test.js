@@ -98,10 +98,15 @@ test('mergeState: notification_type é limpo quando o evento não é Notificatio
   assert.equal(mergeState(ex, { last_event: 'PreToolUse' }).notification_type, null);
 });
 
-test('mergeState: notification_type sobrevive quando o evento É Notification', () => {
-  const ex = { notification_type: 'idle_prompt' };
-  const out = mergeState(ex, { last_event: 'Notification' });
-  assert.equal(out.notification_type, 'idle_prompt');
+test('mergeState: notification_type vem do PATCH, nunca do state anterior', () => {
+  // este teste fixava o contrário e escondia o furo: uma Notification NOVA sem
+  // tipo herdava o discriminador da anterior, e o computeState a classificava
+  // pelo motivo errado. O campo descreve o evento ATUAL.
+  const ex = { last_event: 'Notification', notification_type: 'permission_prompt' };
+  assert.equal(mergeState(ex, { last_event: 'Notification' }).notification_type, null,
+    'Notification sem tipo não herda o tipo da anterior');
+  assert.equal(mergeState(ex, { last_event: 'Notification', notification_type: 'idle_prompt' }).notification_type,
+    'idle_prompt', 'o tipo do patch manda');
 });
 
 test('mergeState: patch degenerado não lança (o catch cego do adapter engoliria)', () => {
