@@ -39,7 +39,7 @@ Overlay de desktop (Electron) com um semáforo 🟢🟡🔴 **por sessão** de a
 - **Release é manual** (o CI só testa). Fluxo completo e convenção em `.omc/RELEASE_RULE.md`.
 
 ### Testing Requirements
-- `npm test` (= `node --test`, ~203 testes). Sempre verde antes de commitar.
+- `npm test` (= `node --test`, ~211 testes). Sempre verde antes de commitar.
 - CI (`.github/workflows/ci.yml`): syntax checks (`bash -n` em `hooks/*.sh` e `install_macos.sh`; `node --check` em `main.js preload.js src/*.js scripts/*.js adapters/*/ai-traffic-lights.js`) + `npm test`.
 
 ### Common Patterns

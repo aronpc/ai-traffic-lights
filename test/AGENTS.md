@@ -10,6 +10,7 @@ Suíte de testes (`node --test`, ~191 testes). Testa os **módulos puros** de `s
 | File | Description |
 |------|-------------|
 | `rename.test.js` | Rename in-place por sessão (issue #2 + regressão v0.7.2 "mesmo cwd não vaza"). |
+| `kiro-adapter.test.js` | Regressão do adapter Kiro (arquivo real num vm + fs mock): crash-safety das escritas, compactação do `.jsonl`, merge-preserve, cwd via `.json`, zumbi `pid:null` e a síntese de Stop. |
 | `state-machine.test.js` | `computeState()` — níveis, escalada idle, nível `read`. |
 | `sessions.test.js` | `mergeSessions()` — dedup por `pid\|\|session_id`. |
 | `focus.test.js` | `pickWindow`/`tabChannel`/`parseEnviron`/`isFocusUnsupported`. |
