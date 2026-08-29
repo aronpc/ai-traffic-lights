@@ -1,4 +1,8 @@
 // Testes de regressão do adapter Kiro (PR #46). Carregam o arquivo REAL num vm
+// Nota: AssistantMessage → PreToolUse e ToolResults → PostToolUse. O adapter
+// nasceu com esse mapeamento invertido (s5 do review da PR-46) e estes testes
+// codificavam a inversão; a cor não muda (ambos são PROCESSING), mas o
+// `last_event` aparece na linha do overlay e precisa descrever o que houve.
 // com fs mock in-memory e cobrem os achados 6-11 do review: crash-safety das
 // escritas, truncate/compactação do .jsonl, merge-preserve, cwd via .json,
 // zumbi pid:null e a síntese de Stop.
@@ -177,13 +181,13 @@ test('compactação do .jsonl (encolheu) volta a ser lida — não fica surda', 
 
   mfs.writeFileSync(`${KDIR}/${sid}.jsonl`, JSON.stringify({ kind: 'AssistantMessage', data: { content: 'a longer assistant turn inside the session stream' } }) + '\n');
   sandbox.handleJsonl(sid);
-  assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PostToolUse');
+  assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PreToolUse');
 
   const shrunk = JSON.stringify({ kind: 'ToolResults', data: {} }) + '\n';
   assert.ok(shrunk.length < mfs.statSync(`${KDIR}/${sid}.jsonl`).size, 'cenário: /clear encolheu o arquivo');
   mfs.writeFileSync(`${KDIR}/${sid}.jsonl`, shrunk);
   sandbox.handleJsonl(sid);
-  assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PreToolUse', 're-leu após encolhimento');
+  assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PostToolUse', 're-leu após encolhimento');
 });
 
 test('jsonl sem .lock não grava state pid:null (zumbi) e add do lock cria a linha', () => {
@@ -207,7 +211,7 @@ test('jsonl sem .lock não grava state pid:null (zumbi) e add do lock cria a lin
   const st = mfs._read(`${STATE}/${sid}.json`);
   assert.equal(st.pid, 777);
   assert.equal(st.agent, 'kiro');
-  assert.equal(st.last_event, 'PreToolUse');
+  assert.equal(st.last_event, 'PostToolUse');
 });
 
 test('EACCES/ENOSPC no .tmp não derruba o handler (crash-safety)', () => {
@@ -286,7 +290,7 @@ test('dispatcher do watcher: add/.json enriquece e unlink do .lock encerra a ses
       mfs.readFileSync(`${KDIR}/${sid}.jsonl`) +
       JSON.stringify({ kind: 'AssistantMessage', data: { content: 'resposta em produção' } }) + '\n');
     stub.emit('change', `${KDIR}/${sid}.jsonl`);
-    assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PostToolUse');
+    assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PreToolUse');
 
     seedJson(mfs, sid, { cwd: '/w', session_id: sid });
     stub.emit('add', `${KDIR}/${sid}.json`);

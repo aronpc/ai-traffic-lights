@@ -9,8 +9,11 @@
 //
 // Mapeamento de eventos → vocabulário canônico do contrato:
 //   Prompt           → UserPromptSubmit (usuário enviou mensagem → 🟡)
-//   AssistantMessage → PostToolUse      (Kiro respondendo/pensando → 🟡)
-//   ToolResults      → PreToolUse       (Kiro executou ferramenta → 🟡)
+//   AssistantMessage → PreToolUse       (Kiro respondendo/pensando → 🟡)
+//   ToolResults      → PostToolUse      (Kiro executou ferramenta → 🟡)
+// A direção importa mesmo os dois caindo em PROCESSING (mesma cor): `last_event`
+// é exibido na linha, e dizer "PreToolUse" depois de uma ferramenta TERMINAR
+// descreve o oposto do que aconteceu.
 //   lock sumiu       → SessionEnd       (remove state file)
 //   lock apareceu    → SessionStart     (nova sessão → 🟢)
 //   jsonl quieto     → Stop (sintetizado) — o jsonl do Kiro NÃO tem marcador de
@@ -176,8 +179,8 @@ function lastJsonlEvent(sid) {
 function toCanonical(kind) {
   switch (kind) {
     case 'Prompt':           return 'UserPromptSubmit';
-    case 'AssistantMessage': return 'PostToolUse';
-    case 'ToolResults':      return 'PreToolUse';
+    case 'AssistantMessage': return 'PreToolUse';
+    case 'ToolResults':      return 'PostToolUse';
     default:                 return null;
   }
 }
