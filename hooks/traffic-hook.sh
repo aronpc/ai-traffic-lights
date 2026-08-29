@@ -138,6 +138,9 @@ main() {
   # quando $TMUX está setado — agentes fora do tmux => zero custo.
   # tmux_pane ($TMUX_PANE, ex "%3"): p/ FOCO do painel local (zero fork, é env).
   local tmuxs="" tmuxp="${TMUX_PANE:-}"
+  # iTerm2 (macOS): ITERM_SESSION_ID = "w0t0p0:<uuid>" → foco de aba exato via
+  # osascript. Leitura de env já exportada: zero fork, orçamento intacto.
+  local iid="${ITERM_SESSION_ID:-}"
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmuxs=$(tmux display-message -p '#S' 2>/dev/null) || tmuxs=""
   fi
@@ -176,7 +179,7 @@ main() {
     --argjson pid "$agent_pid" \
     --argjson ts "$ts" \
     --arg agent "$AGENT" --arg cevt "$evt" \
-    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" \
+    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" --arg iid "$iid" \
     --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg tmuxs "$tmuxs" --arg tmuxp "$tmuxp" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
       (try ($exs | fromjson) catch {}) as $ex
       | ($in.session_id // "") as $sid
@@ -197,6 +200,7 @@ main() {
           zellij_session: (if $zs == "" then null else $zs end),
           tmux_session: (if $tmuxs == "" then null else $tmuxs end),
           tmux_pane: (if $tmuxp == "" then null else $tmuxp end),
+          iterm_id: (if $iid != "" then $iid else ($ex.iterm_id // null) end),
           last_event: $evt, last_event_ts: $ts,
           last_tool: (if $tool == "" then null else $tool end),
           notification_type: (if $ntype == "" then null else $ntype end),

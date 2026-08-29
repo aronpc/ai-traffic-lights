@@ -13,7 +13,7 @@ Renderer do overlay + **módulos de lógica pura** (testáveis sem Electron) + H
 | `state-machine.js` | `computeState()` — **fonte da cor do semáforo** (níveis processing/done/awaiting/read + escalada idle). |
 | `sessions.js` | `mergeSessions()` — dedup por `sessionKey` (origin-namespaced, ver `identity.js`); 1 processo = 1 linha. |
 | `usage.js` | Coleta de consumo/quota: Claude (`~/.claude.json`), GLM (API), Codex (rollout `.jsonl`), Antigravity (SQLite). |
-| `focus.js` | Lógica PURA do click-to-focus: `pickWindow`, `tabChannel` (Warp/Tilix), `parseEnviron`, `isFocusUnsupported`. |
+| `focus.js` | Lógica PURA do click-to-focus: `pickWindow`, `tabChannel` (Warp/Tilix/iTerm2, cada canal exige o terminal PROVADO), `tmuxTarget`/`tmuxClientPid` (âncora no client), `parseEnviron`, `isRemoteSession`, `focusFailure`. |
 | `agents.js` | Registro de agentes suportados (label, comm, bin, cor, argv) — canônico p/ UI + detecção. |
 | `launcher.js` | Quick Launcher: como abrir cada agente em cada terminal (flags `--working-directory`, `warp://launch`). |
 | `i18n.js` | `makeT(T)` + strings en/pt. |

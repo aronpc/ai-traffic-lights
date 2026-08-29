@@ -24,12 +24,27 @@ test('tokenOk: não vaza length (tokens de tamanho diferente não estouram)', ()
 });
 
 // ---- exportSession: strips machine-local + marca origin ----
-test('exportSession: remove campos machine-local e seta origin', () => {
+// O fixture carrega TODOS os hints de foco de propósito: eles identificam uma
+// janela/aba/painel deste kernel e não apontam pra nada num peer. Quem
+// adicionar um hint novo em ENV_HINTS (src/focus.js) e esquecer da LOCAL_ONLY
+// (src/net.js) quebra aqui.
+test('exportSession: remove TODO campo machine-local e seta origin', () => {
   const out = exportSession(
-    { session_id: 's1', pid: 1, cwd: '/x', windowid: 99, focus_url: 'warp://x', tilix_id: 't', zellij_session: 'z', model: 'glm-5.2' },
+    {
+      session_id: 's1', pid: 1, cwd: '/x', model: 'glm-5.2',
+      windowid: 99, focus_url: 'warp://x', tilix_id: 't', iterm_id: 'w0t0p0:u',
+      zellij_session: 'z', tmux_pane: '%7',
+    },
     'alienware',
   );
   assert.deepEqual(out, { session_id: 's1', pid: 1, cwd: '/x', model: 'glm-5.2', origin: 'alienware' });
+});
+
+// tmux_session é a exceção deliberada: o attach remoto precisa dele do outro
+// lado, então ele NÃO é local-only.
+test('exportSession: tmux_session atravessa a rede (attach remoto depende dele)', () => {
+  const out = exportSession({ session_id: 's1', tmux_session: 'home-8' }, 'alienware');
+  assert.equal(out.tmux_session, 'home-8');
 });
 
 test('exportSession: com nowSec, inclui idleSec (idade relativa do servidor)', () => {

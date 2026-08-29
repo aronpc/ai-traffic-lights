@@ -32,7 +32,6 @@ const STRINGS = {
     tooltip_grip: 'drag to resize',
     tooltip_summary: 'overall state',
     row_tooltip: 'click: open session · double-click: rename',
-    row_open_external: 'Open in the original terminal',
     row_open_embedded: 'Open in the ATL terminal',
     needs_you: '{agent} needs you',
     doc_sessions: 'sessions',
@@ -61,7 +60,11 @@ const STRINGS = {
     ntf_no_terminal: 'No supported terminal found (install tilix / gnome-terminal / ghostty)',
     ntf_attach_no_tmux: 'No tmux session to attach (agent not running in tmux)',
     ntf_attach_no_host: 'Unknown host for peer "{origin}"',
-    ntf_focus_none: "Couldn't focus this session's terminal — no reachable window and no tab channel.",
+    // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    ntf_focus_remote: 'This session runs on another machine — there is no window to focus here. Use the terminal tab to attach.',
+    ntf_focus_detached: 'This session lives in a tmux with no client attached — there is no window to focus. Attach it first (tmux attach).',
+    ntf_focus_wayland: "Can't focus this terminal on Wayland — it isn't reachable from outside. Use Tilix or Warp, or run under X11/XWayland.",
+    ntf_focus_nowindow: "Couldn't find this session's window. It may have been closed, or this terminal isn't reachable.",
     // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
     ntf_tokens_reset: '🟢 {name}: quota reset — you can go again',
     launch_label: 'Terminal to launch agents',
@@ -176,7 +179,6 @@ const STRINGS = {
     tooltip_grip: 'arraste para redimensionar',
     tooltip_summary: 'estado agregado',
     row_tooltip: 'clique: abrir sessão · duplo-clique: renomear',
-    row_open_external: 'Abrir no terminal original',
     row_open_embedded: 'Abrir no terminal do ATL',
     needs_you: '{agent} precisa de você',
     doc_sessions: 'sessões',
@@ -205,7 +207,11 @@ const STRINGS = {
     ntf_no_terminal: 'Nenhum terminal suportado (instale tilix / gnome-terminal / ghostty)',
     ntf_attach_no_tmux: 'Sem sessão tmux para attach (agente não está no tmux)',
     ntf_attach_no_host: 'Host desconhecido para o peer "{origin}"',
-    ntf_focus_none: 'Não foi possível focar o terminal desta sessão — sem janela alcançável nem canal de aba.',
+    // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    ntf_focus_remote: 'Esta sessão roda em outra máquina — não há janela para focar aqui. Use a aba de terminal para dar attach.',
+    ntf_focus_detached: 'Esta sessão está num tmux sem cliente attachado — não existe janela para focar. Faça o attach primeiro (tmux attach).',
+    ntf_focus_wayland: 'Não foi possível focar este terminal no Wayland — ele não é alcançável de fora. Use Tilix ou Warp, ou rode em X11/XWayland.',
+    ntf_focus_nowindow: 'Não encontrei a janela desta sessão. Ela pode ter sido fechada, ou este terminal não é alcançável.',
     // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
     ntf_tokens_reset: '🟢 {name}: cota liberada — pode voltar a usar',
     launch_label: 'Terminal para abrir agentes',

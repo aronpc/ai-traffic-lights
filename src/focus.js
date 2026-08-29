@@ -30,33 +30,88 @@ function pickWindow(windowid, wins, ancestorPids) {
   return owned ? owned.id : null;
 }
 
-// Extrai os hints de foco de um /proc/<pid>/environ (KEY=VAL separados por
-// NUL). É a fonte VIVA — usada no clique pra enriquecer sessões cujo state
-// ainda não tem o hint (evento anterior ao hook novo, ou sessão só-/proc).
+// Extrai os hints de foco de um /proc/<pid>/environ (Linux) ou da saída
+// normalizada de `ps -E` (macOS) — KEY=VAL separados por NUL. É a fonte VIVA:
+// usada no clique pra enriquecer sessões cujo state ainda não tem o hint
+// (evento anterior ao hook novo, ou sessão só-/proc) e pra RESSINCRONIZAR os
+// hints a partir do tmux client. No Windows não há equivalente (ler o environ
+// de outro processo exige código nativo) — lá o chamador passa ''.
+// ATENÇÃO: todo campo daqui é MACHINE-LOCAL — identifica uma janela/aba/painel
+// deste kernel. Ao adicionar um, inclua-o também em LOCAL_ONLY (src/net.js),
+// senão ele atravessa o sync e chega num peer apontando pra nada.
+const ENV_HINTS = {
+  WARP_FOCUS_URL: 'focus_url',   // Warp (Linux/macOS) — warp://session/<uuid>
+  TILIX_ID: 'tilix_id',          // Tilix (Linux) — uuid do terminal
+  ITERM_SESSION_ID: 'iterm_id',  // iTerm2 (macOS) — "w0t0p0:<uuid>"
+  TMUX_PANE: 'tmux_pane',        // tmux — "%N", pane do agente
+};
+
+function emptyHints() {
+  const out = {};
+  for (const k of Object.keys(ENV_HINTS)) out[ENV_HINTS[k]] = null;
+  return out;
+}
+
 function parseEnviron(text) {
-  const out = { focus_url: null, tilix_id: null, tmux_pane: null };
+  const out = emptyHints();
   if (!text) return out;
-  for (const line of text.split('\0')) {
+  for (const line of String(text).split('\0')) {
     const eq = line.indexOf('=');
     if (eq < 0) continue;
-    const k = line.slice(0, eq);
-    if (k === 'WARP_FOCUS_URL') out.focus_url = line.slice(eq + 1);
-    else if (k === 'TILIX_ID') out.tilix_id = line.slice(eq + 1);
-    else if (k === 'TMUX_PANE') out.tmux_pane = line.slice(eq + 1);
+    const field = ENV_HINTS[line.slice(0, eq)];
+    if (field) out[field] = line.slice(eq + 1);
   }
   return out;
 }
 
-// Escolhe o canal nativo que foca a ABA/sessão exata dentro do terminal
-// (janela é responsabilidade do X11; aba é interna ao terminal).
-//   warp  → xdg-open  warp://session/<uuid>   (state.focus_url)
-//   tilix → gdbus     activate-terminal <id>  (state.tilix_id)
-// Retorna {kind, value} ou null (sem canal → só o raise de janela).
+// Canais nativos que focam a ABA exata dentro do terminal (a janela é do
+// gerenciador de janelas; a aba é interna ao terminal e só ele alcança).
+//
+// `app` é a PROVA exigida. O hint sozinho NÃO basta: hint herdado sobrevive ao
+// app que o criou. Um WARP_FOCUS_URL congelado no environ de um tmux server
+// nascido dentro do Warp vaza pra todo pane novo, para sempre — e disparar
+// esse valor levanta o Warp por cima do terminal que está de fato na tela.
+// Ressincronizar o hint a partir do client não cobre isso: quando o client não
+// tem WARP_FOCUS_URL nenhum (tmux hoje rodando no Tilix), o fantasma do state
+// sobrevive a um `live.focus_url || t.focus_url`. Exigir prova cobre.
+//
+// Quem prova é o chamador (src/ipc/focus.js), varrendo a árvore de processos
+// do pid de âncora e preenchendo state.terminal. Sem prova → sem canal, e o
+// clique degrada pra só levantar a janela: jamais abre o app errado.
+//
+// ADICIONAR UM TERMINAL = uma linha aqui + o comm em TERMINALS (ipc/focus.js)
+// + o executor em focusTab. Nada mais.
+// `valid` roda DEPOIS de `map` e é a fronteira de confiança do canal: o valor
+// sai de um environ (ou, via IPC, de um campo mandado pelo renderer) e vira
+// argumento de um programa externo. Validar o FORMATO é mais seguro que
+// escapar, do mesmo jeito que tmuxTarget faz com o "%N" do pane.
+const ID = /^[A-Za-z0-9-]{1,64}$/;
+const TAB_CHANNELS = [
+  { kind: 'warp',  app: 'warp',  field: 'focus_url', valid: (v) => v.startsWith('warp://') },
+  // ITERM_SESSION_ID é "w0t0p0:<uuid>"; o AppleScript quer só o uuid. Esse uuid
+  // é INTERPOLADO no corpo do script — um valor com \n fecharia a linha do `if`
+  // e injetaria comandos executados pelo osascript na conta do usuário.
+  { kind: 'iterm', app: 'iterm', field: 'iterm_id',
+    map: (v) => (v.includes(':') ? v.slice(v.indexOf(':') + 1) : v),
+    valid: (v) => ID.test(v) },
+  // O tilix_id vira uma variant D-Bus (`[<'…'>]`): uma aspa simples quebraria o
+  // parse do gvariant. Não é shell (execFileSync não passa por shell), mas o
+  // argumento malformado faz a chamada falhar em silêncio.
+  { kind: 'tilix', app: 'tilix', field: 'tilix_id', valid: (v) => ID.test(v) },
+];
+
 function tabChannel(state) {
-  if (!state) return null;
-  const furl = state.focus_url;
-  if (furl && String(furl).startsWith('warp://')) return { kind: 'warp', value: String(furl) };
-  if (state.tilix_id) return { kind: 'tilix', value: String(state.tilix_id) };
+  if (!state || !state.terminal) return null;
+  for (const ch of TAB_CHANNELS) {
+    if (ch.app !== state.terminal) continue;
+    const raw = state[ch.field];
+    if (!raw) continue;
+    let value = String(raw);
+    if (ch.map) value = ch.map(value);
+    if (!value) continue;
+    if (ch.valid && !ch.valid(value)) continue;
+    return { kind: ch.kind, value };
+  }
   return null;
 }
 
@@ -95,15 +150,35 @@ function tmuxClientPid(pane, panes, clients) {
   return best.pid;
 }
 
-// Decide se o clique virou no-op: não raiseou a janela E não havia canal de
-// aba. O main coleta hasTab (tabChannel != null) e raised (raiseWindow devolveu
-// true) e pede a decisão aqui — assim o gate fica testável.
-// Antes exigia `wayland: true`, o que deixava o X11 mudo: quando o raise falha
-// ali (multiplexador quebrando a árvore de processos, ou o Mutter recusando a
-// ativação) o clique não fazia NADA e não dizia nada. A plataforma não muda a
-// pergunta — "teve algum efeito?" vale nas duas.
-function isFocusUnsupported(state) {
-  return !!state && !state.raised && !state.hasTab;
+// Sessão de OUTRA máquina (sync P2P): o `pid` dela é de outro kernel, e
+// interpretá-lo aqui focaria um processo local homônimo — a mesma classe de
+// erro do windowid reciclado, um nível acima. `origin` vem de identity.js
+// ('local' = esta máquina; nome do peer = remota).
+function isRemoteSession(state) {
+  return !!state && !!state.origin && state.origin !== 'local';
 }
 
-if (typeof module !== 'undefined') module.exports = { parseWindowId, pickWindow, tabChannel, tmuxTarget, tmuxClientPid, parseEnviron, isFocusUnsupported };
+// Desfecho do clique: null quando teve efeito, senão a RAZÃO do no-op, pro
+// chamador escolher a mensagem. Antes só o Wayland era reportado, mas o mesmo
+// silêncio acontece no X11/macOS quando a sessão está num tmux sem client
+// anexado, ou quando ela nem é desta máquina — "não fez nada, sem avisar" é o
+// pior desfecho possível. Ordem = do mais específico ao mais genérico.
+//   remote   — sessão de outro host: não há o que focar aqui
+//   detached — tmux sem client anexado: a sessão existe, janela não
+//   wayland  — Wayland nativo e o terminal não expõe canal de aba
+//   nowindow — nenhuma janela da sessão e nenhum canal
+function focusFailure(state) {
+  if (!state) return null;
+  if (isRemoteSession(state)) return 'remote';
+  if (state.raised || state.hasTab) return null;
+  if (state.detached) return 'detached';
+  if (state.wayland) return 'wayland';
+  return 'nowindow';
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    parseWindowId, pickWindow, tabChannel, tmuxTarget, tmuxClientPid,
+    parseEnviron, focusFailure, isRemoteSession, TAB_CHANNELS, ENV_HINTS,
+  };
+}
