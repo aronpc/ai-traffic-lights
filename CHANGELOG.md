@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
+  validado em macOS.
+- **Botão na linha só quando ele não repete o clique.** O clique já abre o
+  padrão de cada tipo de sessão, então sobrou um único botão (⧉ embutido) e só
+  em sessão local com tmux, onde ele é o outro caminho.
+
+### Changed
+- **O canal de foco de aba exige prova.** Um hint (`focus_url`, `tilix_id`,
+  `iterm_id`) só é usado quando o terminal correspondente está de fato na
+  árvore de processos da âncora. Sem prova, o clique degrada para apenas
+  levantar a janela — nunca abre o app errado.
+- **O clique sem efeito passou a avisar**, com a razão (`remote` / `detached` /
+  `wayland` / `nowindow`). Antes só o caso Wayland era reportado.
+- **Overlay em todos os Spaces (macOS).** O overlay vivia num único Space:
+  clicar no tray (ou o reveal) estando em outro Space não mostrava nada — a
+  janela existia, mas fora do Space atual. `setVisibleOnAllWorkspaces` faz a
+  janela pertencer a todos os Spaces; o show() aparece no Space em uso.
+  Trade-off: também aparece sobre apps em tela cheia — aceitável pra um overlay.
+
 ### Fixed
 - **Clicar numa sessão dentro do tmux abria o Warp em vez do terminal real.**
   O `WARP_FOCUS_URL` fica congelado no environ do servidor tmux (herdado do dia
@@ -22,21 +42,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a aba de terminal.
 - **`iterm_id` não vaza mais para os peers.** Era um hint machine-local que
   ficou de fora de `LOCAL_ONLY` e atravessava o sync apontando para nada.
-
-### Changed
-- **O canal de foco de aba exige prova.** Um hint (`focus_url`, `tilix_id`,
-  `iterm_id`) só é usado quando o terminal correspondente está de fato na
-  árvore de processos da âncora. Sem prova, o clique degrada para apenas
-  levantar a janela — nunca abre o app errado.
-- **O clique sem efeito passou a avisar**, com a razão (`remote` / `detached` /
-  `wayland` / `nowindow`). Antes só o caso Wayland era reportado.
-
-### Added
-- **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
-  validado em macOS.
-- **Botão na linha só quando ele não repete o clique.** O clique já abre o
-  padrão de cada tipo de sessão, então sobrou um único botão (⧉ embutido) e só
-  em sessão local com tmux, onde ele é o outro caminho.
+- **Toggle do overlay pelo tray no macOS.** O ícone da bandeja alternava
+  mostrar/ocultar de forma aparentemente aleatória: a janela nascia visível,
+  `alwaysOnTop('screen-saver')` cobria os ícones do menu bar e o macOS
+  coalescia dois cliques rápidos em `double-click`. A causa raiz era o handler
+  de `blur` (que reafirmava `alwaysOnTop` + `moveTop()` para o X11) — no macOS
+  o blur dispara no `hide()` e o `moveTop()` re-exibia o overlay na hora. Agora
+  a janela nasce oculta, usa nível `floating` no macOS, o handler de `blur`
+  fica restrito ao Linux e o tray chama `setIgnoreDoubleClickEvents(true)`, com
+  cada clique virando exatamente um `click` e o toggle ficando 1:1.
+- **Visibilidade de boot restaurada no Linux/Windows.** O `show:false` da fix
+  do tray (feita para o 1º clique do tray revelar no macOS) escondia a janela
+  também nas demais plataformas — o AppImage abria "sem nada" até achar o ícone
+  da bandeja. Agora `show` é só darwin; Linux/Windows voltam a nascer com o
+  overlay visível, e as demais fix preservam a semântica de toggle
+  (fonte da verdade = `win.isVisible()` — um ocultamento externo, ex.: Cmd+H no
+  macOS, volta a ser revelado no clique seguinte em vez de "sumir por 2 cliques").
+  O re-show também re-aplica `wmctrl` no Linux (o hint `skip_taskbar` do X11 é
+  descartado pelos WMs a cada ciclo hide/show — ressurge na barra de tarefas).
+- **Sessão Kiro ociosa presa em amarelo.** O jsonl do Kiro só carrega
+  `Prompt/AssistantMessage/ToolResults` (sem marcador de fim de turno) — com o
+  mapeamento anterior a sessão morria 🟡 e a escalada idle (⏰ vermelho) nunca
+  disparava. O adapter agora sintetiza `Stop` quando o .jsonl fica quieto por
+  120 s com o último evento ainda em processamento (checado a cada 30 s;
+  qualquer linha nova re-acende o amarelo). Efeito: fim de turno vira 🟢 e, após
+  o threshold de idle configurado, ⏰ vermelho — como nos agentes com hook.
+- **Instalador macOS morto em silêncio antes do fallback de checksum.** Sob
+  `set -euo pipefail`, um `grep` sem match dentro da atribuição de `expected`
+  derrubava o script ANTES de chegar aos tiers de fallback — o best-effort
+  prometido (aviso + seguir) nunca disparava. Guardas `|| :` restauram a
+  cascata (nome hifenizado → nome decodificado → qualquer .dmg) e o aviso.
+- **Ícone do app no Dock (macOS).** O empacotamento agora declara `LSUIElement`:
+  o app roda como app acessório da menu bar (sem ícone permanente no Dock, sem
+  slot no Cmd-Tab). No dev-run, clicar no ícone do app re-abre o overlay
+  (handler `activate`), em vez de "abriu e não fez nada".
+- **Sessão do OpenCode presa em amarelo depois de terminar.** O plugin
+  re-gravava `UserPromptSubmit` na estabilização `message.updated` (role=user)
+  no mesmo instante do `session.idle`, sobrescrevendo o `Stop` — sessão que
+  concluía sem tools ficava 🟡 para sempre. Agora `message.updated` pós-idle
+  não sobrescreve o `Stop` (janela de 2s); o fim de turno volta a ficar verde
+  e a escalar para vermelho ⏰ conforme o threshold de idle.
+- **Adapter Kiro — escritor de estado à prova de crash e não-destrutivo.**
+  O review da PR-46 listava quatro quebras: (a) duas das três escritas
+  rodavam fora do `try/catch` — um EACCES/ENOSPC no `.tmp` derrubava o main do
+  Electron junto com a tray e os demais agentes; (b) o detector assumia que o
+  `.jsonl` só cresce, e a primeira compactação do Kiro (ou `/clear`) deixava a
+  sessão surda para sempre; (c) `writeState` regrava 16 chaves fixas zerando
+  `transcript_path`, os canais de foco e chaves de terceiros — o click-to-focus
+  numa linha Kiro nunca funcionava e o `backfillModels()` refazia
+  `findTranscript()` a cada boot; (d) o `cwd` real nunca chegava ao state
+  (enricher guardado por contagem de chaves + dispatcher que descartava o
+  `.json` em silêncio). Agora toda escrita passa por um único `atomicWrite()`
+  com try/catch, o merge preserva as chaves existentes, o encolhimento do
+  `.jsonl` volta a ser lido e o `.json` consolidado re-dispara o
+  enriquecimento.
+- **Adapter Kiro — sem linha-zumbi e com opt-out que funciona.** State file
+  escrito sem `.lock` legível virava `pid:null`: invisível à dedup do
+  `readSessions`, imune ao `reapDead()` e duplicado no discovery enquanto o
+  Kiro rodava. O adapter só grava quando tem pid (o add do `.lock` cria a
+  linha) e o `reapDead()` remove estado `pid:null` parado por 10 min.
+  `kiroAvailable()` passou a checar o diretório de sessões (a tray não
+  anuncia monitoramento que não existe — disparidade com o guard do watcher)
+  e "Remover hooks" agora para o watcher mesmo sem cópia em `<BASE_DIR>`.
+- **Discovery — lock do Kiro com liveness e sem amnesia de 2ª sessão.**
+  O `getKiroLockPid()` validava o PID cacheado contra o processo vivo (via
+  `kill(pid, 0)`), mas ainda reaceitava um `.lock` morto no re-scan. O guard
+  do discovery descartava TODO kiro que não fosse o PID do lock sempre que
+  houvesse algum state file de kiro no disco — a 2ª sessão, e o próprio lock
+  vivo quando o state do 1º expirasse, ficavam amnésicos no overlay. Agora o
+  PID vivo do lock é o único kiro autorizado sem state file; quem tem state
+  passa pela dedup genérica; o gate `existingAgentPids.has('kiro')` saiu.
+  Também: cache negativo selado por 4s (sem recurso ao readdirSync com ENOENT
+  a cada refrescância quando não há Kiro) e o filtro `existingPids.has(pid)`
+  removido — passava só no caso pid-igual, já coberto pelo `mergeSessions()`.
+- **CI/release — o CI cobre hoje o que a PR-46 toca.** Syntax checks passam a
+  incluir `adapters/**` e o `install_macos.sh` (a correção do pipefail ficava
+  fora do CI); o job `build-mac` do release.yml ganhou `needs: [release]` —
+  o upload não pode chegar antes de a release existir (o retry de 5 min do
+  release.sh escondia a corrida); e o `upload-mac` limpa `.dmg`/`.zip`
+  velhos de `dist-mac`, ancora a seleção do artefato na versão do build
+  (`ls *.dmg | head -1` pegava o primeiro em ordem alfabética) e ancora o
+  `grep` do `latest-mac.yml` no começo da linha; globs ganharam `|| true`
+  (um `ls` sem casar não morre mais com exit 2 silencioso antes do `die`
+  amigável).
+- **Auto-update macOS — decisão documentada no código.** Os builds `.dmg`/
+  `.zip` não são assinados/notarizados (exigiria Apple Developer ID ~US$99/
+  ano na conta do mantenedor), então o electron-updater foi confirmado como
+  AppImage-only e isso virou decisão explícita em `setupAutoUpdater()`. DMG/
+  deb/fonte seguem com o fallback GitHub-API: checam release e abrem o link
+  para baixar o novo build — atualização é "troca o app", nunca instalação
+  in-place (que falharia no code-sign check). Se um dia houver Developer ID,
+  é trocar a condição e remover o comment.
+- **Ícone da tray sumia na menu bar escura (macOS).** O PNG base (boot/zero
+  sessões) é cinza de alpha baixo e sem template — na menu bar escura o traço
+  desaparecia. `setTemplateImage(true)` no darwin faz a menu bar renderizar o
+  ícone na cor adaptativa (claro/escuro); os ícones coloridos de status
+  (r/y/g) ficam como estão.
+- **Leitura do `.jsonl` do Kiro linear no boot e a cada evento.** O
+  `lastJsonlEvent()` lia o arquivo INTEIRO (sessões longas passam de MB) com
+  `readFileSync`+`trimEnd`+`split` de forma síncrona na main thread do Electron
+  a cada evento, e o `bootstrap()` atrasava o `createWindow()`. Agora só os
+  últimos 64KB são lidos (a linha mais nova sempre está no tail), o pid do
+  lock cascateia pelo próprio `writeState` (um read+write a menos por evento)
+  e o bootstrap é deferido com `setImmediate` — a janela abre na frente e o
+  state inicial chega na primeira refresh.
 
 ## [0.8.0] - 2026-08-27
 

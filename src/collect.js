@@ -12,6 +12,7 @@
 // (ptrace_scope), então sessões só-/proc entram com label fallback.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const sessions = require('./sessions.js');
@@ -42,11 +43,19 @@ function readSessions() {
         if (s && s.session_id) stateFileSessions.push(s);
       } catch { /* parcial/inválido — ignora */ }
     }
+    // Mapa agent -> Set<pid> dos state files existentes: o gate do Kiro precisa
+    // saber quais pids de kiro JÁ têm state (esses o mergeSessions dedupa).
+    const existingAgentPids = new Map();
+    for (const s of stateFileSessions) {
+      if (!s.agent || !s.pid) continue;
+      if (!existingAgentPids.has(s.agent)) existingAgentPids.set(s.agent, new Set());
+      existingAgentPids.get(s.agent).add(s.pid);
+    }
     // Merge + dedup (lógica pura em sessions.js). Sem filtro por term_program:
     // Tilix não exporta TERM_PROGRAM e sumia do overlay. O gate de "interativo"
     // é o parent=shell (sonda /proc) e o próprio state file (hook só dispara
     // em sessão interativa).
-    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents());
+    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids));
   } catch { return []; }
 }
 
@@ -110,8 +119,53 @@ function backfillModels() {
 // NÃO têm state file — sessões idle ou iniciadas antes do adapter. Os nomes de
 // processo vêm do registro (agents.js). (cwd ilegível por ptrace_scope → essas
 // entram com label fallback "<agente> · PID".)
-function discoverAgentProcs() {
+// ---- Kiro: descoberta por LOCK FILE (portado do PR #46) ----
+// O Kiro deixa um .lock com o pid da sessão ativa. É o único pid de kiro
+// "autorizado" a entrar na descoberta sem state file — os demais processos de
+// kiro são auxiliares e virariam linhas fantasma no overlay.
+const KIRO_LOCK_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
+
+// Cache 4s, POSITIVO e NEGATIVO: sem Kiro no sistema, o readdirSync que dá
+// ENOENT não é re-pago a cada refrescância. O pid cacheado é re-checado por
+// liveness — um .lock esquecido em disco com o processo morto não pode blindar
+// a descoberta.
+let _kiroLockPid = null, _kiroLockAt = 0;
+function getKiroLockPid() {
+  if (Date.now() - _kiroLockAt < 4000) {
+    if (_kiroLockPid) {
+      try { process.kill(_kiroLockPid, 0); return _kiroLockPid; } catch { _kiroLockPid = null; }
+    }
+    return _kiroLockPid;
+  }
+  try {
+    for (const f of fs.readdirSync(KIRO_LOCK_DIR).filter((x) => x.endsWith('.lock'))) {
+      try {
+        const lock = JSON.parse(fs.readFileSync(path.join(KIRO_LOCK_DIR, f), 'utf8'));
+        if (lock && typeof lock.pid === 'number') {
+          try { process.kill(lock.pid, 0); } catch { continue; }   // lock morto é lixo
+          _kiroLockPid = lock.pid; _kiroLockAt = Date.now();
+          return _kiroLockPid;
+        }
+      } catch {}
+    }
+  } catch {}
+  _kiroLockPid = null; _kiroLockAt = Date.now();   // sela o cache negativo (4s)
+  return null;
+}
+
+// Passa o pid do lock vivo, ou um pid que JÁ tem state file (o mergeSessions
+// dedupa esse). Qualquer outro kiro é auxiliar → descarta. Não depende de
+// "existe algum kiro em state": esse gate causava amnésia, descartando o lock
+// vivo para sempre enquanto um state antigo qualquer existisse no disco.
+function kiroRejeitado(agent, pid, kiroLockPid, existingAgentPids) {
+  if (agent !== 'kiro' || kiroLockPid === pid) return false;
+  const statePids = existingAgentPids && existingAgentPids.get('kiro');
+  return !!statePids && !statePids.has(pid);
+}
+
+function discoverAgentProcs(existingAgentPids) {
   const found = [];
+  const kiroLockPid = getKiroLockPid();
   if (process.platform === 'darwin') {
     try {
       const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 2000 });
@@ -133,6 +187,7 @@ function discoverAgentProcs() {
           }
         }
         if (!agent) continue;
+        if (kiroRejeitado(agent, pid, kiroLockPid, existingAgentPids)) continue;
 
         let pcomm = '';
         try {
@@ -148,6 +203,7 @@ function discoverAgentProcs() {
       for (const ent of fs.readdirSync('/proc')) {
         if (!/^\d+$/.test(ent)) continue;
         try {
+          const pid = parseInt(ent, 10);
           const comm = fs.readFileSync(`/proc/${ent}/comm`, 'utf8').trim();
           let agent = COMM_TO_AGENT.get(comm);
           if (!agent && (comm === 'node' || comm === 'node-options') && ARGV_TO_AGENT.size) {
@@ -157,13 +213,14 @@ function discoverAgentProcs() {
             } catch {}
           }
           if (!agent) continue;
+          if (kiroRejeitado(agent, pid, kiroLockPid, existingAgentPids)) continue;
           const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
           const m = status.match(/^PPid:\s+(\d+)/m);
           if (!m) continue;
           let pcomm = '';
           try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
           if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-          if (SHELLS.has(pcomm)) found.push({ pid: parseInt(ent, 10), agent });
+          if (SHELLS.has(pcomm)) found.push({ pid, agent });
         } catch {}
       }
     } catch {}
@@ -174,9 +231,9 @@ function discoverAgentProcs() {
 // Cache curto (4s) da sonda /proc — ela roda a cada render, mas readdir /proc
 // custa. O timer de 5s do main chama invalidateDiscovery() antes de re-ler.
 let _disc = null, _discAt = 0;
-function discoveredTerminalAgents() {
+function discoveredTerminalAgents(existingAgentPids) {
   if (_disc && Date.now() - _discAt < 4000) return _disc; // cache 4s
-  _disc = discoverAgentProcs();
+  _disc = discoverAgentProcs(existingAgentPids);
   _discAt = Date.now();
   return _disc;
 }

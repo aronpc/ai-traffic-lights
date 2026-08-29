@@ -30,6 +30,12 @@ const AGENTS = {
   opencode: { label: 'OpenCode', comm: ['opencode'], bin: 'opencode', color: '#7C3AED',
               mark: '<polyline points="10 7 5 12 10 17"/><polyline points="14 7 19 12 14 17"/>',
               adapter: 'adapters/opencode/ai-traffic-lights.js' },
+  // Kiro CLI — adapter de watcher (adapters/kiro/ai-traffic-lights.js).
+  // Processo principal: kiro-cli-chat (Rust/Bun). Não expõe hooks de shell;
+  // o adapter monitora ~/.kiro/sessions/cli/ diretamente.
+  kiro:     { label: 'Kiro', comm: ['kiro-cli-chat', 'kiro-cli'], bin: 'kiro-cli', color: '#FF6B35',
+              mark: '<path d="M12 2 L4 7 L4 17 L12 22 L20 17 L20 7 Z"/><path d="M12 8 L12 16 M8 12 L16 12" stroke="currentColor" stroke-width="1.5"/>',
+              adapter: 'adapters/kiro/ai-traffic-lights.js' },
   // GLM não é um CLI monitorado (é o BACKEND do Claude Code via ANTHROPIC_BASE_URL),
   // mas aparece na faixa de uso. Entrada só pra UI (label/cor/ícone) — sem comm/bin.
   glm:      { label: 'GLM', comm: [], bin: null, color: '#6E56CF',

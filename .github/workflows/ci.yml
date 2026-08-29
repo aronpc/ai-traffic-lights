@@ -20,10 +20,9 @@ jobs:
       - run: npm ci
       - name: Syntax checks
         run: |
-          bash -n hooks/traffic-hook.sh
-          bash -n install.sh
-          bash -n install_macos.sh
+          # glob cobre hooks futuros; os instaladores são nomeados um a um
+          for f in hooks/*.sh install.sh install_macos.sh; do bash -n "$f"; done
           node --check main.js preload.js
-          for f in src/*.js scripts/*.js; do node --check "$f"; done
+          for f in src/*.js scripts/*.js adapters/*/ai-traffic-lights.js; do node --check "$f"; done
       - name: Tests
         run: npm test

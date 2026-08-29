@@ -28,12 +28,29 @@ need() { command -v "$1" >/dev/null 2>&1 || die "faltando dependência: $1"; }
 # #07: antes baixava o .dmg sem nenhuma verificação). Best-effort: sem yml/sha512
 # ou openssl, prossegue com aviso (não bloqueia a instalação).
 verify_checksum() {
-  local file="$1" asset_url="$2" yml yml_url base expected actual
+  local file="$1" asset_url="$2" yml yml_url base base_decoded expected actual
   base="$(basename "${asset_url%%\?*}")"
+  # O GitHub codifica espaços na URL como %20, mas o electron-builder grava o
+  # yml com hífens (ex: AI-Traffic-Lights-0.7.3-arm64.dmg). Decodifica %20→espaço
+  # e também tenta a versão com espaços→hífens para localizar o sha512 correto.
+  base_decoded="$(printf '%s' "$base" | sed 's/%20/ /g')"
   yml_url="${asset_url%/*}/latest-mac.yml"
   yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
     || { warn "sem latest-mac.yml — pulei a verificação de integridade"; return 0; }
-  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+  # Tenta: nome decodificado, depois nome com espaços→hífens, depois qualquer .dmg no yml.
+  # `|| :` em cada tentativa: sob `set -euo pipefail` um grep sem match derrubaria o
+  # script ANTES de atingir o fallback — o best-effort prometido pela função não
+  # poderia nunca disparar (PR-46 review #2). A falha vira expected vazio → cai p/ o
+  # próximo tier ou p/ o aviso "sha512 não encontrado".
+  local base_hyphens; base_hyphens="$(printf '%s' "$base_decoded" | tr ' ' '-')"
+  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_hyphens" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  if [ -z "$expected" ]; then
+    expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_decoded" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  fi
+  if [ -z "$expected" ]; then
+    # Fallback: pega o sha512 associado a qualquer entrada .dmg no yml
+    expected="$(printf '%s\n' "$yml" | grep -A3 'url:.*\.dmg' | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  fi
   [ -n "$expected" ] || { warn "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
   if command -v openssl >/dev/null 2>&1; then
     actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | base64 | tr -d '\n')"

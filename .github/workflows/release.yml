@@ -30,9 +30,12 @@ on:
         default: false
 
 permissions:
-  contents: write   # criar release + tag
+  contents: write   # criar release + tag + upload de artefatos
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Job Linux — compila AppImage + .deb e cria a release no GitHub.
+  # ---------------------------------------------------------------------------
   release:
     runs-on: ubuntu-latest
     steps:
@@ -55,10 +58,10 @@ jobs:
 
       - name: Syntax checks
         run: |
-          bash -n hooks/traffic-hook.sh
+          for f in hooks/*.sh install_macos.sh; do bash -n "$f"; done
           bash -n scripts/release.sh
           node --check main.js preload.js
-          for f in src/*.js scripts/*.js; do node --check "$f"; done
+          for f in src/*.js scripts/*.js adapters/*/ai-traffic-lights.js; do node --check "$f"; done
 
       # Os inputs entram por env, não interpolados no shell: `base`/`version` são
       # strings livres e ${{ }} direto num `run` é injeção de comando.
@@ -72,6 +75,42 @@ jobs:
         run: |
           args=("$IN_MODE")
           if [ -n "$IN_BASE" ];    then args+=(--base "$IN_BASE"); fi
+          if [ -n "$IN_VERSION" ]; then args+=(--version "$IN_VERSION"); fi
+          if [ "$IN_DRY" = "true" ]; then args+=(--dry-run); fi
+          bash scripts/release.sh "${args[@]}"
+
+  # ---------------------------------------------------------------------------
+  # Job macOS — compila .dmg + .zip (arm64) e faz upload para a release criada
+  # pelo job Linux. Roda em paralelo; o modo `upload-mac` do release.sh aguarda
+  # a release existir antes de tentar o upload (retry com timeout de 5 min).
+  # aguarda o job Linux criar a release antes de compilar: sem o `needs`, o job
+  # macOS podia subir artefatos pra uma tag que ainda não existia (o retry de
+  # 5 min do release.sh era uma gambiarra escondendo a corrida).
+  # Só executado no modo `promote` (betas são Linux-only).
+  # ---------------------------------------------------------------------------
+  build-mac:
+    runs-on: macos-latest
+    needs: [release]
+    if: ${{ inputs.mode == 'promote' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build macOS e upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_DRY: ${{ inputs.dry_run }}
+        run: |
+          args=(upload-mac)
           if [ -n "$IN_VERSION" ]; then args+=(--version "$IN_VERSION"); fi
           if [ "$IN_DRY" = "true" ]; then args+=(--dry-run); fi
           bash scripts/release.sh "${args[@]}"

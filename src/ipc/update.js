@@ -116,6 +116,12 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     // updater não deve existir. isBuildArtifact: não auto-instalar por cima de um
     // build local. Nos dois casos a checagem informativa (GitHub API) continua e a
     // UI cai sozinha no "abrir a release", que já é o caminho de canAutoInstall=false.
+    // Só AppImage recebe auto-update pelo electron-updater — inclusive no macOS
+    // (decisão do PR #46). O .dmg e o .zip não são assinados/notarizados (sem
+    // Apple Developer ID): o acquireSquirrelMac baixaria o zip, mas o code-sign
+    // check falharia e a instalação quebraria. DMG/deb/source ficam no fallback
+    // GitHub-API (checa a release e abre o link) — atualizar lá é baixar o novo
+    // arquivo e trocar.
     if (method === 'appimage' && app.isPackaged && !isBuildArtifact(process.env.APPIMAGE)) {
       try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { console.error('[auto-update] require electron-updater falhou:', e && e.message); autoUpdater = null; }
     } else if (method === 'appimage') {

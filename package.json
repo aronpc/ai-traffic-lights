@@ -69,7 +69,10 @@
       ],
       "category": "public.app-category.utilities",
       "icon": "build/icon.png",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "LSUIElement": 1
+      }
     },
     "toolsets": {
       "appimage": "1.0.3"

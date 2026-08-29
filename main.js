@@ -11,6 +11,7 @@ const { execFileSync } = require('child_process');
 const chokidar = require('chokidar');
 const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
+const kiroAdapter   = require('./adapters/kiro/ai-traffic-lights');
 const focus = require('./src/focus');
 const sessions = require('./src/sessions');
 const collect = require('./src/collect');
@@ -379,7 +380,14 @@ function reapDead() {
         try { if (Date.now() - fs.statSync(p).mtimeMs > 600_000) { fs.unlinkSync(p); changed = true; } } catch {}
         continue;
       }
-      if (!s.pid) continue;
+      if (!s.pid) {
+        // Estado sem pid (legado do adapter Kiro que virava zumbi — imune ao
+        // reap por processo; o adapter não mete pid:null desde o fix da PR-46).
+        // Sessão viva sempre regrava o arquivo (mtime novo); parado por >10min
+        // é lixo de sessão morta — remove (mesma semântica do .tmp órfão).
+        try { if (Date.now() - fs.statSync(p).mtimeMs > 600_000) { fs.unlinkSync(p); changed = true; } } catch {}
+        continue;
+      }
       try { process.kill(s.pid, 0); }         // vivo? (não lança)
       catch { try { fs.unlinkSync(p); changed = true; } catch {} }
     }
@@ -442,6 +450,8 @@ function createWindow() {
     frame: false,
     transparent: true,
     resizable: true,
+    show: process.platform !== 'darwin', // darwin: nasce oculta (1º clique no tray REVELA);
+                               // Linux/Windows: nasce visível como no origin/main
     skipTaskbar: true,       // fora da barra de tarefas e do alt-tab (SKIP_TASKBAR/PAGER)
     maximizable: false,      // (não implementado no Linux; vale nas demais plataformas)
     fullscreenable: false,
@@ -455,7 +465,19 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  win.setAlwaysOnTop(true, 'screen-saver');
+  // macOS: 'screen-saver' (NSScreenSaverWindowLevel=1000) cobre ATÉ o menu bar
+  // (nível 24) — o overlay no canto superior direito taparia os ícones do tray e
+  // o 2º clique ("esconder") nunca chegaria a ele. 'floating' fica acima das
+  // janelas comuns, mas abaixo do menu bar. Linux mantém 'screen-saver' (X11).
+  win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'screen-saver');
+  // macOS/Space: sem isto o overlay vive num único Space — clicar no tray (ou o
+  // reveal) estando em OUTRO Space não mostrava nada (a janela existe, mas fora
+  // do Space atual). visibleOnAllWorkspaces faz a janela pertencer a todos os
+  // Spaces, então o show() aparece no Space em uso. Trade-off: também aparece
+  // sobre apps em tela cheia — aceitável pra um overlay.
+  if (process.platform === 'darwin') {
+    try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch {}
+  }
   // Linux/Mutter ignora `maximizable` → reverte na hora qualquer maximize
   // (Super+↑, drag no topo da tela, tiling). Overlay nunca vira tela cheia.
   win.on('maximize', () => { try { win.unmaximize(); } catch {} });
@@ -463,7 +485,11 @@ function createWindow() {
   // CHANGELOG 0.6.7) — clicar em outra janela/no desktop derruba o always-on-top
   // sem passar por toggleWin/revealIfHidden. Reafirma no blur, do mesmo jeito
   // que já se faz no toggle/reveal (setAlwaysOnTop + moveTop).
+  // macOS: NSWindow.Level não degrada no blur (propriedade persistente, sem o
+  // quirk X11). Reafirmar moveTop() aqui re-exibiria a janela após o hide() do
+  // tray-toggle (blur dispara no hide → moveTop → overlay volta sozinho).
   win.on('blur', () => {
+    if (process.platform === 'darwin') return;
     try { win.setAlwaysOnTop(true, 'screen-saver'); } catch {}
     try { win.moveTop(); } catch {}
   });
@@ -490,13 +516,24 @@ function createWindow() {
 
 // Mostrar/ocultar centralizado. No show, re-afirma skipTaskbar — alguns WMs
 // resetam o hint no ciclo hide/show (bug conhecido de Electron/X11).
+// _winState só espelha o estado p/ callers externos; a FONTE DA VERDADE do
+// toggle é win.isVisible() (síncrono) — se externamente a janela foi ocultada
+// (Cmd+H no macOS, unmap do WM), o próximo clique REVELA em vez de esconder
+// de novo (senão o overlay "some" por 2 cliques).
+let _winState = 'hidden';        // 'hidden' | 'visible'
+
 function toggleWin() {
   if (!win || win.isDestroyed()) return;
-  if (win.isVisible()) win.hide();
-  else {
-    win.show(); try { win.setSkipTaskbar(true); } catch {} try { win.moveTop(); } catch {}
-    // Revelou o overlay (tray/atalho) → o usuário vai olhar; busca o % do Claude
-    // agora (lazy). Cache de 5 min evita repetir a cada mostra/esconde.
+
+  if (win.isVisible()) {
+    _winState = 'hidden';
+    win.hide();
+  } else {
+    _winState = 'visible';
+    win.show();
+    try { applySkip(); } catch {}
+    try { win.setSkipTaskbar(true); } catch {}
+    try { win.moveTop(); } catch {}
     collectAndSendUsage({ claudeFetch: true });
   }
 }
@@ -509,7 +546,9 @@ function toggleWin() {
 function revealIfHidden() {
   try {
     if (win && !win.isDestroyed() && !win.isVisible()) {
+      _winState = 'visible';
       win.show();
+      try { applySkip(); } catch {}
       try { win.setSkipTaskbar(true); } catch {}
       try { win.moveTop(); } catch {}
     }
@@ -533,6 +572,11 @@ function installHookFromApp() {
       hookInstaller.installOpencode(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
       parts.push('OpenCode: ' + T('ntf_plugin_ok'));
     }
+    if (hookInstaller.kiroAvailable()) {
+      hookInstaller.installKiro(path.join(__dirname, 'adapters/kiro/ai-traffic-lights.js'), BASE_DIR);
+      kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; }); // invalida cache discovery na 1ª escrita
+      parts.push('Kiro: ' + T('ntf_plugin_ok'));
+    }
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_none_found'));
   } catch (e) { notifyUser(T('ntf_install_fail', { msg: e.message })); }
 }
@@ -545,6 +589,11 @@ function removeHookFromApp() {
       if (r.removed) parts.push(`${t.label}: ${T('ntf_removed', { n: r.removed })}`);
     }
     if (hookInstaller.removeOpencode().removed) parts.push('OpenCode: ' + T('ntf_plugin_removed'));
+    // Para o watcher SEMPRE que o usuário pede pra remover hooks — antes, quem
+    // nunca tinha instalado via app não tinha cópia em <BASE_DIR> (removed=0) e o
+    // stop() nunca rodava: "Remover hooks" era silenciosamente um no-op.
+    kiroAdapter.stop();
+    if (hookInstaller.removeKiro(BASE_DIR).removed) parts.push('Kiro: ' + T('ntf_plugin_removed'));
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
   } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
 }
@@ -662,7 +711,7 @@ ipcMain.on('save-settings', (_e, cfg) => {
   if (settingsCfg.updateChannel !== prevChannel && updateIpc) updateIpc.onChannelChanged();
   if (settingsCfg.lang !== prevLang) {                          // idioma só se mudou
     applyLang();
-    if (tray) tray.setContextMenu(buildTrayMenu());             // labels do tray no idioma novo
+    if (trayIpc) trayIpc.refreshMenu();                          // labels do tray no idioma novo (no-op no macOS: o menu é montado a cada right-click)
   }
   sendToRenderer('settings-changed', settingsCfg);
 });
@@ -1109,6 +1158,10 @@ app.whenReady().then(() => {
   try { hookInstaller.syncHookCopy(path.join(__dirname, 'hooks/traffic-hook.sh'), BASE_DIR); } catch {}
   // idem pro plugin do OpenCode (só se o usuário já o instalou)
   hookInstaller.syncOpencodeIfInstalled(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
+  // idem pro adapter do Kiro (watcher de ~/.kiro/sessions/cli/)
+  hookInstaller.syncKiroIfInstalled(path.join(__dirname, 'adapters/kiro/ai-traffic-lights.js'), BASE_DIR);
+  // inicia o watcher do Kiro se o Kiro estiver instalado
+  if (hookInstaller.kiroAvailable()) kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
   settingsCfg = loadSettings();                      // threshold/atalho/idioma do usuário
   applyLang();                                       // Preferências (lang) > locale do sistema
   createWindow();
@@ -1129,7 +1182,7 @@ app.whenReady().then(() => {
   });
   notifyUser = trayIpc.notifyUser;   // alias p/ update/focus/launcher (recebem por DI)
   collectAndSendUsage({ claudeFetch: true });    // boot: 1 chamada p/ já ter o % (notifyUser já resolvido)
-  setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
+  _usageInterval = setInterval(collectAndSendUsage, 60 * 1000);   // fundo: claudeFetch=false (não bate)
   updateIpc = require('./src/ipc/update').setupUpdateIpc({   // auto-update extraído (REF passo 1)
     getMainWindow: () => win, getSettings: () => settingsCfg,
     T, revealIfHidden, REPO_URL, APP_VERSION, AUTOSTART_FILE,
@@ -1160,8 +1213,23 @@ app.whenReady().then(() => {
   applySync();                                   // sync P2P: sobe servidor/poller se habilitado
 });
 
+// Referências para cleanup no encerramento.
+let _stateWatcher = null;
+let _sessionInterval = null;
+let _usageInterval = null;
+
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { for (const id of [...termSessions.keys()]) destroyTermSession(id); globalShortcut.unregisterAll(); });
+// macOS: re-abrir ao clicar no ícone do app (faz sentido no dev run — no build
+// empacotado o LSUIElement remove o ícone do Dock; aqui é reveal, não toggle).
+app.on('activate', () => { if (win && !win.isDestroyed()) revealIfHidden(); });
+app.on('will-quit', () => {
+  for (const id of [...termSessions.keys()]) destroyTermSession(id);
+  globalShortcut.unregisterAll();
+  if (_sessionInterval) clearInterval(_sessionInterval);
+  if (_usageInterval) clearInterval(_usageInterval);
+  if (_stateWatcher) _stateWatcher.close().catch(() => {});
+  kiroAdapter.stop();
+});
 
 // ---- consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API) ----
 // Coletor async (GLM faz rede → nunca bloqueia o ciclo de 5s das sessões).
