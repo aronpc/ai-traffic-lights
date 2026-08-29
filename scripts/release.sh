@@ -93,6 +93,39 @@ stable_latest_tag() { gh api "repos/$REPO/releases/latest" -q .tag_name 2>/dev/n
 STABLE_BEFORE="$(stable_latest_tag)"
 
 # ---------- gates comuns ----------
+# Gera um sidecar <arquivo>.sha512 com o hash em base64 — mesmo encoding que o
+# electron-builder usa nos seus yml, então os instaladores comparam do mesmo
+# jeito. Existe porque o latest-mac.yml só é emitido pelo target `zip` (ver
+# ArchiveTarget.js: `isWriteUpdateInfo && format === "zip"`), e publicar ~100 MB
+# de zip só para carregar um hash de 1 KB não se paga. O Linux ganha o mesmo
+# sidecar por simetria: um formato só, lido igual nos dois instaladores.
+sha512_sidecar() {
+  local f="$1" out="$1.sha512" tmp
+  tmp="$(mktemp)"
+  # Escreve num TEMP e só move no sucesso. Redirecionar direto para $out trunca
+  # o arquivo ANTES do pipeline rodar: uma falha no meio (sob set -o pipefail)
+  # deixava um sidecar vazio ou parcial no lugar de um válido — e vazio publica
+  # sem verificação, parcial faz TODO instalador abortar com "adulterado".
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha512 -binary "$f" | openssl base64 -A > "$tmp"
+  elif command -v shasum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
+    shasum -a 512 "$f" | awk '{print $1}' | xxd -r -p | base64 | tr -d '\n' > "$tmp"
+  else
+    rm -f "$tmp"
+    warn "sem openssl (nem shasum+xxd) — sem sidecar de checksum para $(basename "$f")"
+    return 1
+  fi
+  # 88 chars base64 é o tamanho fixo de um sha512; qualquer outra coisa é falha
+  # silenciosa do pipeline e não pode virar artefato publicado.
+  if [ "$(wc -c < "$tmp" | tr -d ' ')" != "88" ]; then
+    rm -f "$tmp"
+    warn "sidecar de $(basename "$f") saiu malformado — descartado"
+    return 1
+  fi
+  mv "$tmp" "$out"
+  printf '%s' "$out"
+}
+
 guard_tree() {
   if [ -n "$(git status --porcelain)" ]; then
     git status --short
@@ -172,7 +205,7 @@ release_beta() {
   local out="dist-beta"
   local appimage="$out/ai-traffic-lights-$version.AppImage"
   local yml="$out/latest-linux.yml"
-  run rm -f "$appimage" "$yml"   # nada de artefato velho passando por novo
+  run rm -f "$appimage" "$yml" "$appimage.sha512"   # nada de artefato velho passando por novo
   # Só AppImage: o .deb não participa do canal beta (o updater do deb é
   # informativo e resolve por /releases/latest, que exclui pre-releases).
   build "$version" "AppImage" "$out"
@@ -223,13 +256,17 @@ release_beta() {
   } > "$notes"
 
   confirm "publicar $tag como PRE-RELEASE em $REPO?"
+  # O sidecar entra na lista SÓ se existir: passá-lo incondicionalmente fazia o
+  # `gh` abortar com "no matches found" depois do build inteiro.
+  local extras=()
+  if [ "$DRY" = 0 ] && sha512_sidecar "$appimage" >/dev/null; then extras+=("$appimage.sha512"); fi
   run gh release create "$tag" \
     --repo "$REPO" \
     --prerelease \
     --target "$SHA" \
     --title "$tag — beta ($BRANCH @ $SHORT_SHA)" \
     --notes-file "$notes" \
-    "$appimage" "$yml"
+    "$appimage" "$yml" ${extras[@]+"${extras[@]}"}
   rm -f "$notes"
 
   verify_stable_untouched
@@ -311,7 +348,7 @@ release_promote() {
   local appimage="$out/ai-traffic-lights-$VERSION.AppImage"
   local deb="$out/ai-traffic-lights_${VERSION}_amd64.deb"
   local yml="$out/latest-linux.yml"
-  run rm -f "$appimage" "$deb" "$yml"   # nada de artefato velho passando por novo
+  run rm -f "$appimage" "$deb" "$yml" "$appimage.sha512" "$deb.sha512"   # nada de artefato velho passando por novo
   build "$VERSION" "AppImage deb" "$out"
   if [ "$DRY" = 0 ]; then
     for f in "$appimage" "$deb" "$yml"; do [ -f "$f" ] || die "não encontrei $f"; done
@@ -334,12 +371,17 @@ release_promote() {
     run git tag -a "$tag" -m "$tag"
   fi
   run git push origin "$tag"
+  local extras=()
+  if [ "$DRY" = 0 ]; then
+    sha512_sidecar "$appimage" >/dev/null && extras+=("$appimage.sha512")
+    sha512_sidecar "$deb"      >/dev/null && extras+=("$deb.sha512")
+  fi
   run gh release create "$tag" \
     --repo "$REPO" \
     --target "$SHA" \
     --title "$tag" \
     --notes-file "$notes" \
-    "$appimage" "$deb" "$yml"
+    "$appimage" "$deb" "$yml" ${extras[@]+"${extras[@]}"}
   rm -f "$notes"
 
   if [ "$DRY" = 0 ]; then ok "publicado: https://github.com/$REPO/releases/tag/$tag"; fi
@@ -387,7 +429,7 @@ release_upload_mac() {
   # Nada de artefato velho passando por novo (mesma regra do fluxo Linux):
   # um .dmg/.zip de versão ou arquitetura anterior em $out viciaria o
   # `ls` abaixo e subiria binário errado pra release certa.
-  run rm -f "$out"/*.dmg || true
+  run rm -f "$out"/*.dmg "$out"/*.dmg.sha512 || true
 
   build_mac "$VERSION" "$out"
 
@@ -401,10 +443,12 @@ release_upload_mac() {
   fi
 
   info "enviando artefatos macOS para $tag..."
+  local extras=()
+  if [ "$DRY" = 0 ] && sha512_sidecar "$dmg" >/dev/null; then extras+=("$dmg.sha512"); fi
   run gh release upload "$tag" \
     --repo "$REPO" \
     --clobber \
-    "$dmg"
+    "$dmg" ${extras[@]+"${extras[@]}"}
 
   if [ "$DRY" = 0 ]; then
     ok "artefato macOS enviado: $(basename "$dmg")"

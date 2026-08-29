@@ -268,6 +268,32 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     });
   }
 
+  // Baixa um recurso pequeno como texto (o sidecar de checksum). Separado do
+  // baixarArquivo porque aquele escreve em disco e emite progresso.
+  function buscarTexto(url, saltos = 0) {
+    return new Promise((resolve) => {
+      if (saltos > 5) return resolve('');
+      const https = require('https');
+      https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' }, timeout: 15000 }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume(); return resolve(buscarTexto(res.headers.location, saltos + 1));
+        }
+        if (res.statusCode !== 200) { res.resume(); return resolve(''); }
+        let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(d.trim()));
+      }).on('error', () => resolve('')).on('timeout', function () { this.destroy(); resolve(''); });
+    });
+  }
+
+  function sha512Base64(file) {
+    return new Promise((resolve, reject) => {
+      const h = require('crypto').createHash('sha512');
+      const st = fs.createReadStream(file);
+      st.on('data', (c) => h.update(c));
+      st.on('end', () => resolve(h.digest('base64')));
+      st.on('error', reject);
+    });
+  }
+
   // O bundle .app em execução, a partir do execPath (…/X.app/Contents/MacOS/bin).
   function bundleEmUso() {
     const m = (process.execPath || '').match(/^(.*\.app)\/Contents\//);
@@ -319,6 +345,22 @@ open "$DEST"
       const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
       setUpdateState({ status: 'downloading', progress: 0, error: null });
       await baixarArquivo(url, dmg);
+
+      // Integridade: o mesmo sidecar <artefato>.sha512 que os instaladores de
+      // shell consomem. Este é o download que MAIS precisa dele — ninguém está
+      // olhando, e o resultado substitui o app inteiro. Sidecar ausente segue
+      // (releases antigas não o têm, mesma política dos instaladores); sidecar
+      // presente que NÃO confere aborta e não encena troca nenhuma.
+      const esperado = await buscarTexto(`${url}.sha512`);
+      if (/^[A-Za-z0-9+/]{86}==$/.test(esperado)) {
+        const obtido = await sha512Base64(dmg);
+        if (obtido !== esperado) {
+          try { fs.unlinkSync(dmg); } catch {}
+          setUpdateState({ status: 'error', error: 'checksum do update não confere — download descartado' });
+          return;
+        }
+      }
+
       const sh = path.join(app.getPath('temp'), `atl-swap-${Date.now()}.sh`);
       fs.writeFileSync(sh, SCRIPT_TROCA, { mode: 0o755 });
       _macStaged = { dmg, sh, dest };

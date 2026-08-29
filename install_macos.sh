@@ -27,6 +27,24 @@ need() { command -v "$1" >/dev/null 2>&1 || die "faltando dependência: $1"; }
 # electron-builder publica no release (paridade com o install.sh Linux — PR-32
 # #07: antes baixava o .dmg sem nenhuma verificação). Best-effort: sem yml/sha512
 # ou openssl, prossegue com aviso (não bloqueia a instalação).
+# Compara o sha512 (base64) de um arquivo com o esperado. Separada porque os
+# dois tiers — sidecar e yml — terminam no mesmo lugar.
+compara_checksum() {
+  local file="$1" expected="$2" base="$3" actual
+  if command -v openssl >/dev/null 2>&1; then
+    actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | openssl base64 -A)"
+  elif command -v shasum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
+    actual="$(shasum -a 512 "$file" | awk '{print $1}' | xxd -r -p | base64 | tr -d '\n')"
+  else
+    warn "sem openssl/shasum — pulei a verificação de integridade"; return 0
+  fi
+  if [ "$actual" = "$expected" ]; then
+    ok "integridade verificada (sha512)"
+  else
+    die "checksum NÃO confere ($base) — download corrompido ou adulterado. Abortei."
+  fi
+}
+
 verify_checksum() {
   local file="$1" asset_url="$2" yml yml_url base base_decoded expected actual
   base="$(basename "${asset_url%%\?*}")"
@@ -34,9 +52,25 @@ verify_checksum() {
   # yml com hífens (ex: AI-Traffic-Lights-0.7.3-arm64.dmg). Decodifica %20→espaço
   # e também tenta a versão com espaços→hífens para localizar o sha512 correto.
   base_decoded="$(printf '%s' "$base" | sed 's/%20/ /g')"
+
+  # Tier 0: o sidecar <arquivo>.sha512 publicado pelo release.sh. É o caminho
+  # preferido e o MESMO nos dois instaladores: não depende do formato do
+  # electron-builder, nem do nome do arquivo dentro do yml, nem de qual target
+  # foi construído. Importa aqui porque o build do macOS deixou de gerar o zip,
+  # e o latest-mac.yml só sai com ele (ArchiveTarget: isWriteUpdateInfo && zip).
+  expected="$(curl -fsSL --connect-timeout 15 --max-time 30 "${asset_url}.sha512" 2>/dev/null | tr -d '\r\n')" || expected=""
+  # Só aceita a forma exata de um sha512 em base64 (88 chars, termina em '=='):
+  # um sidecar truncado, uma página de portal cativo ou um erro de proxy viraria
+  # `expected` com lixo — e como o tier 0 curto-circuita o tier 1, o instalador
+  # mataria a instalação de um artefato íntegro com "adulterado".
+  [[ "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]] || expected=""
+  if [ -n "$expected" ]; then
+    compara_checksum "$file" "$expected" "$base"; return $?
+  fi
+
   yml_url="${asset_url%/*}/latest-mac.yml"
   yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
-    || { warn "sem latest-mac.yml — pulei a verificação de integridade"; return 0; }
+    || { warn "sem sidecar .sha512 nem latest-mac.yml — pulei a verificação de integridade"; return 0; }
   # Tenta: nome decodificado, depois nome com espaços→hífens, depois qualquer .dmg no yml.
   # `|| :` em cada tentativa: sob `set -euo pipefail` um grep sem match derrubaria o
   # script ANTES de atingir o fallback — o best-effort prometido pela função não
