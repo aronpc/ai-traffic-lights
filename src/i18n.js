@@ -61,6 +61,7 @@ const STRINGS = {
     ntf_attach_no_tmux: 'No tmux session to attach (agent not running in tmux)',
     ntf_attach_no_host: 'Unknown host for peer "{origin}"',
     // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    ntf_kiro_needs_install: 'Kiro detected, but its adapter is not installed — its sessions are not being monitored. Install it in the tray menu (Install hooks).',
     ntf_focus_remote: 'This session runs on another machine — there is no window to focus here. Use the terminal tab to attach.',
     ntf_focus_detached: 'This session lives in a tmux with no client attached — there is no window to focus. Attach it first (tmux attach).',
     ntf_focus_wayland: "Can't focus this terminal on Wayland — it isn't reachable from outside. Use Tilix or Warp, or run under X11/XWayland.",
@@ -208,6 +209,7 @@ const STRINGS = {
     ntf_attach_no_tmux: 'Sem sessão tmux para attach (agente não está no tmux)',
     ntf_attach_no_host: 'Host desconhecido para o peer "{origin}"',
     // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    ntf_kiro_needs_install: 'Kiro detectado, mas o adapter dele não está instalado — as sessões não estão sendo monitoradas. Instale pelo menu da bandeja (Instalar hooks).',
     ntf_focus_remote: 'Esta sessão roda em outra máquina — não há janela para focar aqui. Use a aba de terminal para dar attach.',
     ntf_focus_detached: 'Esta sessão está num tmux sem cliente attachado — não existe janela para focar. Faça o attach primeiro (tmux attach).',
     ntf_focus_wayland: 'Não foi possível focar este terminal no Wayland — ele não é alcançável de fora. Use Tilix ou Warp, ou rode em X11/XWayland.',

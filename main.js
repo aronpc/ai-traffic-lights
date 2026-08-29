@@ -1171,6 +1171,18 @@ app.whenReady().then(() => {
   // plugin do OpenCode.
   if (hookInstaller.kiroAvailable() && hookInstaller.kiroInstalled(BASE_DIR)) {
     kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
+  } else if (hookInstaller.kiroAvailable()) {
+    // Kiro na máquina mas adapter não instalado. Antes o watcher subia sozinho,
+    // então quem só usa Kiro nunca teve motivo pra clicar em "Instalar hooks" —
+    // e perderia o monitoramento em SILÊNCIO nesta atualização. Avisa uma vez.
+    try {
+      const marca = path.join(BASE_DIR, '.kiro-aviso-instalar');
+      if (!fs.existsSync(marca)) {
+        fs.mkdirSync(BASE_DIR, { recursive: true });
+        fs.writeFileSync(marca, String(Date.now()));
+        notifyUser(T('ntf_kiro_needs_install'));
+      }
+    } catch {}
   }
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara

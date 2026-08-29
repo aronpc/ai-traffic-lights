@@ -268,19 +268,25 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     });
   }
 
-  // Baixa um recurso pequeno como texto (o sidecar de checksum). Separado do
-  // baixarArquivo porque aquele escreve em disco e emite progresso.
+  // Busca um recurso pequeno (o sidecar de checksum). Devolve:
+  //   string → corpo (pode ser vazio)
+  //   ''     → o recurso NÃO EXISTE (404): release antiga, sem sidecar
+  //   null   → não deu pra saber (timeout, TLS, rede, redirect demais)
+  // A distinção importa: aqui o sidecar é o ÚNICO controle de integridade antes
+  // de um script substituir o .app inteiro, sem ninguém olhando. Tratar uma
+  // falha de rede como "não existe" instalaria sem verificação nenhuma.
   function buscarTexto(url, saltos = 0) {
     return new Promise((resolve) => {
-      if (saltos > 5) return resolve('');
+      if (saltos > 5) return resolve(null);
       const https = require('https');
       https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' }, timeout: 15000 }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume(); return resolve(buscarTexto(res.headers.location, saltos + 1));
         }
-        if (res.statusCode !== 200) { res.resume(); return resolve(''); }
+        if (res.statusCode === 404) { res.resume(); return resolve(''); }   // ausente de verdade
+        if (res.statusCode !== 200) { res.resume(); return resolve(null); } // 5xx, 403, …
         let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve(d.trim()));
-      }).on('error', () => resolve('')).on('timeout', function () { this.destroy(); resolve(''); });
+      }).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
     });
   }
 
@@ -352,13 +358,17 @@ open "$DEST"
       // (releases antigas não o têm, mesma política dos instaladores); sidecar
       // presente que NÃO confere aborta e não encena troca nenhuma.
       const esperado = await buscarTexto(`${url}.sha512`);
-      if (/^[A-Za-z0-9+/]{86}==$/.test(esperado)) {
-        const obtido = await sha512Base64(dmg);
-        if (obtido !== esperado) {
-          try { fs.unlinkSync(dmg); } catch {}
-          setUpdateState({ status: 'error', error: 'checksum do update não confere — download descartado' });
-          return;
-        }
+      const obtido = (esperado && esperado !== '') ? await sha512Base64(dmg) : null;
+      const veredito = decidirIntegridade(esperado, obtido);
+      const RECUSAS = {
+        indisponivel: 'não consegui buscar o checksum do update — tentarei de novo depois',
+        malformado:   'checksum do update veio malformado — download descartado',
+        divergente:   'checksum do update NÃO confere — download descartado',
+      };
+      if (RECUSAS[veredito]) {
+        try { fs.unlinkSync(dmg); } catch {}
+        setUpdateState({ status: 'error', error: RECUSAS[veredito] });
+        return;
       }
 
       const sh = path.join(app.getPath('temp'), `atl-swap-${Date.now()}.sh`);
@@ -431,6 +441,18 @@ open "$DEST"
 // errar aqui instala o binário da arquitetura errada — e um Mac Intel rodando um
 // bundle arm64 (ou vice-versa) não abre. Preferência: nome com a arquitetura
 // exata; senão um nome sem marca nenhuma (build universal); senão nada.
+// Decide o que fazer com o sidecar antes de encenar a troca do bundle. PURA e
+// exportada porque é o ÚNICO controle de integridade do auto-update do macOS —
+// não há electron-updater neste caminho, e o build não emite mais latest-mac.yml.
+//   esperado: string do sidecar · '' = 404 (não existe) · null = não deu pra buscar
+// Devolve: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
+function decidirIntegridade(esperado, obtido) {
+  if (esperado === null || esperado === undefined) return 'indisponivel';
+  if (esperado === '') return 'sem-sidecar';
+  if (!/^[A-Za-z0-9+/]{86}==$/.test(esperado)) return 'malformado';
+  return esperado === obtido ? 'ok' : 'divergente';
+}
+
 function pickMacDmg(assets, arch) {
   if (!Array.isArray(assets)) return null;
   const alvo = arch === 'arm64' ? 'arm64' : 'x64';
@@ -440,4 +462,4 @@ function pickMacDmg(assets, arch) {
   return dmgs.find((a) => !/arm64|x64/i.test(a.name)) || null;
 }
 
-module.exports = { setupUpdateIpc, pickMacDmg };
+module.exports = { setupUpdateIpc, pickMacDmg, decidirIntegridade };

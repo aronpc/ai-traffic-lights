@@ -86,3 +86,39 @@ test('atomicWrite: falha de I/O devolve false em vez de lançar', () => {
   const explodeNoRename = { writeFileSync: () => {}, renameSync: () => { throw new Error('EACCES'); } };
   assert.equal(atomicWrite('/s/x.json', { a: 1 }, explodeNoRename), false);
 });
+
+// ---- contrato do notification_type ----
+
+test('mergeState: notification_type é limpo quando o evento não é Notification', () => {
+  // docs/ARCHITECTURE.md: "null unless last_event == Notification". O hook o
+  // reescreve a cada evento; preservá-lo faria o computeState classificar a
+  // PRÓXIMA notificação sem tipo pelo discriminador da anterior.
+  const ex = { last_event: 'Notification', notification_type: 'permission_prompt' };
+  assert.equal(mergeState(ex, { last_event: 'Stop' }).notification_type, null);
+  assert.equal(mergeState(ex, { last_event: 'PreToolUse' }).notification_type, null);
+});
+
+test('mergeState: notification_type sobrevive quando o evento É Notification', () => {
+  const ex = { notification_type: 'idle_prompt' };
+  const out = mergeState(ex, { last_event: 'Notification' });
+  assert.equal(out.notification_type, 'idle_prompt');
+});
+
+test('mergeState: patch degenerado não lança (o catch cego do adapter engoliria)', () => {
+  for (const p of [undefined, null, 'lixo', 42]) {
+    assert.doesNotThrow(() => mergeState({ a: 1 }, p));
+  }
+});
+
+test('atomicWrite: rename que falha não deixa .tmp órfão', () => {
+  // o payload já foi escrito; sem limpeza o .tmp fica para sempre (os leitores
+  // filtram `.json` e não o recolhem).
+  const arquivos = new Map();
+  const io = {
+    writeFileSync: (p, d) => arquivos.set(p, d),
+    renameSync: () => { throw new Error('EACCES'); },
+    unlinkSync: (p) => arquivos.delete(p),
+  };
+  assert.equal(atomicWrite('/s/x.json', { a: 1 }, io), false);
+  assert.equal(arquivos.has('/s/x.json.tmp'), false, '.tmp deveria ter sido removido');
+});

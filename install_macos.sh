@@ -58,7 +58,9 @@ verify_checksum() {
   # electron-builder, nem do nome do arquivo dentro do yml, nem de qual target
   # foi construído. Importa aqui porque o build do macOS deixou de gerar o zip,
   # e o latest-mac.yml só sai com ele (ArchiveTarget: isWriteUpdateInfo && zip).
-  expected="$(curl -fsSL --connect-timeout 15 --max-time 30 "${asset_url}.sha512" 2>/dev/null | tr -d '\r\n')" || expected=""
+  # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
+  # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
+  expected="$(curl -fsSL --connect-timeout 15 --max-time 30 "${asset_url%%\?*}.sha512" 2>/dev/null | tr -d '\r\n')" || expected=""
   # Só aceita a forma exata de um sha512 em base64 (88 chars, termina em '=='):
   # um sidecar truncado, uma página de portal cativo ou um erro de proxy viraria
   # `expected` com lixo — e como o tier 0 curto-circuita o tier 1, o instalador
