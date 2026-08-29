@@ -432,10 +432,12 @@ html, body {
   opacity: 0.55;
   transition: opacity 0.12s, background 0.12s;
 }
-/* ---------- ações da linha (abrir no terminal original / no do ATL) ----------
-   Só aparecem no hover: a linha inteira já é clicável (faz o padrão), estes são
-   o atalho pra escolher o OUTRO caminho. Sem largura reservada — ao contrário do
-   sino, some por completo quando o mouse sai, então não desalinha nada. */
+/* ---------- ação da linha (abrir no terminal do ATL) ----------
+   Existe UM botão e só quando há escolha real: sessão local com tmux, onde o
+   clique na linha foca o terminal original e este é o outro caminho. Por isso
+   fica sempre à vista, não só no hover — escondê-lo tornaria a alternativa
+   invisível justo onde ela importa. Sem largura reservada: onde não há escolha,
+   o span fica vazio e não ocupa nada. */
 .row__actions { flex: none; display: inline-flex; gap: 2px; align-items: center; margin-right: -4px; }
 .row__action {
   -webkit-app-region: no-drag;
@@ -444,13 +446,10 @@ html, body {
   font-size: 13px; line-height: 1;
   width: 22px; height: 22px;
   border-radius: 6px; cursor: pointer;
-  opacity: 0; pointer-events: none;
+  opacity: 0.55; pointer-events: auto;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
-.row:hover .row__action { opacity: 0.75; pointer-events: auto; }
-/* há os DOIS caminhos → a escolha fica sempre à vista, não só no hover */
-.row__actions.is-choice .row__action { opacity: 0.55; pointer-events: auto; }
-.row:hover .row__actions.is-choice .row__action { opacity: 0.75; }
+.row:hover .row__action { opacity: 0.75; }
 .row__action:hover { background: rgba(255,255,255,0.10); color: var(--ink); opacity: 1; }
 
 .row:hover .row__snooze { opacity: 1; }
