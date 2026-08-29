@@ -516,20 +516,18 @@ function createWindow() {
 
 // Mostrar/ocultar centralizado. No show, re-afirma skipTaskbar — alguns WMs
 // resetam o hint no ciclo hide/show (bug conhecido de Electron/X11).
-// _winState só espelha o estado p/ callers externos; a FONTE DA VERDADE do
-// toggle é win.isVisible() (síncrono) — se externamente a janela foi ocultada
-// (Cmd+H no macOS, unmap do WM), o próximo clique REVELA em vez de esconder
-// de novo (senão o overlay "some" por 2 cliques).
-let _winState = 'hidden';        // 'hidden' | 'visible'
+// A FONTE DA VERDADE do toggle é win.isVisible() (síncrono): se a janela foi
+// ocultada por fora (Cmd+H no macOS, unmap do WM), o próximo clique REVELA em
+// vez de esconder de novo — senão o overlay "some" por dois cliques. Havia um
+// espelho `_winState` aqui, mas com o isVisible() decidindo ele nunca voltou a
+// ser lido: quatro escritas, zero leituras.
 
 function toggleWin() {
   if (!win || win.isDestroyed()) return;
 
   if (win.isVisible()) {
-    _winState = 'hidden';
     win.hide();
   } else {
-    _winState = 'visible';
     win.show();
     try { applySkip(); } catch {}
     try { win.setSkipTaskbar(true); } catch {}
@@ -546,7 +544,6 @@ function toggleWin() {
 function revealIfHidden() {
   try {
     if (win && !win.isDestroyed() && !win.isVisible()) {
-      _winState = 'visible';
       win.show();
       try { applySkip(); } catch {}
       try { win.setSkipTaskbar(true); } catch {}
@@ -1160,11 +1157,13 @@ app.whenReady().then(() => {
   hookInstaller.syncOpencodeIfInstalled(path.join(__dirname, 'adapters/opencode/ai-traffic-lights.js'));
   // idem pro adapter do Kiro (watcher de ~/.kiro/sessions/cli/)
   hookInstaller.syncKiroIfInstalled(path.join(__dirname, 'adapters/kiro/ai-traffic-lights.js'), BASE_DIR);
-  // inicia o watcher do Kiro se o Kiro estiver instalado
-  if (hookInstaller.kiroAvailable()) kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
   settingsCfg = loadSettings();                      // threshold/atalho/idioma do usuário
   applyLang();                                       // Preferências (lang) > locale do sistema
   createWindow();
+  // Watcher do Kiro DEPOIS da janela: o bootstrap() dele é síncrono (readdir +
+  // stat + leitura do tail de cada sessão viva) e antes do createWindow atrasava
+  // o overlay aparecer, em benefício de nada — o watcher não precisa preceder a UI.
+  if (hookInstaller.kiroAvailable()) kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
   chokidar

@@ -7,7 +7,8 @@
 #   scripts/release.sh beta --base 0.8.0        # força a base (default: patch+1 do package.json)
 #   scripts/release.sh promote                 # promove a última beta pra stable
 #   scripts/release.sh promote --version 0.7.3
-#   scripts/release.sh upload-mac --version 0.7.3  # build macOS + upload p/ release já criada
+#   scripts/release.sh upload-mac --version 0.7.3        # build macOS + upload p/ release já criada
+#   scripts/release.sh upload-mac --version 0.8.0-beta.3 # idem, numa pre-release
 #   scripts/release.sh upload-mac                  # idem, versão resolvida do último -beta.N
 #   scripts/release.sh <modo> --dry-run        # mostra o que faria, não publica
 #   scripts/release.sh <modo> --skip-tests     # pula o gate `npm test` (use com consciência)
@@ -126,13 +127,17 @@ build() {
 }
 
 # Build macOS. $1=versão  $2=dir de saída
-# Gera .dmg + .zip (arm64) + latest-mac.yml para o auto-updater.
+# Gera SÓ o .dmg. O -mac.zip e o latest-mac.yml existiam para o Squirrel.Mac,
+# que nunca é instanciado aqui: ele exige assinatura Developer ID e o app é
+# assinado ad-hoc. Eram ~100 MB por release que ninguém lia (achado 03 do
+# review da PR #46). O updater do macOS baixa o .dmg e reproduz os passos do
+# install_macos.sh — ver src/ipc/update.js.
 # Só pode rodar em um runner macOS (darwin) — no CI usa macos-latest.
 build_mac() {
   local version="$1" out="$2"
   [ "$(uname -s)" = "Darwin" ] || die "build_mac só pode rodar no macOS (uname: $(uname -s))"
-  info "buildando $version (macOS dmg+zip) → $out"
-  run npx electron-builder --mac dmg zip --publish never \
+  info "buildando $version (macOS dmg) → $out"
+  run npx electron-builder --mac dmg --publish never \
     -c.extraMetadata.version="$version" \
     -c.directories.output="$out"
 }
@@ -283,7 +288,11 @@ release_promote() {
     VERSION="$(printf '%s' "$last_beta" | sed -E 's/^v//; s/-beta\.[0-9]+$//')"
     info "última beta: $last_beta → promovendo para $VERSION"
   fi
-  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
+  # Aceita X.Y.Z (estável) E X.Y.Z-beta.N. Sem a beta, o canal beta nunca tinha
+  # artefato macOS: o build só existia no promote, então o código em teste não
+  # tinha como chegar a um Mac — inclusive o próprio updater do macOS.
+  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] \
+    || die "versão inválida: '$VERSION' (esperado X.Y.Z ou X.Y.Z-beta.N)"
   local tag="v$VERSION"
 
   # Pré-requisitos editoriais do runbook — o script NÃO os inventa.
@@ -355,6 +364,11 @@ release_upload_mac() {
   [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
   local tag="v$VERSION"
 
+  # Mesmos gates do beta e do promote. Este modo publica artefato numa release
+  # real (com --clobber), entao nao ha motivo para ser o unico caminho de
+  # publicacao sem arvore limpa, sem commit empurrado e sem a suite verde.
+  guard_tree; guard_pushed; run_tests
+
   # Aguarda a release existir (o job Linux pode ainda estar finalizando).
   # Em dry-run pula a espera — a release pode não existir ainda.
   if [ "$DRY" = 0 ]; then
@@ -368,13 +382,12 @@ release_upload_mac() {
   fi
 
   local out="dist-mac"
-  local dmg="" zip_mac="" yml_mac
-  yml_mac="$out/latest-mac.yml"
+  local dmg=""
 
   # Nada de artefato velho passando por novo (mesma regra do fluxo Linux):
   # um .dmg/.zip de versão ou arquitetura anterior em $out viciaria o
   # `ls` abaixo e subiria binário errado pra release certa.
-  run rm -f "$out"/*.dmg "$out"/*-mac.zip "$yml_mac" || true
+  run rm -f "$out"/*.dmg || true
 
   build_mac "$VERSION" "$out"
 
@@ -382,22 +395,19 @@ release_upload_mac() {
     # Seleção ANCORADA na versão do build (não apenas "qualquer .dmg"):
     # `ls *.dmg | head -1` pregaria o primeiro em ordem alfabética.
     dmg="$(ls "$out"/*"-$VERSION-"*.dmg 2>/dev/null | head -1 || true)"
-    zip_mac="$(ls "$out"/*"-$VERSION-mac".zip 2>/dev/null | head -1 || true)"
     [ -n "$dmg" ]     || die "não encontrei .dmg da versão $VERSION em $out/"
-    [ -n "$zip_mac" ] || die "não encontrei -mac.zip da versão $VERSION em $out/"
-    [ -f "$yml_mac" ] || die "não encontrei $yml_mac"
-    grep -Eq "^version: ${VERSION}([[:space:]]*)$" "$yml_mac" \
-      || die "$yml_mac não bate com a versão $VERSION"
+
+
   fi
 
   info "enviando artefatos macOS para $tag..."
   run gh release upload "$tag" \
     --repo "$REPO" \
     --clobber \
-    "$dmg" "$zip_mac" "$yml_mac"
+    "$dmg"
 
   if [ "$DRY" = 0 ]; then
-    ok "artefatos macOS enviados: $(basename "$dmg"), $(basename "$zip_mac"), latest-mac.yml"
+    ok "artefato macOS enviado: $(basename "$dmg")"
   fi
 }
 

@@ -37,7 +37,7 @@ The overlay never talks to any AI tool directly. It watches
 whatever valid JSON it finds there (schema documented in the
 [README](README.md#state-file-contract-schema_version-2)).
 
-That means **adding support for a new agent doesn't require touching the
+That means **an agent that can report its own events needs no change to the
 Electron app**:
 
 1. Add one line to `src/agents.js` (`label` + `comm` process names).
@@ -46,6 +46,13 @@ Electron app**:
    atomic writes (`tmp` + `mv`), self-healing against corrupted files
    (`try/fromjson`), and **fast** — it runs on every tool call of every
    session, so the budget is <25ms, fork-free wherever possible.
+
+The exception is an agent that reports *nothing* — no hook, no plugin API, only
+files left on disk. Then the adapter has to be a watcher living inside the
+overlay, and the app does get touched: Kiro needs a discovery gate in
+`src/collect.js` so its auxiliary processes don't each become a row. Treat that
+as the cost of the last-resort shape, not as the normal path — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §5.
 
 Adapter checklist:
 

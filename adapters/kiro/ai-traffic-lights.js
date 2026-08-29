@@ -9,8 +9,11 @@
 //
 // Mapeamento de eventos → vocabulário canônico do contrato:
 //   Prompt           → UserPromptSubmit (usuário enviou mensagem → 🟡)
-//   AssistantMessage → PostToolUse      (Kiro respondendo/pensando → 🟡)
-//   ToolResults      → PreToolUse       (Kiro executou ferramenta → 🟡)
+//   AssistantMessage → PreToolUse       (Kiro respondendo/pensando → 🟡)
+//   ToolResults      → PostToolUse      (Kiro executou ferramenta → 🟡)
+// A direção importa mesmo os dois caindo em PROCESSING (mesma cor): `last_event`
+// é exibido na linha, e dizer "PreToolUse" depois de uma ferramenta TERMINAR
+// descreve o oposto do que aconteceu.
 //   lock sumiu       → SessionEnd       (remove state file)
 //   lock apareceu    → SessionStart     (nova sessão → 🟢)
 //   jsonl quieto     → Stop (sintetizado) — o jsonl do Kiro NÃO tem marcador de
@@ -29,7 +32,11 @@ const os   = require('os');
 const KIRO_SESSIONS_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
 const DATA_HOME  = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 const STATE_DIR  = path.join(DATA_HOME, 'ai-traffic-lights', 'state');
-const SAFE_ID    = /^[A-Za-z0-9._-]+$/;
+// Validação de id vem do módulo compartilhado e testado (src/validate.js) em vez
+// de uma 4ª cópia da mesma regex. Este adapter é carregado pelo overlay
+// (main.js:14, require relativo ao __dirname da app), então o caminho resolve —
+// diferente do plugin do OpenCode, que roda dentro do processo do agente.
+const { validSessionId } = require('../../src/validate.js');
 
 // Síntese de Stop: o Kiro nunca emite fim de turno, então um turno que entregou
 // a resposta e ficou quieto permaneceria amarelo para sempre. Depois de
@@ -59,7 +66,7 @@ function atomicWrite(stateFile, st) {
 }
 
 function writeState(sid, evt, tool, pid) {
-  if (!sid || !SAFE_ID.test(sid)) return;
+  if (!validSessionId(sid)) return;
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     const file = path.join(STATE_DIR, `${sid}.json`);
@@ -97,7 +104,7 @@ function writeState(sid, evt, tool, pid) {
 }
 
 function dropState(sid) {
-  if (!sid || !SAFE_ID.test(sid)) return;
+  if (!validSessionId(sid)) return;
   try { fs.unlinkSync(path.join(STATE_DIR, `${sid}.json`)); } catch {}
 }
 
@@ -172,8 +179,8 @@ function lastJsonlEvent(sid) {
 function toCanonical(kind) {
   switch (kind) {
     case 'Prompt':           return 'UserPromptSubmit';
-    case 'AssistantMessage': return 'PostToolUse';
-    case 'ToolResults':      return 'PreToolUse';
+    case 'AssistantMessage': return 'PreToolUse';
+    case 'ToolResults':      return 'PostToolUse';
     default:                 return null;
   }
 }
@@ -273,7 +280,7 @@ function bootstrap() {
       files.filter(f => f.endsWith('.lock')).map(f => f.replace('.lock', ''))
     );
     for (const sid of locks) {
-      if (!SAFE_ID.test(sid)) continue;
+      if (!validSessionId(sid)) continue;
       handleLock(sid, true);
       _lastSeen.set(sid, Date.now());
       // processa estado atual do jsonl
@@ -334,7 +341,7 @@ function start(chokidar, onFirstWrite) {
   _watcher.on('all', (event, filePath) => {
     try {
       const sid = sidFromFile(filePath);
-      if (!sid || !SAFE_ID.test(sid)) return;
+      if (!validSessionId(sid)) return;
 
       if (filePath.endsWith('.jsonl')) {
         if (event === 'change' || event === 'add') handleJsonl(sid);

@@ -33,6 +33,7 @@ function preflight() {
 }
 
 const OPENCODE_PLUGIN_SRC = path.resolve(__dirname, '..', 'adapters', 'opencode', 'ai-traffic-lights.js');
+const KIRO_ADAPTER_SRC = path.resolve(__dirname, '..', 'adapters', 'kiro', 'ai-traffic-lights.js');
 
 try {
   if (process.argv.includes('--remove')) {
@@ -45,6 +46,8 @@ try {
     }
     const ro = installer.removeOpencode();
     console.log(ro.removed ? '✓ OpenCode: plugin removido.' : '✓ OpenCode: nada instalado.');
+    const rk = installer.removeKiro(BASE_DIR);
+    console.log(rk.removed ? '✓ Kiro: adapter removido.' : '✓ Kiro: nada instalado.');
     console.log('  State files antigos são limpos pelo próprio overlay.');
   } else {
     preflight();
@@ -68,6 +71,16 @@ try {
       console.log('  (sessões OpenCode já abertas precisam reiniciar para carregar o plugin)');
     } else {
       console.log(`- OpenCode: ${installer.OPENCODE.detectDir} não existe — pulado.`);
+    }
+    // Kiro: o adapter é um observador de arquivos carregado pelo próprio overlay.
+    // O gate é ~/.kiro/sessions/cli (paridade com o start() do adapter): sem esse
+    // diretório não há o que observar, e dizer "instalado" seria mentira.
+    if (installer.kiroAvailable()) {
+      const rk = installer.installKiro(KIRO_ADAPTER_SRC, BASE_DIR);
+      console.log(`✓ Kiro: adapter ${rk.updated ? 'atualizado' : 'instalado'} em ${rk.dest}`);
+      console.log('  (o watcher sobe junto com o overlay — reinicie-o para começar a observar)');
+    } else {
+      console.log(`- Kiro: ${installer.KIRO.sessionsDir} não existe — pulado.`);
     }
     console.log(`  Cópia do hook: ${dest}`);
     console.log('  Sessões novas aparecem no semáforo imediatamente; as já abertas, no próximo evento.');

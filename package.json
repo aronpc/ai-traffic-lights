@@ -64,8 +64,7 @@
     },
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
       "category": "public.app-category.utilities",
       "icon": "build/icon.png",
@@ -73,9 +72,6 @@
       "extendInfo": {
         "LSUIElement": 1
       }
-    },
-    "toolsets": {
-      "appimage": "1.0.3"
     }
   },
   "devDependencies": {
