@@ -36,6 +36,9 @@ function pickWindow(windowid, wins, ancestorPids) {
 // (evento anterior ao hook novo, ou sessão só-/proc) e pra RESSINCRONIZAR os
 // hints a partir do tmux client. No Windows não há equivalente (ler o environ
 // de outro processo exige código nativo) — lá o chamador passa ''.
+// ATENÇÃO: todo campo daqui é MACHINE-LOCAL — identifica uma janela/aba/painel
+// deste kernel. Ao adicionar um, inclua-o também em LOCAL_ONLY (src/net.js),
+// senão ele atravessa o sync e chega num peer apontando pra nada.
 const ENV_HINTS = {
   WARP_FOCUS_URL: 'focus_url',   // Warp (Linux/macOS) — warp://session/<uuid>
   TILIX_ID: 'tilix_id',          // Tilix (Linux) — uuid do terminal

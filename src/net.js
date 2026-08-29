@@ -81,7 +81,12 @@ function peerOnline(set, host) {
 // Campos machine-local que NÃO atravessam a rede (só fazem sentido neste host).
 // tmux_pane foca o painel NESTE host → local-only; tmux_session (attach remoto)
 // fica DE FORA de propósito — precisa cruzar a rede pro peer.
-const LOCAL_ONLY = ['windowid', 'focus_url', 'tilix_id', 'zellij_session', 'tmux_pane'];
+//
+// TODO HINT DE FOCO NOVO ENTRA AQUI. Os campos de ENV_HINTS (src/focus.js)
+// identificam uma janela/aba/painel DESTE kernel; num peer eles não apontam pra
+// nada. test/net.test.js cobre a lista inteira justamente pra falhar quando
+// alguém adicionar um hint e esquecer desta linha.
+const LOCAL_ONLY = ['windowid', 'focus_url', 'tilix_id', 'iterm_id', 'zellij_session', 'tmux_pane'];
 
 // Compara o token do request contra o esperado sem vazar timing/length:
 // hasheia ambos (SHA-256 → 32 bytes fixos) e usa timingSafeEqual. Token vazio
