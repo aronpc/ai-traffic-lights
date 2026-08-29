@@ -12,7 +12,7 @@ Suíte de testes (`node --test`, ~191 testes). Testa os **módulos puros** de `s
 | `rename.test.js` | Rename in-place por sessão (issue #2 + regressão v0.7.2 "mesmo cwd não vaza"). |
 | `state-machine.test.js` | `computeState()` — níveis, escalada idle, nível `read`. |
 | `sessions.test.js` | `mergeSessions()` — dedup por `pid\|\|session_id`. |
-| `focus.test.js` | `pickWindow`/`tabChannel`/`parseEnviron`/`isFocusUnsupported`. |
+| `focus.test.js` | `pickWindow`, `tabChannel` (canal só com terminal provado; fantasma do Warp), `tmuxTarget`/`tmuxClientPid`, `parseEnviron`, `isRemoteSession`, `focusFailure`. |
 | `usage.test.js` | Coleta de consumo Claude/GLM/Codex/Antigravity + `mergeUsage`/`detectReset`. |
 | `install-macos.test.js` | `install_macos.sh` de ponta a ponta com stubs de PATH (uname/curl/jq/npm + hdiutil/ditto/codesign). Guarda o contrato "não declarar sucesso sem instalar". |
 | `settings.test.js` · `i18n.test.js` · `tooltip.test.js` · `sound.test.js` · `launcher.test.js` · `validate.test.js` | Demais módulos puros. |

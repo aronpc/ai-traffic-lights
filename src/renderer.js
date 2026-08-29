@@ -77,7 +77,13 @@ function isLocal(s) { return !s.origin || s.origin === 'local'; }
 //   embutido → attacha o tmux numa aba do terminal do ATL (xterm+pty). Exige
 //              tmux_session; pra remota é o ÚNICO caminho (via WebSocket /pty).
 function openExternal(s) {
-  window.trafficLight.focus({ pid: s.pid, windowid: s.windowid, focus_url: s.focus_url, tilix_id: s.tilix_id });
+  // `origin` é o que barra o foco de sessão remota no main (o pid dela é de
+  // outro kernel). Os hints vão como estão; o main revalida tudo contra os
+  // processos vivos no clique.
+  window.trafficLight.focus({
+    pid: s.pid, origin: s.origin, windowid: s.windowid,
+    focus_url: s.focus_url, tilix_id: s.tilix_id, iterm_id: s.iterm_id, tmux_pane: s.tmux_pane,
+  });
 }
 
 function openEmbedded(s) {
@@ -365,13 +371,13 @@ function render() {
     main.append(labelEl, subInline);
     li.append(led, reason, llm, main);
 
-    // Coluna de ações: as duas formas de abrir a sessão, explícitas. O clique na
-    // linha faz o padrão (externo p/ local), mas quem decide é o usuário — daí
-    // os botões. Quando HÁ escolha real (os dois caminhos disponíveis) ficam
-    // sempre visíveis (.is-choice) — esconder no hover deixaria a alternativa
-    // invisível justo onde ela importa. Com um caminho só, seguem no hover.
+    // Coluna de ações: SÓ o caminho que o clique na linha não faz. O clique já
+    // abre o padrão de cada tipo de sessão (externo p/ local, embutido p/
+    // remota), e um botão que repete isso é ruído — a linha inteira já é o
+    // alvo, e é maior. Sobra um caso: sessão LOCAL com tmux, onde a linha foca
+    // o terminal original e o ⧉ é o outro caminho.
     const actions = document.createElement('span');
-    actions.className = 'row__actions' + ((isLocal(s) && s.tmux_session) ? ' is-choice' : '');
+    actions.className = 'row__actions';
     const mkAction = (glyph, tipKey, fn) => {
       const b = document.createElement('button');
       b.className = 'row__action';
@@ -380,10 +386,10 @@ function render() {
       b.addEventListener('click', (e) => { e.stopPropagation(); fn(s); });
       return b;
     };
-    // ↗ terminal original: só local (não dá pra focar janela de outra máquina).
-    if (isLocal(s)) actions.append(mkAction('↗', 'row_open_external', openExternal));
-    // ⧉ terminal do ATL: precisa de tmux (o attach é `tmux attach -t <sessão>`).
-    if (s.tmux_session) actions.append(mkAction('⧉', 'row_open_embedded', openEmbedded));
+    // ⧉ terminal do ATL: precisa de tmux (o attach é `tmux attach -t <sessão>`)
+    // E de ser local — na remota o clique na linha JÁ abre o embutido, porque
+    // não existe janela local pra focar.
+    if (isLocal(s) && s.tmux_session) actions.append(mkAction('⧉', 'row_open_embedded', openEmbedded));
     li.append(actions);
 
     // Snooze do alerta (só em vermelho): não apaga a cor, só cala o beep/notif.
