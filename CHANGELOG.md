@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Trade-off: também aparece sobre apps em tela cheia — aceitável pra um overlay.
 
 ### Fixed
+- **O canal beta nunca recebeu artefato macOS.** O `upload-mac` valida a versão
+  com `^X.Y.Z$`, então o modo documentado no próprio cabeçalho do script
+  (`upload-mac --version 0.8.0-beta.3`) morria em "versão inválida" — o job
+  `build-mac` do workflow falhava em toda release beta, e o `.dmg` só existia no
+  `promote`. Efeito: o código em teste não chegava a um Mac, inclusive o updater
+  do macOS, que é justamente o que precisa de validação lá. A regra passa a ser
+  a mesma do `promote` (`X.Y.Z` ou `X.Y.Z-beta.N`). No mesmo caminho, o default
+  sem `--version` resolvia a última beta e **removia** o `-beta.N`, apontando
+  para a release ESTÁVEL: subiria o `.dmg` da beta em cima dela.
 - **`upload-mac` publicava sem os gates.** Era o único modo do `release.sh` que
   subia artefato sem árvore limpa, sem commit empurrado e sem a suíte verde —
   e ainda com `--clobber` numa release já publicada.
