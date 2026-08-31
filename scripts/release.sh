@@ -442,16 +442,24 @@ release_promote() {
 # Uso: scripts/release.sh upload-mac --version X.Y.Z [--dry-run]
 # ===========================================================================
 release_upload_mac() {
-  # Versão alvo: --version, ou a última beta sem o sufixo (igual ao promote).
+  # Versão alvo: --version, ou a última beta COM o sufixo. Diferente do promote,
+  # que resolve `vX.Y.Z-beta.N` → `X.Y.Z` porque o alvo dele é a estável: aqui o
+  # alvo é a própria pre-release. Tirar o `-beta.N` fazia o default apontar para
+  # a release ESTÁVEL e subir o .dmg da beta em cima dela.
   if [ -z "$VERSION" ]; then
     local last_beta
     last_beta="$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
       | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -1 || true)"
     [ -n "$last_beta" ] || die "nenhuma release -beta.N encontrada; passe --version X.Y.Z"
-    VERSION="$(printf '%s' "$last_beta" | sed -E 's/^v//; s/-beta\.[0-9]+$//')"
+    VERSION="${last_beta#v}"
     info "última beta: $last_beta → upload-mac para $VERSION"
   fi
-  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
+  # Aceita X.Y.Z (estável) E X.Y.Z-beta.N — mesma regra do promote. Com o regex
+  # só de X.Y.Z, o modo documentado `upload-mac --version X.Y.Z-beta.N` morria em
+  # "versão inválida" e o canal beta nunca recebia .dmg: o macOS em teste ficava
+  # sem artefato, inclusive para validar o próprio updater do macOS.
+  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] \
+    || die "versão inválida: '$VERSION' (esperado X.Y.Z ou X.Y.Z-beta.N)"
   local tag="v$VERSION"
 
   # Mesmos gates do beta e do promote. Este modo publica artefato numa release
