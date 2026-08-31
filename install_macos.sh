@@ -60,15 +60,46 @@ verify_checksum() {
   # e o latest-mac.yml só sai com ele (ArchiveTarget: isWriteUpdateInfo && zip).
   # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
   # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
-  expected="$(curl -fsSL --connect-timeout 15 --max-time 30 "${asset_url%%\?*}.sha512" 2>/dev/null | tr -d '\r\n')" || expected=""
-  # Só aceita a forma exata de um sha512 em base64 (88 chars, termina em '=='):
-  # um sidecar truncado, uma página de portal cativo ou um erro de proxy viraria
-  # `expected` com lixo — e como o tier 0 curto-circuita o tier 1, o instalador
-  # mataria a instalação de um artefato íntegro com "adulterado".
-  [[ "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]] || expected=""
-  if [ -n "$expected" ]; then
+  # Três desfechos DIFERENTES, e tratá-los igual era o furo: `expected=""`
+  # colapsava tudo em "não tem sidecar", caindo no tier 1 e, como o
+  # latest-mac.yml não é mais publicado (ver acima), terminando em
+  # "pulei a verificação" + instala.
+  #
+  #   404            release antiga, anterior ao sidecar  -> fallback (tier 1)
+  #   falha de rede  não dá para saber                    -> ABORTA
+  #   200 malformado alguém no meio do caminho            -> ABORTA
+  #
+  # O 200 malformado é o mais perigoso: um proxy, portal cativo ou borda de CDN
+  # devolvendo corpo próprio com status 200 desligaria o controle inteiro se
+  # virasse "sem sidecar". Um artefato que chega junto com um sidecar ilegível
+  # não é uma release antiga — é um sinal de que a origem não é confiável.
+  local sc_body sc_code
+  sc_body="$(mktemp)"
+  sc_code="$(curl -sSL --connect-timeout 15 --max-time 30 \
+    -o "$sc_body" -w '%{http_code}' "${asset_url%%\?*}.sha512" 2>/dev/null)" || sc_code="000"
+
+  if [ "$sc_code" = "200" ]; then
+    expected="$(tr -d '\r\n' < "$sc_body")"
+    rm -f "$sc_body"
+    # 88 chars base64 terminando em '==' é o tamanho fixo de um sha512.
+    if [[ ! "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]]; then
+      die "sidecar .sha512 chegou com conteúdo inválido (HTTP 200, ${#expected} bytes).
+   Isso não é uma release sem checksum — é um corpo adulterado ou interceptado.
+   Abortando em vez de instalar sem verificação."
+    fi
     compara_checksum "$file" "$expected" "$base"; return $?
   fi
+  rm -f "$sc_body"
+
+  if [ "$sc_code" != "404" ]; then
+    die "não foi possível buscar o sidecar .sha512 (HTTP ${sc_code}).
+   Sem ele não há como verificar a integridade do download.
+   Tente de novo em instantes; se persistir, baixe o .dmg manualmente pelo GitHub Releases."
+  fi
+
+  # Daqui para baixo: HTTP 404 confirmado. Release anterior ao sidecar, e a
+  # política de fallback vale — é o que permite atualizar a partir de uma
+  # release antiga.
 
   yml_url="${asset_url%/*}/latest-mac.yml"
   yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \

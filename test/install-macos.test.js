@@ -18,6 +18,13 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
+
+// O stub de curl grava exatamente este conteúdo no lugar do .dmg; o sidecar
+// "válido" precisa ser o sha512 DELE, senão o teste do caminho feliz passaria
+// a exercitar a recusa em vez da instalação.
+const DMG_FALSO = 'dmg-falso\n';
+const SHA512_DO_DMG = crypto.createHash('sha512').update(DMG_FALSO).digest('base64');
 
 const SCRIPT = path.join(__dirname, '..', 'install_macos.sh');
 const APP_NAME = 'AI Traffic Lights.app';
@@ -34,7 +41,12 @@ function stub(dir, nome, corpo) {
 
 // Monta um sandbox isolado: bin/ com os stubs, home/ como $HOME falso e o cwd
 // de onde o script será chamado (dentro ou fora de um checkout do repo).
-function sandbox({ temDmg, dentroDoRepo }) {
+// sidecar: como o servidor responde a <artefato>.sha512.
+//   'valido'  200 + o sha512 real do .dmg falso  -> instala e VERIFICA
+//   'lixo'    200 + corpo que não é sha512       -> aborta (proxy/portal cativo)
+//   'ausente' 404                                -> release antiga, segue sem verificar
+//   'rede'    curl não completa                  -> aborta (não dá para saber)
+function sandbox({ temDmg, dentroDoRepo, sidecar = 'valido' }) {
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-install-test-'));
   const bin = path.join(raiz, 'bin');
   const home = path.join(raiz, 'home');
@@ -45,14 +57,30 @@ function sandbox({ temDmg, dentroDoRepo }) {
   stub(bin, 'uname', 'case "${1:-}" in -s) echo Darwin ;; -m) echo arm64 ;; *) echo Darwin ;; esac');
 
   // curl tem 3 papéis no script; o stub decide pelo formato dos argumentos.
+  // O stub decide o papel pelo formato dos argumentos. O sidecar é buscado com
+  // `-o <arquivo> -w %{http_code}`: o CORPO vai para o arquivo e o CÓDIGO HTTP
+  // para o stdout. Emular os dois separadamente é o que permite distinguir
+  // "404 = release antiga" de "200 com lixo = alguém no meio do caminho" — que
+  // é justamente a decisão que o instalador passou a tomar.
   stub(bin, 'curl', `
-alvo=""; saida=""
+alvo=""; saida=""; quer_code=0
 for ((i=1; i<=$#; i++)); do
   a="\${!i}"
   if [ "$a" = "-o" ]; then j=$((i+1)); saida="\${!j}"; fi
+  if [ "$a" = "-w" ]; then quer_code=1; fi
   case "$a" in http*) alvo="$a" ;; esac
 done
-if [ -n "$saida" ]; then echo "dmg-falso" > "$saida"; exit 0; fi        # download do .dmg
+
+case "$alvo" in
+  *.sha512)
+    ${sidecar === 'rede' ? 'exit 7' : ''}
+    ${sidecar === 'ausente'
+      ? 'if [ -n "$saida" ]; then : > "$saida"; fi; [ "$quer_code" = 1 ] && printf 404; exit 0'
+      : `if [ -n "$saida" ]; then printf '%s' '${sidecar === 'lixo' ? '<html>502 Bad Gateway</html>' : SHA512_DO_DMG}' > "$saida"; fi; [ "$quer_code" = 1 ] && printf 200; exit 0`}
+    ;;
+esac
+
+if [ -n "$saida" ]; then printf '%s' '${DMG_FALSO}' > "$saida"; exit 0; fi   # download do .dmg
 case "$alvo" in
   *api.github.com*) printf '%s' '${temDmg ? JSON_COM_DMG : JSON_SEM_DMG}'; exit 0 ;;
   *latest-mac.yml) exit 22 ;;   # sem yml → verify_checksum avisa e segue (best-effort)
@@ -137,5 +165,52 @@ test('com .dmg: instala, e aí sim imprime as dicas de Gatekeeper', () => {
     assert.match(r.saida, /xattr -dr com\.apple\.quarantine/, 'com app no disco as dicas são úteis');
     assert.match(r.perfil, /alias atl=/);
     assert.match(r.perfil, /open -a/, 'com o app instalado o alias abre o bundle');
+  } finally { r.limpar(); }
+});
+
+// --- sidecar .sha512: os quatro desfechos (4º review, achado P1 #2) ---
+// O furo: `expected=""` colapsava "404", "falha de rede" e "200 com lixo" num
+// caso só. Como o build do macOS deixou de emitir latest-mac.yml, o tier 1
+// nunca acha nada e o script terminava em "pulei a verificação" + instala.
+// Um proxy ou portal cativo respondendo 200 desligava o controle inteiro.
+
+test('sidecar válido: instala E verifica o sha512', () => {
+  const r = rodar({ temDmg: true, dentroDoRepo: false, sidecar: 'valido' });
+  try {
+    assert.equal(r.status, 0);
+    assert.match(r.saida, /integridade verificada \(sha512\)/,
+      'com sidecar válido a verificação tem que RODAR, não ser pulada');
+    assert.match(r.saida, /Concluído/);
+  } finally { r.limpar(); }
+});
+
+test('sidecar 200 com lixo: ABORTA, não trata como release sem checksum', () => {
+  const r = rodar({ temDmg: true, dentroDoRepo: false, sidecar: 'lixo' });
+  try {
+    assert.notEqual(r.status, 0, 'instalou apesar do sidecar interceptado');
+    assert.match(r.saida, /conteúdo inválido/);
+    assert.doesNotMatch(r.saida, /pulei a verificação/,
+      '200 com corpo inválido não é "sem sidecar" — é sinal de origem não confiável');
+    assert.doesNotMatch(r.saida, /Concluído/);
+  } finally { r.limpar(); }
+});
+
+test('sidecar inalcançável (rede): ABORTA em vez de instalar sem verificar', () => {
+  const r = rodar({ temDmg: true, dentroDoRepo: false, sidecar: 'rede' });
+  try {
+    assert.notEqual(r.status, 0);
+    assert.match(r.saida, /não foi possível buscar o sidecar/);
+    assert.doesNotMatch(r.saida, /Concluído/);
+  } finally { r.limpar(); }
+});
+
+test('sidecar 404: release antiga segue instalando (senão nada atualiza)', () => {
+  // O contra-peso dos dois de cima: endurecer o 404 impediria qualquer release
+  // anterior ao sidecar de ser instalada. 404 é ausência legítima.
+  const r = rodar({ temDmg: true, dentroDoRepo: false, sidecar: 'ausente' });
+  try {
+    assert.equal(r.status, 0, '404 não pode abortar — é release antiga, não ataque');
+    assert.match(r.saida, /pulei a verificação/);
+    assert.match(r.saida, /Concluído/);
   } finally { r.limpar(); }
 });
