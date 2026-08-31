@@ -18,6 +18,7 @@ const { execFileSync } = require('child_process');
 const sessions = require('./sessions.js');
 const { AGENTS } = require('./agents.js');
 const validate = require('./validate.js');
+const { atomicWrite } = require('./state-writer.js');
 
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(process.env.HOME, '.local/share');
 const STATE_DIR = path.join(DATA_HOME, 'ai-traffic-lights', 'state');
@@ -104,10 +105,8 @@ function backfillModels() {
         const m = tp && lastModel(tp);
         if (m) {
           s.transcript_path = tp; s.model = m;
-          // tmp+rename: mesma escrita atômica dos adapters (sem race com o hook)
-          fs.writeFileSync(p + '.tmp', JSON.stringify(s));
-          fs.renameSync(p + '.tmp', p);
-          changed = true;
+          // mesma escrita atômica dos adapters (sem race com o hook) — src/state-writer.js
+          if (atomicWrite(p, s)) changed = true;
         }
       } catch {}
     }

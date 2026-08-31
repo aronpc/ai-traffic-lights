@@ -93,6 +93,79 @@ stable_latest_tag() { gh api "repos/$REPO/releases/latest" -q .tag_name 2>/dev/n
 STABLE_BEFORE="$(stable_latest_tag)"
 
 # ---------- gates comuns ----------
+# Gera um sidecar <arquivo>.sha512 com o hash em base64 — mesmo encoding que o
+# electron-builder usa nos seus yml, então os instaladores comparam do mesmo
+# jeito. Existe porque o latest-mac.yml só é emitido pelo target `zip` (ver
+# ArchiveTarget.js: `isWriteUpdateInfo && format === "zip"`), e publicar ~100 MB
+# de zip só para carregar um hash de 1 KB não se paga. O Linux ganha o mesmo
+# sidecar por simetria: um formato só, lido igual nos dois instaladores.
+sha512_sidecar() {
+  local f="$1" out="$1.sha512" tmp
+  tmp="$(mktemp)"
+  # Escreve num TEMP e só move no sucesso. Redirecionar direto para $out trunca
+  # o arquivo ANTES do pipeline rodar: uma falha no meio (sob set -o pipefail)
+  # deixava um sidecar vazio ou parcial no lugar de um válido — e vazio publica
+  # sem verificação, parcial faz TODO instalador abortar com "adulterado".
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha512 -binary "$f" | openssl base64 -A > "$tmp"
+  elif command -v shasum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
+    shasum -a 512 "$f" | awk '{print $1}' | xxd -r -p | base64 | tr -d '\n' > "$tmp"
+  else
+    rm -f "$tmp"
+    warn "sem openssl (nem shasum+xxd) — sem sidecar de checksum para $(basename "$f")"
+    return 1
+  fi
+  # 88 chars base64 é o tamanho fixo de um sha512; qualquer outra coisa é falha
+  # silenciosa do pipeline e não pode virar artefato publicado.
+  if [ "$(wc -c < "$tmp" | tr -d ' ')" != "88" ]; then
+    rm -f "$tmp"
+    warn "sidecar de $(basename "$f") saiu malformado — descartado"
+    return 1
+  fi
+  # `mv` que falha (dir read-only, cross-device, permissao) nao pode reportar
+  # sucesso: o chamador anexaria um arquivo inexistente e o `gh` abortaria — no
+  # promote, DEPOIS do push da tag, deixando tag publicada sem release.
+  mv "$tmp" "$out" || { rm -f "$tmp"; warn "não consegui mover o sidecar de $(basename "$f")"; return 1; }
+  printf '%s' "$out"
+}
+
+# sidecars_ou_morra gera o sidecar de cada artefato e ABORTA se qualquer um
+# falhar, ecoando os caminhos gerados.
+#
+# Antes, os três fluxos faziam `sha512_sidecar "$x" && extras+=(...)`: qualquer
+# falha (sem openssl, saída != 88 chars, `mv` negado, pipeline quebrado)
+# publicava a release SEM checksum, em silêncio. Do outro lado, um 404 no
+# sidecar é lido pelos instaladores como "release antiga" e instala sem
+# verificar — então falhar aberto aqui desliga o controle inteiro lá.
+#
+# O condicional existia por uma razão real: passar o caminho incondicionalmente
+# fazia o `gh` abortar com "no matches found" DEPOIS do build inteiro. A saída
+# não é aceitar release sem checksum — é gerar e validar ANTES de criar
+# tag/release, que é o que os chamadores passam a fazer.
+# Preenche o array GLOBAL SIDECARS em vez de ecoar os caminhos.
+#
+# Ecoar e capturar com `mapfile -t x < <(sidecars_ou_morra ...)` parece mais
+# limpo e é uma armadilha: process substitution roda em SUBSHELL, então o `die`
+# mata só o subshell. O script segue, `extras` fica vazio, e a release sai sem
+# checksum — precisamente o fail-open que esta função existe para eliminar.
+# Verificado em bash 5.x: o script continua e termina com exit 0.
+#
+# `local -n`/nameref evitaria o global, mas exige bash 4.3+; o array global é
+# o que funciona em todo lugar onde este script roda.
+SIDECARS=()
+sidecars_ou_morra() {
+  SIDECARS=()
+  local f
+  for f in "$@"; do
+    sha512_sidecar "$f" >/dev/null \
+      || die "não consegui gerar o sidecar .sha512 de $(basename "$f").
+   Publicar sem checksum faria todo instalador tratar a release como 'antiga'
+   e instalar sem verificação nenhuma. Abortando antes de criar a release."
+    [ -s "$f.sha512" ] || die "sidecar de $(basename "$f") ficou vazio — abortando."
+    SIDECARS+=("$f.sha512")
+  done
+}
+
 guard_tree() {
   if [ -n "$(git status --porcelain)" ]; then
     git status --short
@@ -172,7 +245,7 @@ release_beta() {
   local out="dist-beta"
   local appimage="$out/ai-traffic-lights-$version.AppImage"
   local yml="$out/latest-linux.yml"
-  run rm -f "$appimage" "$yml"   # nada de artefato velho passando por novo
+  run rm -f "$appimage" "$yml" "$appimage.sha512"   # nada de artefato velho passando por novo
   # Só AppImage: o .deb não participa do canal beta (o updater do deb é
   # informativo e resolve por /releases/latest, que exclui pre-releases).
   build "$version" "AppImage" "$out"
@@ -223,13 +296,20 @@ release_beta() {
   } > "$notes"
 
   confirm "publicar $tag como PRE-RELEASE em $REPO?"
+  # Sidecars ANTES do `gh release create`: se o checksum não sai, nada é
+  # publicado — em vez de publicar um artefato que ninguém consegue verificar.
+  local extras=()
+  if [ "$DRY" = 0 ]; then
+    sidecars_ou_morra "$appimage"
+    extras=("${SIDECARS[@]}")
+  fi
   run gh release create "$tag" \
     --repo "$REPO" \
     --prerelease \
     --target "$SHA" \
     --title "$tag — beta ($BRANCH @ $SHORT_SHA)" \
     --notes-file "$notes" \
-    "$appimage" "$yml"
+    "$appimage" "$yml" ${extras[@]+"${extras[@]}"}
   rm -f "$notes"
 
   verify_stable_untouched
@@ -311,7 +391,7 @@ release_promote() {
   local appimage="$out/ai-traffic-lights-$VERSION.AppImage"
   local deb="$out/ai-traffic-lights_${VERSION}_amd64.deb"
   local yml="$out/latest-linux.yml"
-  run rm -f "$appimage" "$deb" "$yml"   # nada de artefato velho passando por novo
+  run rm -f "$appimage" "$deb" "$yml" "$appimage.sha512" "$deb.sha512"   # nada de artefato velho passando por novo
   build "$VERSION" "AppImage deb" "$out"
   if [ "$DRY" = 0 ]; then
     for f in "$appimage" "$deb" "$yml"; do [ -f "$f" ] || die "não encontrei $f"; done
@@ -330,6 +410,16 @@ release_promote() {
   fi
 
   confirm "publicar $tag como release ESTÁVEL (vira o Latest de todo mundo)?"
+
+  # Sidecars ANTES da tag, e não depois. A ordem importa: `git push origin
+  # "$tag"` é irreversível na prática (o mundo já pode ter buscado a tag), e
+  # gerá-los depois deixava a janela em que a tag existe e o checksum não.
+  local extras=()
+  if [ "$DRY" = 0 ]; then
+    sidecars_ou_morra "$appimage" "$deb"
+    extras=("${SIDECARS[@]}")
+  fi
+
   if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     run git tag -a "$tag" -m "$tag"
   fi
@@ -339,7 +429,7 @@ release_promote() {
     --target "$SHA" \
     --title "$tag" \
     --notes-file "$notes" \
-    "$appimage" "$deb" "$yml"
+    "$appimage" "$deb" "$yml" ${extras[@]+"${extras[@]}"}
   rm -f "$notes"
 
   if [ "$DRY" = 0 ]; then ok "publicado: https://github.com/$REPO/releases/tag/$tag"; fi
@@ -387,7 +477,7 @@ release_upload_mac() {
   # Nada de artefato velho passando por novo (mesma regra do fluxo Linux):
   # um .dmg/.zip de versão ou arquitetura anterior em $out viciaria o
   # `ls` abaixo e subiria binário errado pra release certa.
-  run rm -f "$out"/*.dmg || true
+  run rm -f "$out"/*.dmg "$out"/*.dmg.sha512 || true
 
   build_mac "$VERSION" "$out"
 
@@ -401,10 +491,18 @@ release_upload_mac() {
   fi
 
   info "enviando artefatos macOS para $tag..."
+  # Este é o artefato que o auto-update do macOS baixa sozinho e usa para
+  # substituir o app inteiro. Sem sidecar, `validarSidecar` devolve
+  # 'sem-sidecar' e o update instala SEM comparar hash nenhum.
+  local extras=()
+  if [ "$DRY" = 0 ]; then
+    sidecars_ou_morra "$dmg"
+    extras=("${SIDECARS[@]}")
+  fi
   run gh release upload "$tag" \
     --repo "$REPO" \
     --clobber \
-    "$dmg"
+    "$dmg" ${extras[@]+"${extras[@]}"}
 
   if [ "$DRY" = 0 ]; then
     ok "artefato macOS enviado: $(basename "$dmg")"

@@ -88,6 +88,7 @@ function loadAdapter(mfs, clock = { now: 0 }) {
     require: (name) => ({
       fs: mfs, path, os: { homedir: () => HOME },
       '../../src/validate.js': require('../src/validate.js'),
+      '../../src/state-writer.js': require('../src/state-writer.js'),
     }[name]),
     process: { env: { XDG_DATA_HOME: '/data' } },
     setInterval,
@@ -148,7 +149,11 @@ test('writeState preserva foco/transcript/terceiros e atualiza last_event', () =
   assert.equal(st.zellij_session, 'Z');
   assert.equal(st.term_program, 'TP');
   assert.equal(st.third_party, 'keep');
-  assert.equal(st.notification_type, 'NT');
+  // notification_type NÃO é preservado: o contrato (docs/ARCHITECTURE.md) manda
+  // ser null a menos que last_event == 'Notification', e o hook o reescreve a
+  // cada evento. Preservá-lo faria o computeState classificar a PRÓXIMA
+  // notificação sem tipo pelo discriminador da anterior.
+  assert.equal(st.notification_type, null, 'evento não-Notification limpa o tipo');
   assert.equal(st.pid, 4242);
   assert.equal(st.cwd, '/w');
   assert.equal(st.last_event, 'UserPromptSubmit');

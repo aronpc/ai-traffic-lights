@@ -37,6 +37,10 @@ const STATE_DIR  = path.join(DATA_HOME, 'ai-traffic-lights', 'state');
 // (main.js:14, require relativo ao __dirname da app), então o caminho resolve —
 // diferente do plugin do OpenCode, que roda dentro do processo do agente.
 const { validSessionId } = require('../../src/validate.js');
+// Escrita + regra de ouro do contrato vêm do módulo compartilhado (testado):
+// preservar transcript_path, campos de foco e chaves de terceiros é regra, não
+// lembrete — foi o achado 08 do review da PR #46.
+const { atomicWrite, mergeState } = require('../../src/state-writer.js');
 
 // Síntese de Stop: o Kiro nunca emite fim de turno, então um turno que entregou
 // a resposta e ficou quieto permaneceria amarelo para sempre. Depois de
@@ -56,15 +60,6 @@ function readState(sid) {
 // Escrita atômica tmp+rename com try/catch. TODA escrita passa por aqui:
 // um EACCES/ENOSPC/EROFS/EBUSY no state NÃO pode derrubar o processo main do
 // Electron (e com ele a tray e o monitoramento de todos os agentes).
-function atomicWrite(stateFile, st) {
-  try {
-    fs.writeFileSync(`${stateFile}.tmp`, JSON.stringify(st));
-    fs.renameSync(`${stateFile}.tmp`, stateFile);
-    return true;
-  } catch {}
-  return false;
-}
-
 function writeState(sid, evt, tool, pid) {
   if (!validSessionId(sid)) return;
   try {
@@ -72,34 +67,18 @@ function writeState(sid, evt, tool, pid) {
     const file = path.join(STATE_DIR, `${sid}.json`);
     const ex   = readState(sid);
     const now  = Math.floor(Date.now() / 1000);
-    const st   = {
-      // golden rule do adapter: PRESERVA chaves de terceiros e os canais de
-      // foco do state existente (transcript_path vem do backfillModels() do
-      // main — não pode regridir pra null — e windowid/focus_url/tilix_id
-      // servem o click-to-focus).
-      ...ex,
+    // O que ESTE evento sabe. Todo o resto — inclusive chaves que outro escritor
+    // pôs aqui — é preservado pelo mergeState, não por uma lista repetida aqui.
+    const st = mergeState(ex, {
       schema_version: 2,
-      agent:          'kiro',
-      session_id:     sid,
-      pid:            pid || ex.pid || null,
-      cwd:            ex.cwd || null,
-      model:          ex.model || null,
-      transcript_path: ex.transcript_path || null,
-      term_program:   ex.term_program   || null,
-      windowid:       ex.windowid       || null,
-      focus_url:      ex.focus_url      || null,
-      tilix_id:       ex.tilix_id       || null,
-      zellij_session: ex.zellij_session || null,
-      last_event:     evt,
-      last_event_ts:  now,
-      last_tool:      tool || null,
-      notification_type: ex.notification_type || null,
-      events: [
-        ...(Array.isArray(ex.events) ? ex.events : []),
-        { ts: now, event: evt, tool: tool || null },
-      ].slice(-50),
-    };
-    atomicWrite(file, st);
+      agent:         'kiro',
+      session_id:    sid,
+      pid:           pid || ex.pid || null,
+      last_event:    evt,
+      last_event_ts: now,
+      last_tool:     tool || null,
+    }, { ts: now, event: evt, tool: tool || null });
+    atomicWrite(file, st, fs);
   } catch {}
 }
 
@@ -127,7 +106,7 @@ function enrichFromSessionJson(sid) {
     const changed =
       (meta.cwd && enriched.cwd !== ex.cwd) ||
       (meta.session_id && enriched.session_id !== ex.session_id);
-    if (changed) atomicWrite(stateFile, enriched);
+    if (changed) atomicWrite(stateFile, enriched, fs);
   } catch {}
 }
 
@@ -258,7 +237,7 @@ function handleLock(sid, exists) {
       st.last_event = st.last_event || 'SessionStart';
       st.last_event_ts = st.last_event_ts || Math.floor(Date.now() / 1000);
       st.events = st.events || [{ ts: st.last_event_ts, event: 'SessionStart', tool: null }];
-      atomicWrite(stateFile, st);
+      atomicWrite(stateFile, st, fs);
 
       // Avisa o main para invalidar cache de discovery imediatamente
       if (_onFirstWrite) _onFirstWrite();

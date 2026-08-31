@@ -253,6 +253,16 @@ vocabulary** and writes the state file. Three proven shapes:
 | In-process **plugin** | [`adapters/opencode/ai-traffic-lights.js`](../adapters/opencode/ai-traffic-lights.js) | The agent loads plugins in its own process (OpenCode). |
 | **File watcher** (in the overlay) | [`adapters/kiro/ai-traffic-lights.js`](../adapters/kiro/ai-traffic-lights.js) | The agent offers no hook and no plugin API, but leaves session files on disk (Kiro). |
 
+Where the writer lives decides what it can reuse. An adapter running **inside
+the overlay** gets the contract's merge rule for free from
+[`src/state-writer.js`](../src/state-writer.js) (`mergeState` + `atomicWrite`,
+covered by `test/state-writer.test.js`). A hook or a plugin runs in *another*
+process — the bash hook in the agent's, the OpenCode plugin from
+`~/.config/opencode/plugin/` — and cannot reach this repo at all, so each
+carries its own copy by necessity. That is why the rule is a tested function
+and not only a paragraph: three of the four writers can only follow it by
+being told, and the fourth used to get it wrong.
+
 The watcher shape is the fallback of last resort, and it carries costs the other
 two don't: it runs inside the overlay's own process (so an unhandled exception
 takes the whole app down, not just one agent's monitoring), and it has to

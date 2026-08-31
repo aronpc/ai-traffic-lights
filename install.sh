@@ -149,12 +149,29 @@ smoke_test() {
 verify_checksum() {
   local file="$1" asset_url="$2" yml yml_url base expected actual
   base="$(basename "${asset_url%%\?*}")"
-  yml_url="${asset_url%/*}/latest-linux.yml"
-  yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
-    || { info "sem latest-linux.yml — pulei a verificação de integridade"; return 0; }
-  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
-  [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
-  [ -n "$expected" ] || { info "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
+  # Tier 0: o sidecar <arquivo>.sha512 publicado pelo release.sh. É o caminho
+  # preferido porque não depende do formato do electron-builder nem de qual
+  # target foi construído — o macOS perdeu o latest-mac.yml quando o build
+  # deixou de gerar o zip (ArchiveTarget só emite update info para `zip`).
+  # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
+  # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
+  expected="$(curl -fsSL --connect-timeout 15 --max-time 30 "${asset_url%%\?*}.sha512" 2>/dev/null | tr -d '\r\n')" || expected=""
+  # Só aceita a forma exata de um sha512 em base64 (88 chars, termina em '=='):
+  # um sidecar truncado, uma página de portal cativo ou um erro de proxy viraria
+  # `expected` com lixo — e como o tier 0 curto-circuita o tier 1, o instalador
+  # mataria a instalação de um artefato íntegro com "adulterado".
+  [[ "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]] || expected=""
+  if [ -z "$expected" ]; then
+    yml_url="${asset_url%/*}/latest-linux.yml"
+    yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
+      || { info "sem sidecar .sha512 nem latest-linux.yml — pulei a verificação de integridade"; return 0; }
+    # `|| :` em cada tentativa: sob set -euo pipefail um grep sem match derruba o
+    # script AQUI, sem mensagem, e os tiers de baixo viram código morto. É o
+    # mesmo perigo que o install_macos.sh já tratava (achado #2 do review da PR-46).
+    expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+    [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  fi
+  [ -n "$expected" ] || { info "sha512 não encontrado p/ $base — pulei a verificação"; return 0; }
   if command -v openssl >/dev/null 2>&1; then
     actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | base64 | tr -d '\n')"
   elif command -v sha512sum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then

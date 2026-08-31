@@ -268,6 +268,44 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     });
   }
 
+  // Busca um recurso pequeno (o sidecar de checksum). Devolve:
+  //   string → corpo (pode ser vazio)
+  //   ''     → o recurso NÃO EXISTE (404): release antiga, sem sidecar
+  //   null   → não deu pra saber (timeout, TLS, rede, redirect demais)
+  // A distinção importa: aqui o sidecar é o ÚNICO controle de integridade antes
+  // de um script substituir o .app inteiro, sem ninguém olhando. Tratar uma
+  // falha de rede como "não existe" instalaria sem verificação nenhuma.
+  function buscarSidecar(url, saltos = 0) {
+    return new Promise((resolve) => {
+      if (saltos > 5) return resolve({ estado: 'falha', corpo: '' });
+      const https = require('https');
+      https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' }, timeout: 15000 }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume(); return resolve(buscarSidecar(res.headers.location, saltos + 1));
+        }
+        if (res.statusCode === 404) { res.resume(); return resolve({ estado: 'ausente', corpo: '' }); }
+        if (res.statusCode !== 200) { res.resume(); return resolve({ estado: 'falha', corpo: '' }); }
+        let d = ''; res.on('data', (c) => { d += c; });
+        // 200 com corpo VAZIO não é ausência: um proxy transparente ou uma borda
+        // de CDN respondendo 200 sem conteúdo desligaria o único controle que
+        // guarda a troca do .app. Volta como 'ok' e o corpo vazio reprova no
+        // formato — que é o desfecho certo.
+        res.on('end', () => resolve({ estado: 'ok', corpo: d.trim() }));
+      }).on('error', () => resolve({ estado: 'falha', corpo: '' }))
+        .on('timeout', function () { this.destroy(); resolve({ estado: 'falha', corpo: '' }); });
+    });
+  }
+
+  function sha512Base64(file) {
+    return new Promise((resolve, reject) => {
+      const h = require('crypto').createHash('sha512');
+      const st = fs.createReadStream(file);
+      st.on('data', (c) => h.update(c));
+      st.on('end', () => resolve(h.digest('base64')));
+      st.on('error', reject);
+    });
+  }
+
   // O bundle .app em execução, a partir do execPath (…/X.app/Contents/MacOS/bin).
   function bundleEmUso() {
     const m = (process.execPath || '').match(/^(.*\.app)\/Contents\//);
@@ -315,15 +353,65 @@ open "$DEST"
     const url = updateState.dmgUrl;
     if (!dest || !url) return;                   // sem alvo/asset: fica no manual
     _macBaixando = true;
+    let dmgTmp = null;                 // p/ o catch externo poder limpar
     try {
+      // Integridade: o mesmo sidecar <artefato>.sha512 que os instaladores de
+      // shell consomem. Este é o download que MAIS precisa dele — ninguém está
+      // olhando, e o resultado substitui o app inteiro.
+      //
+      // Buscado ANTES do .dmg: uma release cujo sidecar nunca confere faria o
+      // ciclo de 1h rebaixar ~100 MB indefinidamente se a checagem viesse depois.
+      const busca = await buscarSidecar(`${url}.sha512`);
+      const RECUSAS = {
+        indisponivel: 'ntf_update_checksum_indisponivel',
+        malformado:   'ntf_update_checksum_malformado',
+        divergente:   'ntf_update_checksum_divergente',
+      };
+      // Pré-validação: só o sidecar, sem comparar hash nenhum — o .dmg ainda
+      // não existe. 'pendente' significa "sidecar bom, compare depois".
+      const pre = validarSidecar(busca);
+      if (pre !== 'pendente' && pre !== 'sem-sidecar') {
+        setUpdateState({ status: 'error', error: T(RECUSAS[pre]) });
+        return;                                     // nem baixa
+      }
+      let veredito = pre;
+
       const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
+      dmgTmp = dmg;
       setUpdateState({ status: 'downloading', progress: 0, error: null });
-      await baixarArquivo(url, dmg);
+      try {
+        await baixarArquivo(url, dmg);
+        if (pre === 'pendente') {
+          // Agora sim há o que comparar. Sem esta linha o veredito ficaria
+          // 'pendente' e cairia no `if (RECUSAS[veredito])` como indefinido,
+          // instalando sem verificar.
+          veredito = decidirIntegridade(busca, await sha512Base64(dmg));
+        }
+      } catch (e) {
+        try { fs.unlinkSync(dmg); } catch {}       // não deixa 100 MB no temp
+        throw e;
+      }
+      // 'pendente' aqui seria um bug: significa que o hash nunca foi comparado.
+      // Falha fechado — o alvo deste download é substituir o app inteiro.
+      if (veredito === 'pendente') {
+        try { fs.unlinkSync(dmg); } catch {}
+        setUpdateState({ status: 'error', error: T(RECUSAS.indisponivel) });
+        return;
+      }
+      if (RECUSAS[veredito]) {
+        try { fs.unlinkSync(dmg); } catch {}
+        setUpdateState({ status: 'error', error: T(RECUSAS[veredito]) });
+        return;
+      }
+
       const sh = path.join(app.getPath('temp'), `atl-swap-${Date.now()}.sh`);
       fs.writeFileSync(sh, SCRIPT_TROCA, { mode: 0o755 });
       _macStaged = { dmg, sh, dest };
       setUpdateState({ status: 'ready', progress: 100 });
     } catch (e) {
+      // Qualquer falha depois do download (escrita do script de troca, hash
+      // ilegível) não pode deixar ~100 MB no temp — e o ciclo de 1h repetiria.
+      try { if (dmgTmp) fs.unlinkSync(dmgTmp); } catch {}
       setUpdateState({ status: 'error', error: String((e && e.message) || e) });
     } finally {
       _macBaixando = false;
@@ -389,6 +477,42 @@ open "$DEST"
 // errar aqui instala o binário da arquitetura errada — e um Mac Intel rodando um
 // bundle arm64 (ou vice-versa) não abre. Preferência: nome com a arquitetura
 // exata; senão um nome sem marca nenhuma (build universal); senão nada.
+// Decide o que fazer com o sidecar antes de encenar a troca do bundle. PURA e
+// exportada porque é o ÚNICO controle de integridade do auto-update do macOS —
+// não há electron-updater neste caminho, e o build não emite mais latest-mac.yml.
+//   busca: { estado: 'ok'|'ausente'|'falha', corpo }  ·  obtido: hash do arquivo
+// Devolve: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
+// validarSidecar julga SÓ o sidecar: chegou? tem forma de sha512 base64?
+// Não compara com nada — a comparação exige o arquivo baixado, que nesta
+// altura ainda não existe.
+//
+// A separação existe porque juntá-las quebrou o auto-update inteiro: a
+// pré-validação chamava decidirIntegridade(busca, null), e o último `return`
+// comparava `b.corpo === null`, dando 'divergente' para TODO sidecar válido.
+// O guard abortava antes do download, e o único veredito que passava era
+// 'sem-sidecar' — ou seja, a checagem de integridade permitia exclusivamente
+// o caminho SEM integridade. Os 314 testes passavam porque exercitavam
+// decidirIntegridade isolada, nunca o fluxo de baixarUpdateMac.
+//
+// 'pendente' nomeia o estado que faltava: sidecar íntegro, veredito ainda
+// impossível. Quem recebe 'pendente' tem obrigação de comparar depois.
+function validarSidecar(busca) {
+  const b = busca || {};
+  if (b.estado === 'ausente') return 'sem-sidecar';   // release antiga, sem sidecar
+  if (b.estado !== 'ok') return 'indisponivel';       // rede/TLS/5xx: não dá pra saber
+  if (!/^[A-Za-z0-9+/]{86}==$/.test(b.corpo || '')) return 'malformado';
+  return 'pendente';                                  // íntegro; falta o hash do arquivo
+}
+
+// decidirIntegridade e o veredito FINAL: exige o hash do arquivo ja baixado.
+// Chamar com `obtido` nulo e erro de uso — para a etapa anterior ao download
+// existe validarSidecar.
+function decidirIntegridade(busca, obtido) {
+  const pre = validarSidecar(busca);
+  if (pre !== 'pendente') return pre;
+  return busca.corpo === obtido ? 'ok' : 'divergente';
+}
+
 function pickMacDmg(assets, arch) {
   if (!Array.isArray(assets)) return null;
   const alvo = arch === 'arm64' ? 'arm64' : 'x64';
@@ -398,4 +522,4 @@ function pickMacDmg(assets, arch) {
   return dmgs.find((a) => !/arm64|x64/i.test(a.name)) || null;
 }
 
-module.exports = { setupUpdateIpc, pickMacDmg };
+module.exports = { setupUpdateIpc, pickMacDmg, decidirIntegridade, validarSidecar };
