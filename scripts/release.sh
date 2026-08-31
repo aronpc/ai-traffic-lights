@@ -129,6 +129,43 @@ sha512_sidecar() {
   printf '%s' "$out"
 }
 
+# sidecars_ou_morra gera o sidecar de cada artefato e ABORTA se qualquer um
+# falhar, ecoando os caminhos gerados.
+#
+# Antes, os três fluxos faziam `sha512_sidecar "$x" && extras+=(...)`: qualquer
+# falha (sem openssl, saída != 88 chars, `mv` negado, pipeline quebrado)
+# publicava a release SEM checksum, em silêncio. Do outro lado, um 404 no
+# sidecar é lido pelos instaladores como "release antiga" e instala sem
+# verificar — então falhar aberto aqui desliga o controle inteiro lá.
+#
+# O condicional existia por uma razão real: passar o caminho incondicionalmente
+# fazia o `gh` abortar com "no matches found" DEPOIS do build inteiro. A saída
+# não é aceitar release sem checksum — é gerar e validar ANTES de criar
+# tag/release, que é o que os chamadores passam a fazer.
+# Preenche o array GLOBAL SIDECARS em vez de ecoar os caminhos.
+#
+# Ecoar e capturar com `mapfile -t x < <(sidecars_ou_morra ...)` parece mais
+# limpo e é uma armadilha: process substitution roda em SUBSHELL, então o `die`
+# mata só o subshell. O script segue, `extras` fica vazio, e a release sai sem
+# checksum — precisamente o fail-open que esta função existe para eliminar.
+# Verificado em bash 5.x: o script continua e termina com exit 0.
+#
+# `local -n`/nameref evitaria o global, mas exige bash 4.3+; o array global é
+# o que funciona em todo lugar onde este script roda.
+SIDECARS=()
+sidecars_ou_morra() {
+  SIDECARS=()
+  local f
+  for f in "$@"; do
+    sha512_sidecar "$f" >/dev/null \
+      || die "não consegui gerar o sidecar .sha512 de $(basename "$f").
+   Publicar sem checksum faria todo instalador tratar a release como 'antiga'
+   e instalar sem verificação nenhuma. Abortando antes de criar a release."
+    [ -s "$f.sha512" ] || die "sidecar de $(basename "$f") ficou vazio — abortando."
+    SIDECARS+=("$f.sha512")
+  done
+}
+
 guard_tree() {
   if [ -n "$(git status --porcelain)" ]; then
     git status --short
@@ -259,10 +296,13 @@ release_beta() {
   } > "$notes"
 
   confirm "publicar $tag como PRE-RELEASE em $REPO?"
-  # O sidecar entra na lista SÓ se existir: passá-lo incondicionalmente fazia o
-  # `gh` abortar com "no matches found" depois do build inteiro.
+  # Sidecars ANTES do `gh release create`: se o checksum não sai, nada é
+  # publicado — em vez de publicar um artefato que ninguém consegue verificar.
   local extras=()
-  if [ "$DRY" = 0 ] && sha512_sidecar "$appimage" >/dev/null; then extras+=("$appimage.sha512"); fi
+  if [ "$DRY" = 0 ]; then
+    sidecars_ou_morra "$appimage"
+    extras=("${SIDECARS[@]}")
+  fi
   run gh release create "$tag" \
     --repo "$REPO" \
     --prerelease \
@@ -370,15 +410,20 @@ release_promote() {
   fi
 
   confirm "publicar $tag como release ESTÁVEL (vira o Latest de todo mundo)?"
+
+  # Sidecars ANTES da tag, e não depois. A ordem importa: `git push origin
+  # "$tag"` é irreversível na prática (o mundo já pode ter buscado a tag), e
+  # gerá-los depois deixava a janela em que a tag existe e o checksum não.
+  local extras=()
+  if [ "$DRY" = 0 ]; then
+    sidecars_ou_morra "$appimage" "$deb"
+    extras=("${SIDECARS[@]}")
+  fi
+
   if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     run git tag -a "$tag" -m "$tag"
   fi
   run git push origin "$tag"
-  local extras=()
-  if [ "$DRY" = 0 ]; then
-    sha512_sidecar "$appimage" >/dev/null && extras+=("$appimage.sha512")
-    sha512_sidecar "$deb"      >/dev/null && extras+=("$deb.sha512")
-  fi
   run gh release create "$tag" \
     --repo "$REPO" \
     --target "$SHA" \
@@ -446,8 +491,14 @@ release_upload_mac() {
   fi
 
   info "enviando artefatos macOS para $tag..."
+  # Este é o artefato que o auto-update do macOS baixa sozinho e usa para
+  # substituir o app inteiro. Sem sidecar, `validarSidecar` devolve
+  # 'sem-sidecar' e o update instala SEM comparar hash nenhum.
   local extras=()
-  if [ "$DRY" = 0 ] && sha512_sidecar "$dmg" >/dev/null; then extras+=("$dmg.sha512"); fi
+  if [ "$DRY" = 0 ]; then
+    sidecars_ou_morra "$dmg"
+    extras=("${SIDECARS[@]}")
+  fi
   run gh release upload "$tag" \
     --repo "$REPO" \
     --clobber \
