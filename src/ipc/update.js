@@ -367,23 +367,36 @@ open "$DEST"
         malformado:   'ntf_update_checksum_malformado',
         divergente:   'ntf_update_checksum_divergente',
       };
-      let veredito = decidirIntegridade(busca, null);
-      if (veredito !== 'ok' && veredito !== 'sem-sidecar') {
-        setUpdateState({ status: 'error', error: T(RECUSAS[veredito]) });
+      // Pré-validação: só o sidecar, sem comparar hash nenhum — o .dmg ainda
+      // não existe. 'pendente' significa "sidecar bom, compare depois".
+      const pre = validarSidecar(busca);
+      if (pre !== 'pendente' && pre !== 'sem-sidecar') {
+        setUpdateState({ status: 'error', error: T(RECUSAS[pre]) });
         return;                                     // nem baixa
       }
+      let veredito = pre;
 
       const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
       dmgTmp = dmg;
       setUpdateState({ status: 'downloading', progress: 0, error: null });
       try {
         await baixarArquivo(url, dmg);
-        if (veredito !== 'sem-sidecar') {
+        if (pre === 'pendente') {
+          // Agora sim há o que comparar. Sem esta linha o veredito ficaria
+          // 'pendente' e cairia no `if (RECUSAS[veredito])` como indefinido,
+          // instalando sem verificar.
           veredito = decidirIntegridade(busca, await sha512Base64(dmg));
         }
       } catch (e) {
         try { fs.unlinkSync(dmg); } catch {}       // não deixa 100 MB no temp
         throw e;
+      }
+      // 'pendente' aqui seria um bug: significa que o hash nunca foi comparado.
+      // Falha fechado — o alvo deste download é substituir o app inteiro.
+      if (veredito === 'pendente') {
+        try { fs.unlinkSync(dmg); } catch {}
+        setUpdateState({ status: 'error', error: T(RECUSAS.indisponivel) });
+        return;
       }
       if (RECUSAS[veredito]) {
         try { fs.unlinkSync(dmg); } catch {}
@@ -469,12 +482,35 @@ open "$DEST"
 // não há electron-updater neste caminho, e o build não emite mais latest-mac.yml.
 //   busca: { estado: 'ok'|'ausente'|'falha', corpo }  ·  obtido: hash do arquivo
 // Devolve: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
-function decidirIntegridade(busca, obtido) {
+// validarSidecar julga SÓ o sidecar: chegou? tem forma de sha512 base64?
+// Não compara com nada — a comparação exige o arquivo baixado, que nesta
+// altura ainda não existe.
+//
+// A separação existe porque juntá-las quebrou o auto-update inteiro: a
+// pré-validação chamava decidirIntegridade(busca, null), e o último `return`
+// comparava `b.corpo === null`, dando 'divergente' para TODO sidecar válido.
+// O guard abortava antes do download, e o único veredito que passava era
+// 'sem-sidecar' — ou seja, a checagem de integridade permitia exclusivamente
+// o caminho SEM integridade. Os 314 testes passavam porque exercitavam
+// decidirIntegridade isolada, nunca o fluxo de baixarUpdateMac.
+//
+// 'pendente' nomeia o estado que faltava: sidecar íntegro, veredito ainda
+// impossível. Quem recebe 'pendente' tem obrigação de comparar depois.
+function validarSidecar(busca) {
   const b = busca || {};
   if (b.estado === 'ausente') return 'sem-sidecar';   // release antiga, sem sidecar
   if (b.estado !== 'ok') return 'indisponivel';       // rede/TLS/5xx: não dá pra saber
   if (!/^[A-Za-z0-9+/]{86}==$/.test(b.corpo || '')) return 'malformado';
-  return b.corpo === obtido ? 'ok' : 'divergente';
+  return 'pendente';                                  // íntegro; falta o hash do arquivo
+}
+
+// decidirIntegridade e o veredito FINAL: exige o hash do arquivo ja baixado.
+// Chamar com `obtido` nulo e erro de uso — para a etapa anterior ao download
+// existe validarSidecar.
+function decidirIntegridade(busca, obtido) {
+  const pre = validarSidecar(busca);
+  if (pre !== 'pendente') return pre;
+  return busca.corpo === obtido ? 'ok' : 'divergente';
 }
 
 function pickMacDmg(assets, arch) {
@@ -486,4 +522,4 @@ function pickMacDmg(assets, arch) {
   return dmgs.find((a) => !/arm64|x64/i.test(a.name)) || null;
 }
 
-module.exports = { setupUpdateIpc, pickMacDmg, decidirIntegridade };
+module.exports = { setupUpdateIpc, pickMacDmg, decidirIntegridade, validarSidecar };

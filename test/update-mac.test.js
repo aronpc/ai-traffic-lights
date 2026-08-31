@@ -3,7 +3,7 @@
 // .app arm64 e vice-versa —, então a seleção precisa ser explícita e testada.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { pickMacDmg, decidirIntegridade } = require('../src/ipc/update.js');
+const { pickMacDmg, decidirIntegridade, validarSidecar } = require('../src/ipc/update.js');
 
 const dmg = (name) => ({ name, browser_download_url: `https://x/${name}` });
 
@@ -79,5 +79,64 @@ test('decidirIntegridade: 200 com corpo VAZIO não é ausência — reprova', ()
 test('decidirIntegridade: corpo fora do formato → recusa (portal cativo, truncado)', () => {
   for (const lixo of ['truncado', '<html>502</html>', 'A'.repeat(87) + '==', HASH + 'x']) {
     assert.equal(decidirIntegridade(achou(lixo), HASH), 'malformado', `aceitou: ${lixo.slice(0, 20)}`);
+  }
+});
+
+// ---- o FLUXO, não só a unidade (achado do 4º review) ----
+// Os testes acima passavam com o auto-update do macOS 100% quebrado: a
+// pré-validação chamava decidirIntegridade(busca, null) e todo sidecar válido
+// virava 'divergente', abortando antes do download. Testar a função isolada
+// não pega isso — o defeito estava na COMPOSIÇÃO das duas etapas.
+//
+// Estes testes simulam o encadeamento de baixarUpdateMac sem Electron:
+// validarSidecar (antes do download) → decidirIntegridade (depois).
+
+// Réplica exata dos dois guards de baixarUpdateMac. Se eles mudarem lá e não
+// aqui, o teste deixa de valer — por isso o nome cita a função e a linha.
+function fluxoUpdateMac(busca, hashDoArquivoBaixado) {
+  const pre = validarSidecar(busca);
+  if (pre !== 'pendente' && pre !== 'sem-sidecar') return { baixou: false, veredito: pre };
+
+  let veredito = pre;                       // download acontece aqui
+  if (pre === 'pendente') veredito = decidirIntegridade(busca, hashDoArquivoBaixado);
+  if (veredito === 'pendente') return { baixou: true, veredito: 'indisponivel' };
+  return { baixou: true, veredito };
+}
+
+test('fluxo: sidecar válido + arquivo íntegro → BAIXA e instala', () => {
+  const r = fluxoUpdateMac(achou(HASH), HASH);
+  assert.equal(r.baixou, true, 'abortou antes do download com sidecar válido');
+  assert.equal(r.veredito, 'ok');
+});
+
+test('fluxo: sidecar válido + arquivo adulterado → baixa e RECUSA', () => {
+  const r = fluxoUpdateMac(achou(HASH), 'B'.repeat(86) + '==');
+  assert.equal(r.baixou, true);
+  assert.equal(r.veredito, 'divergente');
+});
+
+test('fluxo: sidecar malformado NÃO chega a baixar 100 MB', () => {
+  const r = fluxoUpdateMac(achou('<html>502</html>'), HASH);
+  assert.equal(r.baixou, false, 'baixou o dmg mesmo com sidecar malformado');
+  assert.equal(r.veredito, 'malformado');
+});
+
+test('fluxo: falha de rede no sidecar NÃO chega a baixar', () => {
+  const r = fluxoUpdateMac({ estado: 'falha', corpo: '' }, HASH);
+  assert.equal(r.baixou, false);
+  assert.equal(r.veredito, 'indisponivel');
+});
+
+test('fluxo: release antiga sem sidecar baixa e instala sem comparar', () => {
+  const r = fluxoUpdateMac({ estado: 'ausente', corpo: '' }, HASH);
+  assert.equal(r.baixou, true);
+  assert.equal(r.veredito, 'sem-sidecar');
+});
+
+test('fluxo: nenhum veredito "pendente" escapa para a instalação', () => {
+  // 'pendente' chegando ao fim significaria hash nunca comparado. O guard de
+  // baixarUpdateMac falha fechado; este teste garante que continue assim.
+  for (const caso of [achou(HASH), achou(''), { estado: 'falha', corpo: '' }, { estado: 'ausente', corpo: '' }]) {
+    assert.notEqual(fluxoUpdateMac(caso, HASH).veredito, 'pendente');
   }
 });
