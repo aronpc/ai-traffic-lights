@@ -3,7 +3,7 @@
 // envia sessões ao renderer, auto-redimensiona a altura pelo nº de linhas,
 // e persiste largura + posição entre reinícios.
 
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell, dialog } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeImage, globalShortcut, shell, dialog, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -794,6 +794,14 @@ ipcMain.on('mark-read', (_e, { key, readAt, origin } = {}) => {
       }).catch(() => {});   // fire-and-forget: falha não perde nada (o estado local já está persistido)
     }
   }
+});
+
+// Menu de contexto da linha (renderer): copiar chave/cwd/comando de attach.
+// 'send' (não invoke): o renderer não espera resposta. Valida tipo e tamanho —
+// clipboard é um recurso global, o renderer nunca deve estourá-lo com lixo.
+ipcMain.on('copy-text', (_e, text) => {
+  if (typeof text !== 'string' || !text || text.length > 4096) return;
+  clipboard.writeText(text);
 });
 
 // Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair

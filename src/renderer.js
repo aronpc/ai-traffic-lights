@@ -181,6 +181,76 @@ function applyStaticI18n() {
   for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.setAttribute('placeholder', T(el.dataset.i18nPlaceholder));
 }
 
+// ---- menu de contexto da linha (botão direito) ----
+// Menu próprio em HTML (irmão da lista: sobrevive ao re-render de 2s); a
+// sessão-alvo fica capturada na closure dos itens. Cópia via IPC copy-text
+// (o main valida o tamanho antes de escrever no clipboard).
+const $ctx = document.getElementById('ctxMenu');
+let ctxBindings = null;                     // listeners globais do menu aberto
+function closeCtx() {
+  if (ctxBindings) {
+    window.removeEventListener('mousedown', ctxBindings.onDown, true);
+    window.removeEventListener('keydown', ctxBindings.onKey, true);
+    window.removeEventListener('blur', ctxBindings.onBlur);
+    ctxBindings = null;
+  }
+  if (!$ctx) return;
+  $ctx.hidden = true;
+  $ctx.textContent = '';                    // solta as closures da sessão-alvo
+}
+function ctxItem(label, fn) {
+  const it = document.createElement('div');
+  it.className = 'ctx__item';
+  it.textContent = label;
+  it.addEventListener('click', (e) => { e.stopPropagation(); closeCtx(); fn(); });
+  return it;
+}
+function openCtx(s, st, labelEl, ev) {
+  if (!$ctx) return;
+  closeCtx();
+  const isLcl = isLocal(s);
+  const key = sessionKey(s);
+  const copy = (t) => { if (window.trafficLight.copyText) window.trafficLight.copyText(String(t || '')); };
+
+  $ctx.append(ctxItem(T('ctx_copy_key'), () => copy(key)));
+  if (s.cwd) $ctx.append(ctxItem(T('ctx_copy_cwd'), () => copy(s.cwd)));
+  // attach: o comando só roda na MÁQUINA onde o tmux existe — remota não tem
+  if (isLcl && s.tmux_session) $ctx.append(ctxItem(T('ctx_copy_attach'), () => copy('tmux attach -t ' + s.tmux_session)));
+
+  const canRename = isLcl && aliasKey(s);          // rename é local-only (startRename rejeita remota)
+  const canMark = (!settingsCfg || settingsCfg.markReadOnClick !== false) && st.level === 'awaiting';
+  if (canRename || canMark) {
+    const sep = document.createElement('div');
+    sep.className = 'ctx__sep';
+    $ctx.append(sep);
+  }
+  if (canRename) $ctx.append(ctxItem(T('ctx_rename'), () => startRename(s, labelEl)));
+  if (canMark) $ctx.append(ctxItem(T('ctx_mark_read'), () => {
+    const at = s.last_event_ts || Math.floor(Date.now() / 1000);
+    readMarks.set(key, at);
+    if (window.trafficLight.markRead) window.trafficLight.markRead(key, at, originOf(s));
+    render();
+  }));
+
+  // posiciona no cursor, preso dentro da janela (clamp)
+  $ctx.hidden = false;
+  const mw = $ctx.offsetWidth || 170, mh = $ctx.offsetHeight || 100;
+  let x = ev.clientX + 2, y = ev.clientY + 2;
+  if (x + mw > window.innerWidth - 6) x = Math.max(6, window.innerWidth - mw - 6);
+  if (y + mh > window.innerHeight - 6) y = Math.max(6, window.innerHeight - mh - 6);
+  $ctx.style.left = x + 'px';
+  $ctx.style.top = y + 'px';
+
+  // fecha: mousedown fora (capture — antes dos handlers da linha), Esc, blur
+  const onDown = (e) => { if (!$ctx.contains(e.target)) closeCtx(); };
+  const onKey = (e) => { if (e.key === 'Escape') closeCtx(); };
+  const onBlur = () => closeCtx();
+  window.addEventListener('mousedown', onDown, true);
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('blur', onBlur);
+  ctxBindings = { onDown, onKey, onBlur };
+}
+
 // ---- rename in-place ----
 // Enquanto o input está aberto, `renaming` suspende render() — senão o
 // replaceChildren() de um tick de idle (2s) ou de um evento de sessão
@@ -391,6 +461,13 @@ function render() {
         else if (s.tmux_session) openEmbedded(s);
         else openTranscriptPanel(s);
       }, 220);
+    });
+
+    // Botão direito → menu de contexto (copiar chave/cwd/attach, renomear,
+    // marcar como lida). preventDefault segura o menu nativo do Chromium.
+    li.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openCtx(s, st, labelEl, e);
     });
 
     // Colunas fixas (alinham entre linhas): [led] [motivo] [LLM] [nome…] [texto] [sino]

@@ -600,3 +600,39 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .tt { transition: opacity 0.1s linear; transform: none !important; }
 }
+
+/* ---------- menu de contexto da linha ----------
+   Menu próprio em HTML, não o popup nativo do Electron: em janela frameless
+   (X11/Wayland) o Menu.buildTemplate não recebe os cliques de forma
+   confiável. Irmão da lista — o replaceChildren() do re-render de 2s não o
+   destrói; a sessão-alvo vive na closure dos handlers dos itens. Mesma
+   linguagem visual do tooltip (.tt): painel escuro, borda bright, sombra. */
+.ctx {
+  position: absolute;
+  left: 0; top: 0;
+  z-index: 999;
+  min-width: 170px;
+  max-width: 280px;
+  padding: 4px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(38, 43, 54, 0.98), rgba(24, 28, 36, 0.98));
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+  -webkit-app-region: no-drag;          /* clicar num item não arrasta a janela */
+}
+.ctx__item {
+  display: block;
+  padding: 5px 9px;
+  border-radius: 5px;
+  color: var(--ink);
+  font-size: 12px; font-weight: 500; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: default;
+  user-select: none;
+}
+.ctx__item:hover { background: rgba(255, 255, 255, 0.08); }
+.ctx__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

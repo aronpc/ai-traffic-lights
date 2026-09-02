@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   // que persiste e — se a sessão é de um PEER — posta a marca na origem (chave
   // reescrita no namespace dela) p/ propagar a TODOS os peers via /sessions.
   markRead: (key, readAt, origin) => ipcRenderer.send('mark-read', { key, readAt, origin }),
+  copyText: (text) => ipcRenderer.send('copy-text', text), // menu de contexto da linha → clipboard (main valida o tamanho)
   onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
   onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
   onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente
