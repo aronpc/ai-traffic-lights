@@ -212,7 +212,10 @@ function openCtx(s, st, labelEl, ev) {
   const key = sessionKey(s);
   const copy = (t) => { if (window.trafficLight.copyText) window.trafficLight.copyText(String(t || '')); };
 
-  $ctx.append(ctxItem(T('ctx_copy_key'), () => copy(key)));
+  // Copiar o SESSION_ID do agente (UUID que o `claude --resume` aceita), não a
+  // chave interna do ATL (origin:pid) — esta só serve p/ marca de lida/snooze.
+  // aliasKey prefere session_id; procs headless caem no `proc-<pid>`.
+  $ctx.append(ctxItem(T('ctx_copy_key'), () => copy(aliasKey(s))));
   if (s.cwd) $ctx.append(ctxItem(T('ctx_copy_cwd'), () => copy(s.cwd)));
   // attach: o comando só roda na MÁQUINA onde o tmux existe — remota não tem
   if (isLcl && s.tmux_session) $ctx.append(ctxItem(T('ctx_copy_attach'), () => copy('tmux attach -t ' + s.tmux_session)));

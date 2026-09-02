@@ -106,7 +106,7 @@ test('botão direito na linha local com tmux → itens pt e divisor', async () =
   pushSessions([mkSess('api', null, { tmux_session: 'atl-api' })]);
   rightClick(0);
   assert.equal(els.ctxMenu.hidden, false, 'menu visível');
-  assert.ok(itemByText('Copiar chave da sessão'), 'item copiar chave');
+  assert.ok(itemByText('Copiar ID da sessão'), 'item copiar session_id');
   assert.ok(itemByText('Copiar pasta (cwd)'), 'item copiar cwd');
   assert.ok(itemByText('Copiar comando de attach'), 'item attach (local com tmux)');
   assert.ok(itemByText('Renomear…'), 'item renomear (sessão local)');
@@ -119,9 +119,10 @@ test('clicar em Copiar chave → copyText com a key e o menu fecha', async () =>
   const { pushSessions, rightClick, itemByText, els, calls } = await setup();
   pushSessions([mkSess('api')]);
   rightClick(0);
-  itemByText('Copiar chave da sessão').dispatch('click', { stopPropagation() {} });
-  // sessionKey prefere pid (identity.js:25): 'api' → pid 1003
-  assert.deepEqual(calls.copy, ['local:1003'], 'copiou a chave da sessão');
+  itemByText('Copiar ID da sessão').dispatch('click', { stopPropagation() {} });
+  // copia o SESSION_ID do agente (aliasKey prefere session_id), não a chave
+  // interna do ATL (origin:pid) — o UUID é o que o `claude --resume` aceita
+  assert.deepEqual(calls.copy, ['api'], 'copiou o session_id do Claude');
   assert.equal(els.ctxMenu.hidden, true, 'menu fechou após o clique');
   assert.equal(els.ctxMenu.textContent, '', 'closures da sessão soltas');
 });
@@ -130,7 +131,7 @@ test('sessão remota: sem Renomear e sem attach (mesmo com tmux)', async () => {
   const { pushSessions, rightClick, itemByText } = await setup();
   pushSessions([mkSess('rmt', 'alienware', { tmux_session: 'atl-rmt' })]);
   rightClick(0);
-  assert.ok(itemByText('Copiar chave da sessão'), 'copiar chave existe');
+  assert.ok(itemByText('Copiar ID da sessão'), 'copiar session_id existe');
   assert.ok(!itemByText('Copiar comando de attach'), 'attach é local-only');
   assert.ok(!itemByText('Renomear…'), 'rename é local-only');
 });
