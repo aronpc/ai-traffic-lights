@@ -1383,6 +1383,38 @@ test('mergeUsage: 2 contas legítimas (sfx distintos) continuam 2 barras', () =>
   assert.equal(t.filter((e) => String(e.id).startsWith('claude-5h')).length, 2, 'multi legítimo intacto');
 });
 
+// Migração de chave (#58→#60): a identidade da conta mudou de accountUuid p/
+// organizationUuid — o sfx mudou junto (ffdc8e→39e493), mas a CONTA é a mesma.
+// Sem a regra multi→multi, o prev com sfx antigo coexistia com o fresh por
+// DROP_MS: a mesma barra Artemis duplicada no overlay (bug a campo 2026-09-02).
+test('mergeUsage: multi→multi com OUTRO sfx na base (key velha da mesma conta) mata o prev', () => {
+  // 5h e 7d são janelas distintas: resetAt diferente (senão o dedup de
+  // conteúdo colapsa as duas — mesma conta, mesmo reset = mesma linha).
+  const W7D = { resetAt: new Date(NOW + 7 * 24 * 3600e3).toISOString(), resetInMin: 7 * 24 * 60 };
+  const t1 = mergeUsage([], [
+    { ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e', account: 'Newfold Digital Artemis' },
+    { ...CLAUDE_5H, ...W7D, id: 'claude-7d:ffdc8e', accountId: 'ffdc8e', account: 'Newfold Digital Artemis' },
+  ], NOW);
+  const t2 = mergeUsage(t1, [
+    { ...CLAUDE_5H, id: 'claude-5h:39e493', accountId: '39e493', account: 'Newfold Digital Artemis' },
+    { ...CLAUDE_5H, ...W7D, id: 'claude-7d:39e493', accountId: '39e493', account: 'Newfold Digital Artemis' },
+    { ...CLAUDE_5H, id: 'claude-5h:e505bc', accountId: 'e505bc', account: 'Newfold Digital Orion' },
+  ], NOW + 30_000);
+  const artemis = t2.filter((e) => e.account === 'Newfold Digital Artemis');
+  assert.equal(artemis.length, 2, 'só as linhas da key nova (5h+7d), sem fantasma da velha');
+  assert.ok(artemis.every((e) => String(e.id).endsWith(':39e493')), 'todas com o sfx novo');
+  assert.equal(t2.filter((e) => String(e.id) === 'claude-5h:e505bc').length, 1, 'Orion intacta');
+});
+
+// Contra-prova da regra acima: prev com sfx que CONTINUA no fresh sobrevive
+// normal (fresh ruim não zera o valor bom guardado do mesmo id).
+test('mergeUsage: multi→multi com o MESMO sfx segue o fluxo anti-zeragem', () => {
+  const t1 = mergeUsage([], [{ ...CLAUDE_5H, id: 'claude-5h:39e493', accountId: '39e493' }], NOW);
+  const t2 = mergeUsage(t1, [{ ...CLAUDE_5H, id: 'claude-5h:39e493', accountId: '39e493', usedPct: null, error: '429' }], NOW + 30_000);
+  assert.equal(t2.length, 1, 'mesma família: prev bom segura o valor');
+  assert.equal(t2[0].usedPct, CLAUDE_5H.usedPct, 'valor do prev preservado');
+});
+
 test('mergeUsage: sufixo acumulado do legado (a:sfx:sfx) colapsa e funde com o fresh', () => {
   const legacy = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e:ffdc8e', accountId: 'ffdc8e' }];
   const fresh = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e' }];

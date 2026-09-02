@@ -1061,18 +1061,29 @@ function mergeUsage(prev, fresh, now) {
   // 2ª conta abre/fecha, rename re-coleta na hora), as duas famílias
   // coexistiriam por DROP_MS — a MESMA conta em 2 barras. O fresh é a verdade
   // do momento: a família que ele não traz morre na hora.
-  const freshBases = new Set();     // 'claude-5h' vindo de 'claude-5h:ffdc8e'
+  const freshSfxByBase = new Map(); // 'claude-5h' → Set dos sufixos vindos
   const freshCanonical = new Set(); // 'claude-5h' vindo exato (sem sufixo)
   for (const f of freshList) {
     if (!f || !f.id) continue;
     const i = f.id.indexOf(':');
-    if (i > 0) freshBases.add(f.id.slice(0, i));
-    else freshCanonical.add(f.id);
+    if (i > 0) {
+      const base = f.id.slice(0, i);
+      if (!freshSfxByBase.has(base)) freshSfxByBase.set(base, new Set());
+      freshSfxByBase.get(base).add(f.id.slice(i + 1));
+    } else freshCanonical.add(f.id);
   }
   for (const id of [...prevById.keys()]) {
     const i = id.indexOf(':');
-    if (i > 0 && freshCanonical.has(id.slice(0, i))) prevById.delete(id); // multi→single
-    else if (i < 0 && freshBases.has(id)) prevById.delete(id);            // single→multi
+    if (i > 0) {
+      // multi→single: fresh canônico na base → prev sufixado morre.
+      // multi→multi: fresh traz a base com OUTROS sufixos → o sufixo é a
+      // identidade da conta; prev com sufixo fora do fresh é a key VELHA da
+      // mesma conta (migração de chave, ex. #58 accountUuid → #60 orgUuid:
+      // claude-5h:ffdc8e + claude-5h:39e493 duplicavam a barra Artemis) ou
+      // conta que fechou — nos dois casos o fresh é a verdade.
+      const sfxs = freshSfxByBase.get(id.slice(0, i));
+      if (freshCanonical.has(id.slice(0, i)) || (sfxs && !sfxs.has(id.slice(i + 1)))) prevById.delete(id);
+    } else if (freshSfxByBase.has(id)) prevById.delete(id); // single→multi
   }
 
   // Se a nova coleta traz o plano do Antigravity, limpa a cota esgotada do cache anterior.
