@@ -222,11 +222,11 @@ function openCtx(s, st, labelEl, ev) {
 
   const canRename = isLcl && aliasKey(s);          // rename é local-only (startRename rejeita remota)
   const canMark = (!settingsCfg || settingsCfg.markReadOnClick !== false) && st.level === 'awaiting';
-  if (canRename || canMark) {
-    const sep = document.createElement('div');
-    sep.className = 'ctx__sep';
-    $ctx.append(sep);
-  }
+  // Detalhes existe p/ qualquer sessão (local e remota) → o divisor é fixo
+  const sep = document.createElement('div');
+  sep.className = 'ctx__sep';
+  $ctx.append(sep);
+  $ctx.append(ctxItem(T('ctx_details'), () => openDetails(s)));
   if (canRename) $ctx.append(ctxItem(T('ctx_rename'), () => startRename(s, labelEl)));
   if (canMark) $ctx.append(ctxItem(T('ctx_mark_read'), () => {
     const at = s.last_event_ts || Math.floor(Date.now() / 1000);
@@ -252,6 +252,116 @@ function openCtx(s, st, labelEl, ev) {
   window.addEventListener('keydown', onKey, true);
   window.addEventListener('blur', onBlur);
   ctxBindings = { onDown, onKey, onBlur };
+}
+
+// ---- modal de detalhes da sessão ----
+// Snapshot dos dados crus que o hook grava (hooks/traffic-hook.sh, schema
+// v2) + o que só existe no receptor (origin, marca de lida). Painel único
+// reaproveitado (padrão $tsPanel), irmão da lista → sobrevive ao re-render;
+// os dados congelam na abertura (reabrir atualiza). Corpo montado com
+// createElement/append — texto selecionável e enxergável no vm de teste.
+let $dtPanel = null;
+let dtKeyHandler = null;
+function closeDetails() {
+  if (dtKeyHandler) {
+    window.removeEventListener('keydown', dtKeyHandler, true);
+    dtKeyHandler = null;
+  }
+  if ($dtPanel) $dtPanel.remove();
+}
+function dtSec(title) {
+  const h = document.createElement('div');
+  h.className = 'dt-sec';
+  h.textContent = title;
+  return h;
+}
+function dtRow(label, value, copyText) {
+  const row = document.createElement('div');
+  row.className = 'dt-row';
+  const k = document.createElement('span');
+  k.className = 'dt-k';
+  k.textContent = label;
+  const v = document.createElement('span');
+  v.className = 'dt-v';
+  v.textContent = value;
+  row.append(k, v);
+  if (copyText && window.trafficLight.copyText) {
+    const b = document.createElement('button');
+    b.className = 'dt-copy';
+    b.textContent = T('dt_copy');
+    b.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.copyText(copyText); });
+    row.append(b);
+  }
+  return row;
+}
+function openDetails(s) {
+  const $ov = document.getElementById('overlay');
+  if (!$ov) return;
+  if (!$dtPanel) {
+    $dtPanel = document.createElement('div');
+    $dtPanel.className = 'dt-panel';
+    $dtPanel.innerHTML = '<div class="dt-card"><div class="dt-head"><span class="dt-title"></span><button class="ts-close" aria-label="fechar">×</button></div><div class="dt-body"></div></div>';
+    $dtPanel.querySelector('.ts-close').addEventListener('click', closeDetails);
+    $dtPanel.addEventListener('contextmenu', (e) => e.preventDefault());  // dado é selecionável, menu nativo atrapalha
+  }
+  closeDetails();                                // solta o keydown de uma abertura anterior
+  $ov.appendChild($dtPanel);
+  $dtPanel.querySelector('.dt-title').textContent = labelFor(s);
+
+  const body = $dtPanel.querySelector('.dt-body');
+  body.replaceChildren();
+
+  // — Sessão —
+  body.append(dtSec(T('dt_session')));
+  const ag = AGENTS[agentOf(s)];
+  body.append(dtRow(T('dt_agent'), ag ? ag.label : agentOf(s)));
+  body.append(dtRow(T('dt_sid'), s.session_id || '—', s.session_id));
+  const alias = aliases[aliasKey(s)];
+  if (alias) body.append(dtRow(T('dt_alias'), alias));
+  if (s.model) body.append(dtRow(T('dt_model'), s.model));
+  if (s.pid) body.append(dtRow(T('dt_pid'), String(s.pid)));
+
+  // — Contexto — (windowid é LOCAL_ONLY: na remota o campo nem existe)
+  body.append(dtSec(T('dt_context')));
+  if (s.cwd) body.append(dtRow(T('dt_cwd'), s.cwd, s.cwd));
+  if (s.term_program && s.term_program !== 'terminal') body.append(dtRow(T('dt_term'), s.term_program));
+  if (s.tmux_session) body.append(dtRow(T('dt_tmux'), s.tmux_session));
+  body.append(dtRow(T('dt_origin'), s.origin || 'local'));
+  if (s.windowid) body.append(dtRow(T('dt_window'), String(s.windowid)));
+
+  // — Atividade —
+  body.append(dtSec(T('dt_activity')));
+  const age = ageText(Math.floor(Date.now() / 1000), s.last_event_ts);
+  body.append(dtRow(T('dt_last_event'), (s.last_event || '—') + (age ? ' · ' + age : '')));
+  if (s.last_tool) body.append(dtRow(T('dt_last_tool'), s.last_tool));
+  if (s.notification_type) body.append(dtRow(T('dt_notification'), s.notification_type));
+  const readAt = readMarks.get(sessionKey(s));
+  if (readAt) body.append(dtRow(T('dt_read_until'), new Date(readAt * 1000).toLocaleTimeString()));
+
+  // — Linha do tempo — events[] rolling de 50 do hook; recente primeiro
+  body.append(dtSec(T('dt_timeline')));
+  const evs = Array.isArray(s.events) ? [...s.events].reverse() : [];
+  if (!evs.length) {
+    const e = document.createElement('div');
+    e.className = 'dt-v';
+    e.textContent = T('dt_no_events');
+    body.append(e);
+  } else {
+    for (const ev of evs) {
+      const row = document.createElement('div');
+      row.className = 'dt-ev';
+      const t = document.createElement('time');
+      t.textContent = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '—';
+      const x = document.createElement('span');
+      x.textContent = ev.event + (ev.tool ? ' · ' + ev.tool : '');
+      row.append(t, x);
+      body.append(row);
+    }
+  }
+
+  const onKey = (e) => { if (e.key === 'Escape') closeDetails(); };
+  window.addEventListener('keydown', onKey, true);
+  dtKeyHandler = onKey;
 }
 
 // ---- rename in-place ----
