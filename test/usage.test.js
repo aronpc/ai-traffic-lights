@@ -1275,3 +1275,75 @@ test('mergeUsage: contas distintas, mesmo plano/janela → não colapsam', () =>
   const merged = mergeUsage([], [mk('sfxA', 'Alpha', 10), mk('sfxB', 'Beta', 20)], NOW);
   assert.equal(merged.length, 2, 'uma linha por conta, mesmo plano igual');
 });
+
+// =========================== #58: duplicação pós-rename (oscilação single↔multi) ===========================
+// Bug a campo: renomear a conta re-coleta na hora; se o nº de contas VIVAS
+// mudou entre ticks, os ids oscilam entre canônico (claude-5h) e sufixado
+// (claude-5h:<sfx>) e o merge por id mantinha AS DUAS famílias por DROP_MS —
+// a mesma conta em 2 barras. O fresh é a verdade: a família que ele não traz
+// morre na hora.
+
+test('mergeUsage: multi→single (claude-5h:sfx → claude-5h) não deixa a sufixada órfã', () => {
+  const t1 = mergeUsage([], [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e', account: 'HG' }], NOW);
+  assert.equal(t1.length, 1);
+  const t2 = mergeUsage(t1, [CLAUDE_5H], NOW + 30_000);   // 2ª conta fechou → id canônico
+  const fives = t2.filter((e) => String(e.id).startsWith('claude-5h'));
+  assert.equal(fives.length, 1, 'uma barra só');
+  assert.equal(fives[0].id, 'claude-5h', 'vence a família que o fresh traz');
+});
+
+test('mergeUsage: single→multi (claude-5h → claude-5h:sfx) também não duplica', () => {
+  const t1 = mergeUsage([], [CLAUDE_5H], NOW);
+  const t2 = mergeUsage(t1, [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e' }], NOW + 30_000);
+  const fives = t2.filter((e) => String(e.id).startsWith('claude-5h'));
+  assert.equal(fives.length, 1, 'o canônico do prev morre: virou multi');
+  assert.equal(fives[0].id, 'claude-5h:ffdc8e');
+});
+
+test('mergeUsage: 2 contas legítimas (sfx distintos) continuam 2 barras', () => {
+  const fresh = [
+    { ...CLAUDE_5H, id: 'claude-5h:aaaaaa', accountId: 'aaaaaa', account: 'Alpha' },
+    { ...CLAUDE_5H, id: 'claude-5h:bbbbbb', accountId: 'bbbbbb', account: 'Beta' },
+  ];
+  const t = mergeUsage([], fresh, NOW);
+  assert.equal(t.filter((e) => String(e.id).startsWith('claude-5h')).length, 2, 'multi legítimo intacto');
+});
+
+test('mergeUsage: sufixo acumulado do legado (a:sfx:sfx) colapsa e funde com o fresh', () => {
+  const legacy = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e:ffdc8e', accountId: 'ffdc8e' }];
+  const fresh = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e' }];
+  const t = mergeUsage(legacy, fresh, NOW);
+  const fives = t.filter((e) => String(e.id).startsWith('claude-5h'));
+  assert.equal(fives.length, 1, 'legado :sfx:sfx funde com o fresh :sfx (não fica órfão 20min)');
+  assert.equal(fives[0].id, 'claude-5h:ffdc8e');
+});
+
+// O bug da mutação: a sufixação in place alterava as entries VIVAS do cache por
+// token — a 2ª coleta dentro da validade devolvia ids já sufixados e sufixava
+// de novo (id ':sfx:sfx'). Pós-fix, cada rodada vê UM sufixo só e o cache não
+// é chamado de novo (0 fetches extras).
+test('collectUsage: 2 rodadas multi com cache quente → sufixo NÃO acumula', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const mkAcc = (uuid, tok) => {
+    const d = path.join(tmp, 'prof-' + uuid);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x', accountUuid: uuid } }));
+    // conta named: credentials DENTRO do dir (claude-config.credsFile), sem .claude/
+    fs.writeFileSync(path.join(d, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+    return d;
+  };
+  const dirA = mkAcc('uuid-A', 'tokA'), dirB = mkAcc('uuid-B', 'tokB');
+  const f = mockFetcher({ five_hour: { utilization: 22, resets_at: '2026-07-07T17:00:00Z' }, seven_day: { utilization: 30, resets_at: '2026-07-09T12:00:00Z' } });
+  const opts = { home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW, claudeFetcher: f };
+  const r1 = await collectUsage(opts);
+  assert.equal(f.calls.length, 2, '1 fetch por conta na 1ª rodada');
+  const r2 = await collectUsage({ ...opts, now: NOW + 10_000 });  // dentro da validade do cache
+  assert.equal(f.calls.length, 2, 'cache quente: 2ª rodada NÃO refaz o fetch');
+  assert.ok(r1.every((e) => String(e.id).split(':').length <= 2), '1ª rodada: 1 sufixo só');
+  const idA = 'claude-5h:' + claudeAccountSfx('uuid-A');
+  assert.ok(r2.some((e) => e.id === idA), '2ª rodada: id com UM sufixo, cache intocado');
+  assert.ok(r2.every((e) => String(e.id).split(':').length <= 2), 'sufixo não acumulou entre rodadas');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});

@@ -962,10 +962,11 @@ async function collectUsage(opts = {}) {
     const sfx = claudeAccountSfx(acc.uuid || acc.dir || 'default');
     const label = claudeAccountLabel(acc);
     for (const e of entries) {
-      e.id = e.id + ':' + sfx;
-      e.accountId = sfx;                 // endereço do rename (main mapeia sfx→uuid)
-      if (label) e.account = label;
-      out.push(e);
+      // Cópia obrigatória: `entries` pode ser O array vivo do cache por token
+      // (_claudeCacheByToken devolve por referência) — mutar e.id in place
+      // contaminava o cache e o sufixo acumulava a cada rodada (id
+      // 'claude-5h:<sfx>:<sfx>'). O spread isola a entry do cache (#58).
+      out.push({ ...e, id: e.id + ':' + sfx, accountId: sfx, ...(label ? { account: label } : {}) });
     }
   });
   if (Array.isArray(antigravity)) out.push(...antigravity);
@@ -981,9 +982,11 @@ async function collectUsage(opts = {}) {
     if (!Array.isArray(entries)) continue;
     if (multiCodex) {                          // rotula pela pasta do projeto
       const proj = cwd.split('/').filter(Boolean).pop() || cwd;
-      for (const e of entries) { e.plan = e.plan + ' · ' + proj; e.id = e.id + ':' + proj; }
+      // spread: mesma proteção do Claude — nunca mutar a saída do leitor (cache)
+      for (const e of entries) out.push({ ...e, plan: e.plan + ' · ' + proj, id: e.id + ':' + proj });
+    } else {
+      out.push(...entries);
     }
-    out.push(...entries);
   }
 
   for (const r of glm) if (Array.isArray(r)) out.push(...r);
@@ -1010,6 +1013,15 @@ function isSummaryEntry(e) {
   return id === 'claude-plan' || id.startsWith('claude-plan:') || id === 'antigravity-plan' || id === 'glm' || id.startsWith('glm:') || id === 'opencode' || id.startsWith('opencode:');
 }
 
+// Legado do bug da mutação in place do cache (sufixo acumulado 'a:sfx:sfx'):
+// colapsa segmentos consecutivos repetidos para o id fundir com o fresh
+// pós-fix em vez de virar órfão por DROP_MS. Idempotente.
+function collapseSuffixId(id) {
+  const parts = String(id).split(':');
+  for (let i = parts.length - 1; i > 0; i--) if (parts[i] === parts[i - 1]) parts.splice(i, 1);
+  return parts.join(':');
+}
+
 // Funde a coleta nova (fresh) com o estado anterior (prev), por `id`. Resolve o
 // bug de "os contadores zeram quando o dado não vem": em vez de substituir tudo,
 // mantém o ÚLTIMO valor bom de cada linha até chegar um novo. Regras por id:
@@ -1021,11 +1033,35 @@ function isSummaryEntry(e) {
 // prev que ainda não expiraram), cada item com fetchedAt e stale.
 function mergeUsage(prev, fresh, now) {
   const nowMs = now || Date.now();
+  // Normaliza o sufixo acumulado do legado (a:sfx:sfx → a:sfx) nas duas pontas.
+  const norm = (list) => (Array.isArray(list) ? list : [])
+    .map((e) => (e && e.id ? { ...e, id: collapseSuffixId(e.id) } : e));
+  const freshList = norm(fresh);
   const prevById = new Map();
-  for (const p of (Array.isArray(prev) ? prev : [])) if (p && p.id) prevById.set(p.id, p);
+  for (const p of norm(prev)) if (p && p.id) prevById.set(p.id, p);
+
+  // Oscilação single↔multi conta (#58): os ids de agente mudam conforme o
+  // número de contas VIVAS no instante da coleta (claude-5h ↔ claude-5h:<sfx>,
+  // glm-tokens ↔ glm-tokens:<sha>). Quando o modo muda entre ticks (sessão da
+  // 2ª conta abre/fecha, rename re-coleta na hora), as duas famílias
+  // coexistiriam por DROP_MS — a MESMA conta em 2 barras. O fresh é a verdade
+  // do momento: a família que ele não traz morre na hora.
+  const freshBases = new Set();     // 'claude-5h' vindo de 'claude-5h:ffdc8e'
+  const freshCanonical = new Set(); // 'claude-5h' vindo exato (sem sufixo)
+  for (const f of freshList) {
+    if (!f || !f.id) continue;
+    const i = f.id.indexOf(':');
+    if (i > 0) freshBases.add(f.id.slice(0, i));
+    else freshCanonical.add(f.id);
+  }
+  for (const id of [...prevById.keys()]) {
+    const i = id.indexOf(':');
+    if (i > 0 && freshCanonical.has(id.slice(0, i))) prevById.delete(id); // multi→single
+    else if (i < 0 && freshBases.has(id)) prevById.delete(id);            // single→multi
+  }
 
   // Se a nova coleta traz o plano do Antigravity, limpa a cota esgotada do cache anterior.
-  const freshIds = new Set((fresh || []).map((f) => f && f.id).filter(Boolean));
+  const freshIds = new Set(freshList.map((f) => f && f.id).filter(Boolean));
   if (freshIds.has('antigravity-plan')) {
     prevById.delete('antigravity-quota');
   }
@@ -1035,7 +1071,7 @@ function mergeUsage(prev, fresh, now) {
 
   const isGood = (e) => e && e.usedPct != null && !e.error;
 
-  for (const f of (Array.isArray(fresh) ? fresh : [])) {
+  for (const f of freshList) {
     if (!f || !f.id) { out.push(f); continue; }
     seen.add(f.id);
     const p = prevById.get(f.id);
