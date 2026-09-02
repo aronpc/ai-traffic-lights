@@ -4,7 +4,8 @@
      agora é uma BrowserWindow própria: a lista continua clicável, a janela
      pode ficar aberta ao lado monitorando (o main empurra a sessão viva a
      cada refresh) e Esc/× destroem a janela. Mesmo CSS do overlay (styles.css,
-     bloco .dt-*) com overrides locais: sem backdrop, card ocupa a janela e o
+     bloco .dt-*) com overrides locais: sem backdrop, card ocupa a janela com
+     o mesmo formato da main/Preferências (translúcido, cantos 14px) e o
      header arrasta a janela (frameless). -->
 <html lang="en">
 <head>
@@ -13,11 +14,14 @@
   <title>Detalhes da sessão</title>
   <link rel="stylesheet" href="styles.css">
   <style>
-    /* Overrides da JANELA (o CSS dt-* nasceu para o modal do overlay):
-       fundo cheio, sem backdrop, card = 100% da janela, header arrasta. */
-    body { background: var(--bg); overflow: hidden; cursor: default; }
-    .dt-panel { position: static; background: none; backdrop-filter: none; display: block; }
-    .dt-card { width: auto; max-width: none; height: 100vh; max-height: none; margin: 0; border-radius: 0; border: none; }
+    /* Overrides da JANELA (o CSS dt-* nasceu para o modal do overlay): sem
+       backdrop, card = 100% da janela no MESMO formato das outras janelas
+       (espelha .overlay/.prefs: fundo translúcido + borda clara + cantos 14px,
+       que o .dt-card do styles.css já traz — aqui só alinhamos o radius e
+       esticamos pro tamanho da janela), header arrasta. */
+    body { background: transparent; overflow: hidden; cursor: default; }
+    .dt-panel { position: static; background: none; backdrop-filter: none; display: block; height: 100%; }
+    .dt-card { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 14px; }
     .dt-head { -webkit-app-region: drag; cursor: default; }
     .dt-head .ts-close { -webkit-app-region: no-drag; }
   </style>
