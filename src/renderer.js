@@ -338,15 +338,29 @@ function openDetails(s) {
   const readAt = readMarks.get(sessionKey(s));
   if (readAt) body.append(dtRow(T('dt_read_until'), new Date(readAt * 1000).toLocaleTimeString()));
 
-  // — Linha do tempo — events[] rolling de 50 do hook; recente primeiro
-  body.append(dtSec(T('dt_timeline')));
+  // — Linha do tempo — events[] rolling de 50 do hook; COLAPSADA por padrão
+  // (50 linhas despejadas empurrariam os campos de cima pra fora da dobra).
+  // Header mostra a contagem; expandir é explícito.
   const evs = Array.isArray(s.events) ? [...s.events].reverse() : [];
   if (!evs.length) {
+    body.append(dtSec(T('dt_timeline')));
     const e = document.createElement('div');
     e.className = 'dt-v';
     e.textContent = T('dt_no_events');
     body.append(e);
   } else {
+    const head = document.createElement('div');
+    head.className = 'dt-sec dt-toggle';
+    const lbl = document.createElement('span');
+    lbl.textContent = `${T('dt_timeline')} (${evs.length})`;
+    const caret = document.createElement('span');
+    caret.className = 'dt-caret';
+    caret.textContent = '▸';
+    head.append(lbl, caret);
+    body.append(head);
+    const evsBox = document.createElement('div');
+    evsBox.className = 'dt-evs';
+    evsBox.hidden = true;
     for (const ev of evs) {
       const row = document.createElement('div');
       row.className = 'dt-ev';
@@ -355,8 +369,13 @@ function openDetails(s) {
       const x = document.createElement('span');
       x.textContent = ev.event + (ev.tool ? ' · ' + ev.tool : '');
       row.append(t, x);
-      body.append(row);
+      evsBox.append(row);
     }
+    body.append(evsBox);
+    head.addEventListener('click', () => {
+      evsBox.hidden = !evsBox.hidden;
+      caret.textContent = evsBox.hidden ? '▸' : '▾';
+    });
   }
 
   const onKey = (e) => { if (e.key === 'Escape') closeDetails(); };

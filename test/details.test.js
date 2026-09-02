@@ -94,14 +94,16 @@ async function setup() {
     }
     return m;
   };
-  const timeline = () => (body() ? body().children.filter((c) => c.className === 'dt-ev') : []);
+  const evsBox = () => (body() ? body().children.find((c) => c.className === 'dt-evs') : null);
+  const timeline = () => { const b = evsBox(); return b ? b.children : []; };
+  const timelineHead = () => (body() ? body().children.find((c) => String(c.className).includes('dt-toggle')) : null);
   // abre via menu de contexto da 1ª linha
   const openViaMenu = (i = 0) => {
     rows()[i].dispatch('contextmenu', { clientX: 50, clientY: 50, preventDefault() {} });
     els.ctxMenu.children.filter((k) => k.textContent === 'Detalhes da sessão')
       .forEach((k) => k.dispatch('click', { stopPropagation() {} }));
   };
-  return { els, calls, fire, rows, panel, body, kv, timeline, openViaMenu, pushSessions: (list) => sessionsCb(list) };
+  return { els, calls, fire, rows, panel, body, kv, timeline, timelineHead, evsBox, openViaMenu, pushSessions: (list) => sessionsCb(list) };
 }
 
 const now = Math.floor(Date.now() / 1000);
@@ -151,8 +153,8 @@ test('sessão remota: Origem = peer, SEM campos LOCAL_ONLY (windowid)', async ()
   assert.equal(m.has('Janela (X11)'), false, 'remota não tem windowid');
 });
 
-test('timeline: events[] em ordem recente primeiro, com tool quando houver', async () => {
-  const { pushSessions, timeline, openViaMenu } = await setup();
+test('timeline: colapsada por padrão; clique no header expande em ordem recente primeiro', async () => {
+  const { pushSessions, timeline, timelineHead, evsBox, openViaMenu } = await setup();
   pushSessions([mkSess('api', null, {
     events: [
       { ts: now - 60, event: 'SessionStart', tool: null },
@@ -161,12 +163,22 @@ test('timeline: events[] em ordem recente primeiro, com tool quando houver', asy
     ],
   })]);
   openViaMenu(0);
+  // colapsada por padrão — 50 linhas não podem empurrar os campos pra fora
+  assert.ok(evsBox(), 'container da timeline existe');
+  assert.equal(evsBox().hidden, true, 'colapsada por padrão');
+  assert.equal(timelineHead().children[0].textContent, 'Linha do tempo (3)', 'contagem no header');
+  // clique expande
+  timelineHead().dispatch('click', {});
+  assert.equal(evsBox().hidden, false, 'clique no header expande');
   const evs = timeline();
   assert.equal(evs.length, 3, '3 eventos → 3 linhas');
   assert.equal(evs[0].children[1].textContent, 'Stop', 'mais recente primeiro');
   assert.equal(evs[1].children[1].textContent, 'PermissionRequest · Bash', 'evento + tool');
   assert.equal(evs[2].children[1].textContent, 'SessionStart');
   assert.ok(evs[0].children[0].textContent.match(/^\d{2}:\d{2}/), 'hora local no time');
+  // segundo clique recolapsa
+  timelineHead().dispatch('click', {});
+  assert.equal(evsBox().hidden, true, 'segundo clique recolapsa');
 });
 
 test('Esc fecha o painel; reabrir reconstrói o corpo', async () => {

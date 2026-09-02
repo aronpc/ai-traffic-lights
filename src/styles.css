@@ -668,6 +668,13 @@ html, body {
   margin: 10px 0 4px;
 }
 .dt-body .dt-sec:first-child { margin-top: 0; }
+/* Timeline colapsável: header clicável com contagem; ▸/▾ gira no toggle */
+.dt-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; border-radius: 4px;
+}
+.dt-toggle:hover { color: var(--ink); }
+.dt-caret { color: var(--ink-dim); }
 .dt-row { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; line-height: 1.4; }
 .dt-k { flex: none; width: 96px; color: var(--ink-dim); }
 .dt-v {
