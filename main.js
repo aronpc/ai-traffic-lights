@@ -1693,9 +1693,14 @@ function claudeAccountsFromSessions() {
   try { sessionsList = readSessions(); } catch { return [{ dir: null }]; }
   const seenReal = new Set();
   const named = [];
-  // realpath do config dir default (~/.claude pode ser symlink dd-claude)
+  // realpath do config dir default (~/.claude pode ser symlink dd-claude).
+  // SEMPRE o ~/.claude do home: configDir() puro honraria o CLAUDE_CONFIG_DIR
+  // do AMBIENTE DO ATL — se o app foi lançado de dentro de uma sessão de
+  // perfil (npm start num terminal dd-claude), a "default" viraria o perfil
+  // do shell, a conta real dele seria descartada como "default disfarçada" e
+  // o ~/.claude entraria como named. A default das SESSÕES é o symlink.
   let defReal = null;
-  try { defReal = fs.realpathSync(claudePaths.configDir()); } catch {}
+  try { defReal = fs.realpathSync(claudePaths.configDir({ home: app.getPath('home') })); } catch {}
   let hasDefault = false;
   for (const s of sessionsList) {
     if (!s.pid || agentOf(s) !== 'claude') continue;

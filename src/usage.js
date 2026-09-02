@@ -1109,10 +1109,20 @@ function mergeUsage(prev, fresh, now) {
   // redundante se já existe um tile concreto do mesmo agente (vindo do fresh ou
   // segurado como órfão bom acima). Surge quando a coleta oscila entre OK e
   // falha entre ticks — sem isto, resumo e concreto coexistem na mesma tela.
-  const concreteAgents = new Set();
-  for (const e of out) if (e && !isSummaryEntry(e) && e.agent) concreteAgents.add(e.agent);
-  let deduped = concreteAgents.size
-    ? out.filter((e) => !isSummaryEntry(e) || !concreteAgents.has(e.agent))
+  // POR FAMÍLIA (agente + sufixo da conta), não por agente: multi-conta, o
+  // plano-só da conta B (claude-plan:ca2705 — token falhou/sem janela) convive
+  // com os concretos da conta A (claude-5h:ffdc8e). Filtrar por agente puro
+  // sumia com a barra INTEIRA da B (#58). Canônico ↔ canônico segue igual
+  // (família sem sufixo).
+  const fam = (e) => {
+    const id = String(e && e.id || '');
+    const i = id.indexOf(':');
+    return (e && e.agent || '?') + '|' + (i > 0 ? id.slice(i + 1) : '');
+  };
+  const concreteFams = new Set();
+  for (const e of out) if (e && !isSummaryEntry(e) && e.agent) concreteFams.add(fam(e));
+  let deduped = concreteFams.size
+    ? out.filter((e) => !isSummaryEntry(e) || !concreteFams.has(fam(e)))
     : out;
 
   // Dedup por CONTEÚDO (mesma conta, tokens diferentes): a mesma conta z.ai pode

@@ -835,6 +835,26 @@ test('mergeUsage: summary sozinho (sem concreto) se mantém (1ª aparição hone
   assert.equal(m[0].id, 'claude-plan');
 });
 
+// Multi-conta (#58): o dedup summary↔concreto é por FAMÍLIA (agente+sufixo da
+// conta), não por agente. O plano-só da conta B (claude-plan:ca2705 — token
+// falhou / sem janela) convive com os concretos da conta A (claude-5h:ffdc8e):
+// por agente puro, a barra INTEIRA da B sumia da tela.
+const C5H_A = { id: 'claude-5h:ffdc8e', agent: 'claude', plan: 'Claude Max 5×', title: '5 h', usedPct: 34, resetInMin: 200, source: 'anthropic.oauth', error: null };
+const CPLAN_B = { id: 'claude-plan:ca2705', agent: 'claude', plan: 'Claude Max 20×', title: null, usedPct: null, resetInMin: null, source: 'claude.json', error: null, account: 'aronpeyroteo' };
+
+test('mergeUsage: plano-só da conta B convive com concretos da conta A (multi-conta)', () => {
+  const m = mergeUsage([], [C5H_A, CPLAN_B], NOW);
+  assert.equal(m.length, 2, 'plano-só da 2ª conta não é summary da 1ª');
+  assert.ok(m.some((e) => e.id === 'claude-plan:ca2705'), 'barra da conta B presente');
+});
+
+test('mergeUsage: plano-só suprimido quando a MESMA conta tem concreto (sufixo igual)', () => {
+  const c5h_b = { ...C5H_A, id: 'claude-5h:ca2705' };
+  const m = mergeUsage([], [c5h_b, CPLAN_B], NOW);
+  assert.equal(m.length, 1, 'summary da própria conta continua suprimido');
+  assert.equal(m[0].id, 'claude-5h:ca2705');
+});
+
 // =========================== readAntigravityUsage ===========================
 
 test('readAntigravityUsage: extrai modelo do settings.json do Antigravity', () => {
