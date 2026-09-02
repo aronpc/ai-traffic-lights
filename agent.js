@@ -57,7 +57,13 @@ function createPty(cmd, cols, rows, { onData, onExit }) {
   if (!ptyLib) throw new Error('node-pty indisponível');
   const p = ptyLib.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: process.env });
   p.onData(onData); p.onExit(onExit);
-  return { write: (d) => { try { p.write(d); } catch {} }, resize: (c, r) => { try { p.resize(c, r); } catch {} }, kill: () => { try { p.kill(); } catch {} } };
+  return {
+    write: (d) => { try { p.write(d); } catch {} },
+    resize: (c, r) => { try { p.resize(c, r); } catch {} },
+    pause: () => { try { p.pause(); } catch {} },
+    resume: () => { try { p.resume(); } catch {} },
+    kill: () => { try { p.kill(); } catch {} },
+  };
 }
 
 const cfg = loadSettings();

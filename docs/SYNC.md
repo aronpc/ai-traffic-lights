@@ -111,9 +111,10 @@ Em **ambas** as máquinas, com o mesmo token e a porta `47474`:
 2. Em A, liste B em *Máquinas que eu observo*; em B, liste A.
 3. Pronto — em ~5 s as sessões do outro lado aparecem com o badge do nó.
 
-> ⚠️ O `host` precisa casar com o que o Tailscale reporta: IP `100.x`, hostname
-> curto, MagicDNS FQDN ou `host:porta` funcionam. Se o peer estiver marcado
-> offline no Tailscale, o poller nem gasta rede tentando.
+> ⚠️ O `host` precisa casar com o que o Tailscale reporta: IPv4, IPv6, hostname
+> curto, MagicDNS FQDN ou `host:porta` funcionam. Se o peer estiver offline — ou
+> se `tailscale status --json` falhar — o ATL falha fechado: não envia o token,
+> não busca transcripts e não abre PTY até a identidade voltar a ser confirmada.
 
 ## Segurança
 
@@ -124,6 +125,9 @@ Em **ambas** as máquinas, com o mesmo token e a porta `47474`:
 - A confidencialidade em trânsito depende da tailnet (WireGuard E2E); o HTTP do
   app não é criptografado por si só.
 - **Ver prompts** e **attach remoto** são permissões adicionais e vêm desligadas.
+- Antes de enviar o Bearer token, o cliente valida o host e confirma que IPv4,
+  IPv6 ou nome consta como peer online no status da tailnet. Falha de status não
+  degrada para rede comum: poll, transcript e PTY permanecem bloqueados.
 
 ## Servidor sem display (headless)
 

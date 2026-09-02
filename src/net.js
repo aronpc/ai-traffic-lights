@@ -19,6 +19,7 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const nodeNet = require('net');
 const { execFileSync } = require('child_process');
 
 // WebSocket p/ o endpoint /pty (attach remoto). try/catch: sem a dep (testes/CI),
@@ -54,28 +55,58 @@ function buildOnlineSet(j) {
   for (const peer of Object.values((j && j.Peer) || {})) {
     if (!peer || !peer.Online) continue;
     if (peer.HostName) set.add(String(peer.HostName).toLowerCase());
-    for (const ip of peer.TailscaleIPs || []) set.add(String(ip));
+    for (const ip of peer.TailscaleIPs || []) set.add(String(ip).toLowerCase());
     if (peer.DNSName) set.add(String(peer.DNSName).toLowerCase().replace(/\.$/, ''));
   }
   return set;
 }
 // Set de peers ONLINE segundo o Tailscale, p/ o poller SÓ tentar rede quem tá
 // online (zero fetch em offline; detecta "ficou online" ~cadência de refresh do
-// main). null se tailscale ausente (aí o poller cai pro backoff puro, sem gate).
+// main). null se o status não pôde ser confirmado; consumidores falham fechado.
 function tailscaleOnlineSet() {
   try {
     const j = JSON.parse(execFileSync('tailscale', ['status', '--json'], { encoding: 'utf8', timeout: 3000 }));
     return buildOnlineSet(j);
   } catch { return null; }
 }
-// Diz se um host configurado (hostname curto, FQDN, host:porta ou IP) está no
-// set de online. Normaliza (tira :porta do fim — não IPv6 — e lowercase) e checa
-// as formas canônicas do set (PR-32 #16). set null => assume online (sem gate).
+function parsePeerHost(value) {
+  if (typeof value !== 'string' || !value || value !== value.trim()) return null;
+  let host = value;
+  let port = null;
+  if (value.startsWith('[')) {
+    const m = value.match(/^\[([^\]]+)\](?::(\d{1,5}))?$/);
+    if (!m || nodeNet.isIP(m[1]) !== 6) return null;
+    host = m[1]; port = m[2] || null;
+  } else if (nodeNet.isIP(value) !== 6) {
+    const m = value.match(/^([^:]+?)(?::(\d{1,5}))?$/);
+    if (!m) return null;
+    host = m[1]; port = m[2] || null;
+  }
+  if (port != null && (+port < 1 || +port > 65535)) return null;
+  const ip = nodeNet.isIP(host);
+  if (!ip) {
+    if (/^[\d.]+$/.test(host) || host.length > 253) return null;
+    const labels = host.split('.');
+    if (labels.some((x) => !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(x))) return null;
+  }
+  return { host: host.toLowerCase(), port: port == null ? null : +port, ipv6: ip === 6 };
+}
+
+// Autoridade URL segura para IPv4, IPv6 (com colchetes) e nomes Tailscale.
+function peerAuthority(host, defaultPort) {
+  const p = parsePeerHost(host);
+  const port = p && (p.port || +defaultPort);
+  if (!p || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return `${p.ipv6 ? `[${p.host}]` : p.host}:${port}`;
+}
+
+// Diz se um host configurado está no set de identidades ONLINE confirmado pelo
+// Tailscale. Falha de `tailscale status` (set null) falha fechado: bearer token
+// e credenciais de PTY nunca são enviados a um destino não confirmado.
 function peerOnline(set, host) {
-  if (!set) return true;
-  if (!host) return false;
-  const m = String(host).toLowerCase().match(/^([^:]+):(\d{1,5})$/);   // host:porta → host (IPv6 intacto)
-  return set.has(m ? m[1] : String(host).toLowerCase());
+  if (!(set instanceof Set)) return false;
+  const p = parsePeerHost(host);
+  return !!p && set.has(p.host);
 }
 
 // Campos machine-local que NÃO atravessam a rede (só fazem sentido neste host).
@@ -100,6 +131,16 @@ function tokenOk(reqToken, expected) {
 function bearerOf(req) {
   const h = req.headers['authorization'] || '';
   return h.startsWith('Bearer ') ? h.slice(7) : '';
+}
+
+// Encaminha output e aplica o lado HIGH da histerese de backpressure. Separado
+// para cobrir deterministicamente o caso sem depender do buffer do kernel.
+function forwardPtyOutput(ws, pty, data, high = 1 << 20) {
+  ws.send(JSON.stringify({ type: 'out', data }));
+  if (pty && !ws._paused && ws.bufferedAmount > high) {
+    ws._paused = true;
+    pty.pause();
+  }
 }
 
 // Sanitiza uma sessão pra sair na rede: remove campos machine-local e marca
@@ -220,8 +261,7 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
             pty = ptySpawn(cmd, m.cols | 0 || 80, m.rows | 0 || 24, {
               onData: (d) => {
                 try {
-                  ws.send(JSON.stringify({ type: 'out', data: d }));
-                  if (pty && !ws._paused && ws.bufferedAmount > HIGH) { ws._paused = true; try { pty.pause(); } catch {} }   // WS entupindo → pausa o pty (bp retoma ao drenar)
+                  forwardPtyOutput(ws, pty, d, HIGH);
                 } catch {}
               },
               onExit: () => { try { ws.send(JSON.stringify({ type: 'exit' })); } catch {} },
@@ -261,18 +301,16 @@ function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 
   async function pollOne(p) {
     if (stopped) return;
     const st = state.get(p.host);
-    // GATE (opcional): se há predicate isOnline (Tailscale) e o peer NÃO tá
-    // online, NÃO gasta rede — só re-checa barato (offlineRecheckMs) e mantém
-    // offline. Assim offline => zero fetch; quando o Tailscale marca online,
-    // o próximo re-check pega e parte pra cadência normal.
-    if (isOnline && !isOnline(p.host)) {
+    // GATE obrigatório: o caller confirma a identidade online via Tailscale.
+    // Sem predicate, host inválido ou peer offline, não envia nem o Bearer token.
+    const hostPort = peerAuthority(p.host, port);
+    if (!hostPort || !isOnline || !isOnline(p.host)) {
       if (st.online !== false && onPeerState) onPeerState(p.host, false);
       st.online = false;
       st.delay = offlineRecheckMs;
       if (!stopped) timers.set(p.host, setTimeout(() => pollOne(p), st.delay));
       return;
     }
-    const hostPort = p.host.includes(':') ? p.host : `${p.host}:${port}`;
     let ok = false;
     try {
       const r = await fetch(`http://${hostPort}/sessions`, { headers, signal: AbortSignal.timeout(3000) });   // PR-32 #05: peer em blackhole não trava o ciclo de poll
@@ -301,9 +339,10 @@ function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 
 // Busca /transcript de um peer (cliente). Devolve [] se host ausente/erro/403.
 // Usado pelo IPC fetch-transcript do main quando o usuário abre o painel de uma
 // sessão REMOTA (a local é lida direto do disco via collect+transcript).
-async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
+async function fetchTranscriptFromPeer({ host, port, token, key, n = 20, onlineSet }) {
   if (!host || !key) return [];
-  const hostPort = host.includes(':') ? host : `${host}:${port}`;
+  const hostPort = peerAuthority(host, port);
+  if (!hostPort || !peerOnline(onlineSet, host)) return [];
   try {
     const r = await fetch(
       `http://${hostPort}/transcript?key=${encodeURIComponent(key)}&n=${n}`,
@@ -315,4 +354,4 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20 }) {
   } catch { return []; }
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline, anchorRemote };
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline, peerAuthority, anchorRemote, forwardPtyOutput };

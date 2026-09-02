@@ -571,7 +571,7 @@ function installHookFromApp() {
     }
     if (hookInstaller.kiroAvailable()) {
       hookInstaller.installKiro(path.join(__dirname, 'adapters/kiro/ai-traffic-lights.js'), BASE_DIR);
-      kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; }); // invalida cache discovery na 1ª escrita
+      kiroAdapter.start(chokidar, () => collect.invalidateDiscovery()); // invalida cache discovery na 1ª escrita
       parts.push('Kiro: ' + T('ntf_plugin_ok'));
     }
     notifyUser(parts.length ? parts.join(' · ') : T('ntf_none_found'));
@@ -734,7 +734,7 @@ ipcMain.handle('fetch-transcript', async (_e, { origin, key, n }) => {
   const s = (settingsCfg && settingsCfg.sync) || {};
   const host = originToHost.get(origin);
   if (!host) return [];
-  return net.fetchTranscriptFromPeer({ host, port: s.port, token: s.token, key, n: N });
+  return net.fetchTranscriptFromPeer({ host, port: s.port, token: s.token, key, n: N, onlineSet });
 });
 
 // Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair
@@ -874,12 +874,18 @@ function hasBin(bin) {
 }
 function ptyEnsure() { if (!ptyLib) { try { ptyLib = require('node-pty'); } catch (e) { try { console.log('[pty] node-pty indisponível: ' + e.message); } catch {} } } return ptyLib; }
 // factory p/ o SERVIDOR /pty (DI em net.startServer): 1 node-pty por conexão
-// remota (peer attachando em MIM). Devolve handle {write,resize,kill}.
+// remota (peer attachando em MIM). Devolve handle {write,resize,pause,resume,kill}.
 function createPty(cmd, cols, rows, { onData, onExit }) {
   const p = ptyEnsure(); if (!p) throw new Error('node-pty indisponível');
   const proc = p.spawn(cmd[0], cmd.slice(1), { name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd: process.env.HOME, env: ptyEnv() });
   proc.onData(onData); proc.onExit(onExit);
-  return { write: (d) => { try { proc.write(d); } catch {} }, resize: (c, r) => { try { proc.resize(c, r); } catch {} }, kill: () => { try { proc.kill(); } catch {} } };
+  return {
+    write: (d) => { try { proc.write(d); } catch {} },
+    resize: (c, r) => { try { proc.resize(c, r); } catch {} },
+    pause: () => { try { proc.pause(); } catch {} },
+    resume: () => { try { proc.resume(); } catch {} },
+    kill: () => { try { proc.kill(); } catch {} },
+  };
 }
 
 let termWin = null;
@@ -1013,7 +1019,8 @@ function addTermSession({ title, kind, origin, tmux_session, sessionKey, label, 
   const tabId = ++tabSeq;
   // label/cwd ficam guardados p/ RECONSTRUIR o título quando o alias é removido
   // (rename pra vazio) — sem eles a aba cairia no 'tmux: <sessão>'.
-  termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, label: label || null, cwd: cwd || null, proc: null, ws: null, cols: 80, rows: 24 });
+  const ownerId = termWin && !termWin.isDestroyed() ? termWin.webContents.id : null;
+  termSessions.set(tabId, { title, kind, origin, tmux_session, sessionKey: sessionKey || null, label: label || null, cwd: cwd || null, ownerId, proc: null, ws: null, cols: 80, rows: 24 });
   // Só entrega o term-tab-added com a termWin ESTÁVEL; criar o xterm antes (na
   // transição hide→show) quebra o render. O pty-out que chega antes o renderer
   // bufferiza (term ainda não existe lá).
@@ -1053,7 +1060,12 @@ function spawnPtyLocal(tabId, cmd, cwd) {
 // cliente WebSocket do /pty remoto pra uma aba (attach ao vivo no peer).
 function openRemotePty(tabId, { host, port, token, tmux_session }) {
   const s = termSessions.get(tabId); if (!s) return;
-  const url = 'ws://' + host + ':' + (port || 47474) + '/pty';
+  const authority = net.peerAuthority(host, port || 47474);
+  if (!authority || !net.peerOnline(onlineSet, host)) {
+    sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mpeer não confirmado pelo Tailscale\x1b[0m\r\n' });
+    return;
+  }
+  const url = 'ws://' + authority + '/pty';
   let ws;
   try { ws = new (require('ws'))(url, { headers: { Authorization: 'Bearer ' + token } }); } catch (e) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31mWebSocket falhou: ' + e.message + '\x1b[0m\r\n' }); return; }
   s.ws = ws;
@@ -1083,10 +1095,23 @@ function openRemotePty(tabId, { host, port, token, tmux_session }) {
   });
 }
 // ---- handlers IPC da janela Terminal (abas) ----
-ipcMain.on('term-new-shell', (_e, host) => {
-  ensureTermWin();
-  if (host && host !== 'local') {            // shell novo num peer remoto (via /pty, sem tmux_session)
-    const cfg = (settingsCfg && settingsCfg.sync) || {};
+function isTermSender(e) {
+  return !!(e && termWin && !termWin.isDestroyed() && e.sender === termWin.webContents);
+}
+function termSessionFor(e, tabId) {
+  if (!isTermSender(e)) return null;
+  const s = termSessions.get(tabId);
+  return s && s.ownerId === e.sender.id ? s : null;
+}
+ipcMain.on('term-new-shell', (e, host) => {
+  if (!isTermSender(e)) return;
+  const local = host === undefined || host === 'local';
+  const cfg = (settingsCfg && settingsCfg.sync) || {};
+  const peer = !local && typeof host === 'string' && Array.isArray(cfg.peers)
+    ? cfg.peers.find((p) => p && p.host === host && livePeers.has(p.host) && net.peerOnline(onlineSet, p.host))
+    : null;
+  if (!local && !peer) return;
+  if (!local) {            // shell novo num peer remoto (via /pty, sem tmux_session)
     const tabId = addTermSession({ title: host + ' · shell', kind: 'remote', origin: host });
     if (!cfg.token) { sendTerm('pty-out', { tabId, data: '\r\n\x1b[31msem token sync configurado\x1b[0m\r\n' }); return; }
     openRemotePty(tabId, { host, port: cfg.port, token: cfg.token });   // sem tmux_session → shell novo no peer
@@ -1097,13 +1122,14 @@ ipcMain.on('term-new-shell', (_e, host) => {
     spawnPtyLocal(tabId, cmd, process.env.HOME);
   }
 });
-ipcMain.handle('term-hosts', () => {
+ipcMain.handle('term-hosts', (e) => {
+  if (!isTermSender(e)) return [];
   const peers = ((settingsCfg && settingsCfg.sync) || {}).peers || [];
-  const live = peers.filter((p) => livePeers.has(p.host));   // só quem tem o ATL ligado (respondeu /sessions)
+  const live = peers.filter((p) => livePeers.has(p.host) && net.peerOnline(onlineSet, p.host));
   return [{ id: 'local', label: 'local' }, ...live.map((p) => ({ id: p.host, label: p.name || p.host }))];
 });
-ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/max/close
-  if (!termWin || termWin.isDestroyed()) return;
+ipcMain.on('term-win-control', (e, op) => {   // chrome custom frameless: min/max/close
+  if (!isTermSender(e)) return;
   try {
     if (op === 'min') termWin.minimize();
     else if (op === 'max') termWin.isMaximized() ? termWin.unmaximize() : termWin.maximize();
@@ -1112,28 +1138,33 @@ ipcMain.on('term-win-control', (_e, op) => {   // chrome custom frameless: min/m
 });
 // ---- resize via grip (frameless+transparent não tem resize nativo no Linux) ----
 let termResizeStart = null;
-ipcMain.on('resize-term-start', () => { if (termWin && !termWin.isDestroyed()) termResizeStart = termWin.getSize(); });
-ipcMain.on('resize-term-move', (_e, { dw, dh }) => {
-  if (!termWin || termWin.isDestroyed() || !termResizeStart) return;
+ipcMain.on('resize-term-start', (e) => { if (isTermSender(e)) termResizeStart = termWin.getSize(); });
+ipcMain.on('resize-term-move', (e, p) => {
+  if (!isTermSender(e) || !termResizeStart || !p || !Number.isFinite(p.dw) || !Number.isFinite(p.dh)) return;
+  const { dw, dh } = p;
   try { termWin.setSize(Math.max(560, Math.round(termResizeStart[0] + dw)), Math.max(320, Math.round(termResizeStart[1] + dh)), false); } catch {}
 });
-ipcMain.on('resize-term-end', () => { termResizeStart = null; });
+ipcMain.on('resize-term-end', (e) => { if (isTermSender(e)) termResizeStart = null; });
 // Ativação é visual no renderer (roteamento é por tabId, que vem no input/resize),
 // mas aproveitamos pra RELIGAR a aba se a conexão dela tiver morrido — quem clica
 // numa aba vazia quer o conteúdo de volta, e sem isto o único caminho era fechar
 // e reabrir pela lista.
-ipcMain.on('term-switch-tab', (_e, tabId) => {
-  const s = termSessions.get(tabId);
+ipcMain.on('term-switch-tab', (e, tabId) => {
+  const s = termSessionFor(e, tabId);
   if (s && !s.ws && !s.proc) reviveTermSession(tabId, s);
 });
-ipcMain.on('term-close-tab', (_e, tabId) => { if (tabId != null) closeTermSession(tabId); });
-ipcMain.on('term-input', (_e, { tabId, data }) => {
-  const s = termSessions.get(tabId); if (!s) return;
+ipcMain.on('term-close-tab', (e, tabId) => { if (termSessionFor(e, tabId)) closeTermSession(tabId); });
+ipcMain.on('term-input', (e, p) => {
+  if (!p || typeof p.data !== 'string') return;
+  const { tabId, data } = p;
+  const s = termSessionFor(e, tabId); if (!s) return;
   if (s.ws) { try { s.ws.send(JSON.stringify({ type: 'in', data })); } catch {} }
   else if (s.proc) { try { s.proc.write(data); } catch {} }
 });
-ipcMain.on('term-resize', (_e, { tabId, cols, rows }) => {
-  const s = termSessions.get(tabId); if (!s) return;
+ipcMain.on('term-resize', (e, p) => {
+  if (!p || !Number.isInteger(p.cols) || !Number.isInteger(p.rows) || p.cols < 1 || p.rows < 1) return;
+  const { tabId, cols, rows } = p;
+  const s = termSessionFor(e, tabId); if (!s) return;
   if (cols > 0) s.cols = cols;
   if (rows > 0) s.rows = rows;
   if (s.ws) { try { s.ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {} }
@@ -1171,7 +1202,7 @@ app.whenReady().then(() => {
   // ser peso morto: ela É o marcador de "o usuário optou por isto", igual ao
   // plugin do OpenCode.
   if (hookInstaller.kiroAvailable() && hookInstaller.kiroInstalled(BASE_DIR)) {
-    kiroAdapter.start(chokidar, () => { _disc = null; _discAt = 0; });
+    kiroAdapter.start(chokidar, () => collect.invalidateDiscovery());
   } else if (hookInstaller.kiroAvailable()) {
     _kiroPrecisaInstalar = true;   // avisado depois, quando notifyUser existir
   }

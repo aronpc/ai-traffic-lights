@@ -492,7 +492,7 @@ release_upload_mac() {
   if [ "$DRY" = 0 ]; then
     # Seleção ANCORADA na versão do build (não apenas "qualquer .dmg"):
     # `ls *.dmg | head -1` pregaria o primeiro em ordem alfabética.
-    dmg="$(ls "$out"/*"-$VERSION-"*.dmg 2>/dev/null | head -1 || true)"
+    dmg="$(ls "$out"/*"-$VERSION".dmg "$out"/*"-$VERSION-"*.dmg 2>/dev/null | head -1 || true)"
     [ -n "$dmg" ]     || die "não encontrei .dmg da versão $VERSION em $out/"
 
 

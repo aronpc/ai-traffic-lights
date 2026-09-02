@@ -143,9 +143,9 @@ smoke_test() {
   return 0
 }
 
-# Verifica a integridade (sha512) do arquivo baixado contra o latest-linux.yml
-# que o electron-builder publica no release. Best-effort: sem yml/sha512/ferramenta,
-# apenas avisa; se o hash NÃO confere, aborta (corrompido ou adulterado).
+# Verifica a integridade (sha512) do arquivo baixado. Só um 404 confirmado no
+# sidecar habilita o fallback legado via latest-linux.yml; falha de rede/TLS,
+# HTTP inesperado ou corpo malformado abortam.
 verify_checksum() {
   local file="$1" asset_url="$2" yml yml_url base expected actual
   base="$(basename "${asset_url%%\?*}")"
@@ -155,13 +155,17 @@ verify_checksum() {
   # deixou de gerar o zip (ArchiveTarget só emite update info para `zip`).
   # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
   # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
-  expected="$(curl -fsSL --connect-timeout 15 --max-time 30 "${asset_url%%\?*}.sha512" 2>/dev/null | tr -d '\r\n')" || expected=""
-  # Só aceita a forma exata de um sha512 em base64 (88 chars, termina em '=='):
-  # um sidecar truncado, uma página de portal cativo ou um erro de proxy viraria
-  # `expected` com lixo — e como o tier 0 curto-circuita o tier 1, o instalador
-  # mataria a instalação de um artefato íntegro com "adulterado".
-  [[ "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]] || expected=""
-  if [ -z "$expected" ]; then
+  local sc_body sc_code
+  sc_body="$(mktemp)"
+  sc_code="$(curl -sSL --connect-timeout 15 --max-time 30 \
+    -o "$sc_body" -w '%{http_code}' "${asset_url%%\?*}.sha512" 2>/dev/null)" || sc_code="000"
+  if [ "$sc_code" = "200" ]; then
+    expected="$(tr -d '\r\n' < "$sc_body")"
+    rm -f "$sc_body"
+    [[ "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]] \
+      || die "sidecar .sha512 chegou com conteúdo inválido (HTTP 200, ${#expected} bytes). Abortando em vez de instalar sem verificação."
+  elif [ "$sc_code" = "404" ]; then
+    rm -f "$sc_body"
     yml_url="${asset_url%/*}/latest-linux.yml"
     yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
       || { info "sem sidecar .sha512 nem latest-linux.yml — pulei a verificação de integridade"; return 0; }
@@ -170,6 +174,9 @@ verify_checksum() {
     # mesmo perigo que o install_macos.sh já tratava (achado #2 do review da PR-46).
     expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
     [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  else
+    rm -f "$sc_body"
+    die "não foi possível buscar o sidecar .sha512 (HTTP ${sc_code}). Abortando em vez de instalar sem verificação."
   fi
   [ -n "$expected" ] || { info "sha512 não encontrado p/ $base — pulei a verificação"; return 0; }
   if command -v openssl >/dev/null 2>&1; then

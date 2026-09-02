@@ -133,22 +133,39 @@ function lastJsonlEvent(sid) {
   const file = path.join(KIRO_SESSIONS_DIR, `${sid}.jsonl`);
   try {
     const stat = fs.statSync(file);
-    // Lê só os últimos 64KB, nunca o arquivo inteiro: uma sessão longa do Kiro
-    // passa de MB e o readFileSync + trimEnd + split inteiro rodava SÍNCRONO na
-    // main thread do Electron a CADA evento (s8 do review da PR-46). A linha
-    // mais nova sempre está no tail.
-    const len = Math.min(stat.size, 65536);
-    const buf = Buffer.alloc(len);
     const fd  = fs.openSync(file, 'r');
-    try { fs.readSync(fd, buf, 0, len, stat.size - len); } finally { fs.closeSync(fd); }
-    const lines = buf.toString('utf8').split('\n');
-    // busca a última linha válida (a do fim pode vir cortada se o Kiro estava
-    // no meio da escrita — aí retorna a anterior, que a próxima escrita re-lê)
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const d = JSON.parse(lines[i]);
-        return d.kind || null; // 'Prompt' | 'AssistantMessage' | 'ToolResults'
-      } catch {}
+    let pos = stat.size;
+    let tail = Buffer.alloc(0);
+    try {
+      // Começa pelo tail de 64 KiB, mas uma entrada JSONL pode ser maior. Nesse
+      // caso o primeiro bloco começa no meio do JSON; recuamos em blocos até
+      // alcançar o '\n' que delimita o início da última entrada completa (ou o
+      // início do arquivo). A sessão inteira só é lida no caso extremo de uma
+      // única entrada gigante ou de uma escrita final gigante ainda incompleta.
+      while (pos > 0) {
+        const start = Math.max(0, pos - 65536);
+        const chunk = Buffer.alloc(pos - start);
+        const n = fs.readSync(fd, chunk, 0, chunk.length, start);
+        tail = Buffer.concat([chunk.subarray(0, n), tail]);
+
+        // Se não chegamos ao início do arquivo, o prefixo anterior ao primeiro
+        // newline pode ser só um fragmento e nunca deve ser entregue ao parser.
+        const firstNl = tail.indexOf(0x0a);
+        if (start > 0 && firstNl < 0) { pos = start; continue; }
+        const complete = start === 0 ? tail : tail.subarray(firstNl + 1);
+        const lines = complete.toString('utf8').split('\n');
+        // A linha final pode estar no meio da escrita. Se não parsear, usa a
+        // entrada completa anterior, preservando o comportamento já existente.
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const d = JSON.parse(lines[i]);
+            return d.kind || null; // 'Prompt' | 'AssistantMessage' | 'ToolResults'
+          } catch {}
+        }
+        pos = start;
+      }
+    } finally {
+      fs.closeSync(fd);
     }
   } catch {}
   return null;

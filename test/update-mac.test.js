@@ -3,7 +3,7 @@
 // .app arm64 e vice-versa —, então a seleção precisa ser explícita e testada.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { pickMacDmg, decidirIntegridade, validarSidecar } = require('../src/ipc/update.js');
+const { pickMacDmg, decidirIntegridade, releaseSemSidecar, fluxoUpdateMac } = require('../src/ipc/update.js');
 
 const dmg = (name) => ({ name, browser_download_url: `https://x/${name}` });
 
@@ -56,10 +56,16 @@ test('decidirIntegridade: hash diverge → recusa', () => {
   assert.equal(decidirIntegridade(achou(HASH), 'B'.repeat(86) + '=='), 'divergente');
 });
 
-test('decidirIntegridade: 404 é release antiga sem sidecar, não erro', () => {
-  // instala: mesma política dos instaladores de shell, senão nenhuma release
-  // anterior ao sidecar conseguiria atualizar.
-  assert.equal(decidirIntegridade({ estado: 'ausente', corpo: '' }, null), 'sem-sidecar');
+test('decidirIntegridade: 404 só é aceito para release explicitamente legada', () => {
+  const ausente = { estado: 'ausente', corpo: '' };
+  assert.equal(decidirIntegridade(ausente, null, true), 'sem-sidecar');
+  assert.equal(decidirIntegridade(ausente, null, false), 'indisponivel');
+  assert.equal(decidirIntegridade(ausente, null), 'indisponivel');
+  assert.equal(releaseSemSidecar('0.7.3'), true);
+  assert.equal(releaseSemSidecar('0.8.0-beta.3'), true);
+  assert.equal(releaseSemSidecar('0.8.0-beta.4'), false);
+  assert.equal(releaseSemSidecar('0.9.0'), false);
+  assert.equal(releaseSemSidecar(null), false);
 });
 
 test('decidirIntegridade: falha de rede NÃO vira "sem sidecar"', () => {
@@ -88,55 +94,55 @@ test('decidirIntegridade: corpo fora do formato → recusa (portal cativo, trunc
 // virava 'divergente', abortando antes do download. Testar a função isolada
 // não pega isso — o defeito estava na COMPOSIÇÃO das duas etapas.
 //
-// Estes testes simulam o encadeamento de baixarUpdateMac sem Electron:
-// validarSidecar (antes do download) → decidirIntegridade (depois).
+// Os testes abaixo chamam o helper compartilhado pelo baixarUpdateMac real,
+// injetando apenas download e hash para não depender de Electron/rede.
+const rodarFluxo = (busca, hashDoArquivoBaixado, releaseLegada = false) => fluxoUpdateMac({
+  busca,
+  releaseLegada,
+  baixar: async () => {},
+  obterHash: async () => hashDoArquivoBaixado,
+});
 
-// Réplica exata dos dois guards de baixarUpdateMac. Se eles mudarem lá e não
-// aqui, o teste deixa de valer — por isso o nome cita a função e a linha.
-function fluxoUpdateMac(busca, hashDoArquivoBaixado) {
-  const pre = validarSidecar(busca);
-  if (pre !== 'pendente' && pre !== 'sem-sidecar') return { baixou: false, veredito: pre };
-
-  let veredito = pre;                       // download acontece aqui
-  if (pre === 'pendente') veredito = decidirIntegridade(busca, hashDoArquivoBaixado);
-  if (veredito === 'pendente') return { baixou: true, veredito: 'indisponivel' };
-  return { baixou: true, veredito };
-}
-
-test('fluxo: sidecar válido + arquivo íntegro → BAIXA e instala', () => {
-  const r = fluxoUpdateMac(achou(HASH), HASH);
+test('fluxo: sidecar válido + arquivo íntegro → BAIXA e instala', async () => {
+  const r = await rodarFluxo(achou(HASH), HASH);
   assert.equal(r.baixou, true, 'abortou antes do download com sidecar válido');
   assert.equal(r.veredito, 'ok');
 });
 
-test('fluxo: sidecar válido + arquivo adulterado → baixa e RECUSA', () => {
-  const r = fluxoUpdateMac(achou(HASH), 'B'.repeat(86) + '==');
+test('fluxo: sidecar válido + arquivo adulterado → baixa e RECUSA', async () => {
+  const r = await rodarFluxo(achou(HASH), 'B'.repeat(86) + '==');
   assert.equal(r.baixou, true);
   assert.equal(r.veredito, 'divergente');
 });
 
-test('fluxo: sidecar malformado NÃO chega a baixar 100 MB', () => {
-  const r = fluxoUpdateMac(achou('<html>502</html>'), HASH);
+test('fluxo: sidecar malformado NÃO chega a baixar 100 MB', async () => {
+  const r = await rodarFluxo(achou('<html>502</html>'), HASH);
   assert.equal(r.baixou, false, 'baixou o dmg mesmo com sidecar malformado');
   assert.equal(r.veredito, 'malformado');
 });
 
-test('fluxo: falha de rede no sidecar NÃO chega a baixar', () => {
-  const r = fluxoUpdateMac({ estado: 'falha', corpo: '' }, HASH);
+test('fluxo: falha de rede no sidecar NÃO chega a baixar', async () => {
+  const r = await rodarFluxo({ estado: 'falha', corpo: '' }, HASH);
   assert.equal(r.baixou, false);
   assert.equal(r.veredito, 'indisponivel');
 });
 
-test('fluxo: release antiga sem sidecar baixa e instala sem comparar', () => {
-  const r = fluxoUpdateMac({ estado: 'ausente', corpo: '' }, HASH);
+test('fluxo: release antiga sem sidecar baixa e instala sem comparar', async () => {
+  const r = await rodarFluxo({ estado: 'ausente', corpo: '' }, HASH, true);
   assert.equal(r.baixou, true);
   assert.equal(r.veredito, 'sem-sidecar');
 });
 
-test('fluxo: nenhum veredito "pendente" escapa para a instalação', () => {
+test('fluxo: release atual sem sidecar não baixa', async () => {
+  const r = await rodarFluxo({ estado: 'ausente', corpo: '' }, HASH, false);
+  assert.equal(r.baixou, false);
+  assert.equal(r.veredito, 'indisponivel');
+});
+
+test('fluxo: nenhum veredito "pendente" escapa para a instalação', async () => {
   // 'pendente' chegando ao fim significaria hash nunca comparado. O guard de
   // baixarUpdateMac falha fechado; este teste garante que continue assim.
   for (const caso of [achou(HASH), achou(''), { estado: 'falha', corpo: '' }, { estado: 'ausente', corpo: '' }]) {
-    assert.notEqual(fluxoUpdateMac(caso, HASH).veredito, 'pendente');
+    assert.notEqual((await rodarFluxo(caso, HASH)).veredito, 'pendente');
   }
 });

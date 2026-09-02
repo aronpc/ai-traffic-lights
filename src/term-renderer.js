@@ -39,6 +39,7 @@ function showTab(tabId) {
     // tmux ficava com o tamanho antigo e não preenchia a janela). Só quando há
     // área de verdade — com a janela oculta o fit colapsaria pra 2x1.
     requestAnimationFrame(() => {
+      if (activeTabId !== tabId) return;
       try { t.term.focus(); } catch {}
       if (!areaVisible()) return;
       try { t.fit.fit(); } catch {}
@@ -95,12 +96,22 @@ function fitActive() {
 function refitTab(tabId) {
   const t = terms.get(tabId);
   if (!t) return;
-  // garante que o holder dessa aba está visível antes de medir
-  if (t.holder.hidden) { for (const [id, x] of terms) x.holder.hidden = (id !== tabId); }
-  if (!areaVisible()) return;
-  try { t.fit.fit(); } catch {}
-  if (t.term.cols > 2 && t.term.rows > 1) {
-    try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {}
+  const previousActiveTabId = activeTabId;
+  const hidden = new Map([...terms].map(([id, x]) => [id, x.holder.hidden]));
+  try {
+    // garante que o holder dessa aba está visível apenas durante a medição
+    if (t.holder.hidden) { for (const [id, x] of terms) x.holder.hidden = (id !== tabId); }
+    if (!areaVisible()) return;
+    try { t.fit.fit(); } catch {}
+    if (t.term.cols > 2 && t.term.rows > 1) {
+      try { window.trafficLight.ptyResize(tabId, t.term.cols, t.term.rows); } catch {}
+    }
+  } finally {
+    activeTabId = previousActiveTabId;
+    for (const [id, wasHidden] of hidden) {
+      const x = terms.get(id);
+      if (x) x.holder.hidden = wasHidden;
+    }
   }
 }
 

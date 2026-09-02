@@ -186,20 +186,20 @@ main() {
       | $cevt as $evt
       | ($in.cwd // "") as $cwd
       | ($in.tool_name // "") as $tool
-      | {
+      | $ex + {
           schema_version: 2,
           agent: $agent,
           session_id: $sid, pid: $pid,
-          cwd: (if $cwd == "" then null else $cwd end),
-          transcript_path: (if $tpath == "" then null else $tpath end),
-          model: (if $model == "" then null else $model end),
-          term_program: (if $tp == "" then null else $tp end),
+          cwd: (if $cwd == "" then ($ex.cwd // null) else $cwd end),
+          transcript_path: (if $tpath == "" then ($ex.transcript_path // null) else $tpath end),
+          model: (if $model == "" then ($ex.model // null) else $model end),
+          term_program: (if $tp == "" then ($ex.term_program // null) else $tp end),
           windowid: (if $awin != "" then $awin elif $win != "" then $win else ($ex.windowid // null) end),
           focus_url: (if $furl != "" then $furl else ($ex.focus_url // null) end),
           tilix_id: (if $tid != "" then $tid else ($ex.tilix_id // null) end),
-          zellij_session: (if $zs == "" then null else $zs end),
-          tmux_session: (if $tmuxs == "" then null else $tmuxs end),
-          tmux_pane: (if $tmuxp == "" then null else $tmuxp end),
+          zellij_session: (if $zs == "" then ($ex.zellij_session // null) else $zs end),
+          tmux_session: (if $tmuxs == "" then ($ex.tmux_session // null) else $tmuxs end),
+          tmux_pane: (if $tmuxp == "" then ($ex.tmux_pane // null) else $tmuxp end),
           iterm_id: (if $iid != "" then $iid else ($ex.iterm_id // null) end),
           last_event: $evt, last_event_ts: $ts,
           last_tool: (if $tool == "" then null else $tool end),

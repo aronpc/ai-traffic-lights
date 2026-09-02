@@ -76,6 +76,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
       const ex = read(file)
       const now = Math.floor(Date.now() / 1000)
       const st = {
+        ...ex,
         schema_version: 2,
         agent: "opencode",
         session_id: sid,
@@ -83,13 +84,13 @@ export const AiTrafficLights = async ({ directory, $ }) => {
         cwd: directory || process.cwd() || null,
         transcript_path: ex.transcript_path || null,
         model: lastModel || ex.model || null,
-        term_program: boot.term_program,
+        term_program: boot.term_program || ex.term_program || null,
         windowid: capturedWin || ex.windowid || boot.windowid || null,
         focus_url: boot.focus_url || ex.focus_url || null,
         tilix_id: boot.tilix_id || ex.tilix_id || null,
-        zellij_session: boot.zellij_session,
-        tmux_session: boot.tmux_session,
-        tmux_pane: boot.tmux_pane,
+        zellij_session: boot.zellij_session || ex.zellij_session || null,
+        tmux_session: boot.tmux_session || ex.tmux_session || null,
+        tmux_pane: boot.tmux_pane || ex.tmux_pane || null,
         last_event: evt,
         last_event_ts: now,
         last_tool: tool || null,

@@ -248,7 +248,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     return new Promise((resolve, reject) => {
       if (saltos > 5) return reject(new Error('redirecionamentos demais'));
       const https = require('https');
-      https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' } }, (res) => {
+      const req = https.get(url, { headers: { 'User-Agent': 'ai-traffic-lights' } }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           return resolve(baixarArquivo(res.headers.location, dest, saltos + 1));
@@ -264,7 +264,9 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
         res.pipe(out);
         out.on('finish', () => out.close(() => resolve(dest)));
         out.on('error', reject);
-      }).on('error', reject);
+      });
+      req.on('error', reject);
+      req.setTimeout(15000, () => req.destroy(new Error('timeout')));
     });
   }
 
@@ -362,44 +364,32 @@ open "$DEST"
       // Buscado ANTES do .dmg: uma release cujo sidecar nunca confere faria o
       // ciclo de 1h rebaixar ~100 MB indefinidamente se a checagem viesse depois.
       const busca = await buscarSidecar(`${url}.sha512`);
+      const releaseLegada = releaseSemSidecar(updateState.latest);
       const RECUSAS = {
         indisponivel: 'ntf_update_checksum_indisponivel',
         malformado:   'ntf_update_checksum_malformado',
         divergente:   'ntf_update_checksum_divergente',
       };
-      // Pré-validação: só o sidecar, sem comparar hash nenhum — o .dmg ainda
-      // não existe. 'pendente' significa "sidecar bom, compare depois".
-      const pre = validarSidecar(busca);
-      if (pre !== 'pendente' && pre !== 'sem-sidecar') {
-        setUpdateState({ status: 'error', error: T(RECUSAS[pre]) });
-        return;                                     // nem baixa
-      }
-      let veredito = pre;
-
       const dmg = path.join(app.getPath('temp'), `atl-update-${Date.now()}.dmg`);
       dmgTmp = dmg;
-      setUpdateState({ status: 'downloading', progress: 0, error: null });
+      let resultado;
       try {
-        await baixarArquivo(url, dmg);
-        if (pre === 'pendente') {
-          // Agora sim há o que comparar. Sem esta linha o veredito ficaria
-          // 'pendente' e cairia no `if (RECUSAS[veredito])` como indefinido,
-          // instalando sem verificar.
-          veredito = decidirIntegridade(busca, await sha512Base64(dmg));
-        }
+        resultado = await fluxoUpdateMac({
+          busca,
+          releaseLegada,
+          baixar: async () => {
+            setUpdateState({ status: 'downloading', progress: 0, error: null });
+            await baixarArquivo(url, dmg);
+          },
+          obterHash: () => sha512Base64(dmg),
+        });
       } catch (e) {
         try { fs.unlinkSync(dmg); } catch {}       // não deixa 100 MB no temp
         throw e;
       }
-      // 'pendente' aqui seria um bug: significa que o hash nunca foi comparado.
-      // Falha fechado — o alvo deste download é substituir o app inteiro.
-      if (veredito === 'pendente') {
-        try { fs.unlinkSync(dmg); } catch {}
-        setUpdateState({ status: 'error', error: T(RECUSAS.indisponivel) });
-        return;
-      }
+      const { veredito } = resultado;
       if (RECUSAS[veredito]) {
-        try { fs.unlinkSync(dmg); } catch {}
+        if (resultado.baixou) { try { fs.unlinkSync(dmg); } catch {} }
         setUpdateState({ status: 'error', error: T(RECUSAS[veredito]) });
         return;
       }
@@ -481,6 +471,7 @@ open "$DEST"
 // exportada porque é o ÚNICO controle de integridade do auto-update do macOS —
 // não há electron-updater neste caminho, e o build não emite mais latest-mac.yml.
 //   busca: { estado: 'ok'|'ausente'|'falha', corpo }  ·  obtido: hash do arquivo
+//   releaseLegada: true só para uma versão anterior à obrigatoriedade do sidecar
 // Devolve: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
 // validarSidecar julga SÓ o sidecar: chegou? tem forma de sha512 base64?
 // Não compara com nada — a comparação exige o arquivo baixado, que nesta
@@ -496,9 +487,9 @@ open "$DEST"
 //
 // 'pendente' nomeia o estado que faltava: sidecar íntegro, veredito ainda
 // impossível. Quem recebe 'pendente' tem obrigação de comparar depois.
-function validarSidecar(busca) {
+function validarSidecar(busca, releaseLegada = false) {
   const b = busca || {};
-  if (b.estado === 'ausente') return 'sem-sidecar';   // release antiga, sem sidecar
+  if (b.estado === 'ausente') return releaseLegada ? 'sem-sidecar' : 'indisponivel';
   if (b.estado !== 'ok') return 'indisponivel';       // rede/TLS/5xx: não dá pra saber
   if (!/^[A-Za-z0-9+/]{86}==$/.test(b.corpo || '')) return 'malformado';
   return 'pendente';                                  // íntegro; falta o hash do arquivo
@@ -507,10 +498,41 @@ function validarSidecar(busca) {
 // decidirIntegridade e o veredito FINAL: exige o hash do arquivo ja baixado.
 // Chamar com `obtido` nulo e erro de uso — para a etapa anterior ao download
 // existe validarSidecar.
-function decidirIntegridade(busca, obtido) {
-  const pre = validarSidecar(busca);
+function decidirIntegridade(busca, obtido, releaseLegada = false) {
+  const pre = validarSidecar(busca, releaseLegada);
   if (pre !== 'pendente') return pre;
   return busca.corpo === obtido ? 'ok' : 'divergente';
+}
+
+// O sidecar passou a ser obrigatório a partir de 0.8.0-beta.4. Só versões
+// inequivocamente anteriores recebem o fallback legado; versão ausente ou fora
+// do formato falha fechado.
+function releaseSemSidecar(version) {
+  const m = String(version || '').replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+  if (!m) return false;
+  const base = [+m[1], +m[2], +m[3]];
+  const cutoff = [0, 8, 0];
+  for (let i = 0; i < 3; i++) {
+    if (base[i] < cutoff[i]) return true;
+    if (base[i] > cutoff[i]) return false;
+  }
+  return m[4] != null && +m[4] < 4;
+}
+
+// Composição real usada por baixarUpdateMac e pelos testes: valida antes de
+// baixar, calcula o hash depois e nunca deixa 'pendente' escapar para instalação.
+async function fluxoUpdateMac({ busca, releaseLegada = false, baixar, obterHash }) {
+  const pre = validarSidecar(busca, releaseLegada);
+  if (pre !== 'pendente' && pre !== 'sem-sidecar') return { baixou: false, veredito: pre };
+  if (typeof baixar !== 'function') throw new TypeError('baixar ausente');
+  await baixar();
+  let veredito = pre;
+  if (pre === 'pendente') {
+    if (typeof obterHash !== 'function') return { baixou: true, veredito: 'indisponivel' };
+    veredito = decidirIntegridade(busca, await obterHash(), releaseLegada);
+  }
+  if (veredito === 'pendente') veredito = 'indisponivel';
+  return { baixou: true, veredito };
 }
 
 function pickMacDmg(assets, arch) {
@@ -522,4 +544,4 @@ function pickMacDmg(assets, arch) {
   return dmgs.find((a) => !/arm64|x64/i.test(a.name)) || null;
 }
 
-module.exports = { setupUpdateIpc, pickMacDmg, decidirIntegridade, validarSidecar };
+module.exports = { setupUpdateIpc, pickMacDmg, decidirIntegridade, validarSidecar, releaseSemSidecar, fluxoUpdateMac };

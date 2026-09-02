@@ -2,7 +2,7 @@
 // localhost de verdade (porta efêmera, fetch real) cobrindo /sessions e /transcript.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, tokenOk, exportSession, pollPeers, tailscaleOnlineSet, buildOnlineSet, peerOnline, anchorRemote } = require('../src/net.js');
+const { startServer, tokenOk, exportSession, pollPeers, fetchTranscriptFromPeer, tailscaleOnlineSet, buildOnlineSet, peerOnline, peerAuthority, anchorRemote, forwardPtyOutput } = require('../src/net.js');
 
 // ---- tokenOk: compare constante, fail-safe ----
 test('tokenOk: token correto → true', () => {
@@ -192,6 +192,16 @@ test('/pty: closeAllPty só existe quando allowAttach está ligado', async () =>
   finally { server.close(); }
 });
 
+test('/pty: HIGH backpressure pausa o pty', () => {
+  let payload = null;
+  let paused = 0;
+  const ws = { bufferedAmount: (1 << 20) + 1, _paused: false, send: (d) => { payload = JSON.parse(d); } };
+  forwardPtyOutput(ws, { pause: () => { paused++; } }, 'chunk');
+  assert.deepEqual(payload, { type: 'out', data: 'chunk' });
+  assert.equal(paused, 1);
+  assert.equal(ws._paused, true);
+});
+
 // ---- pollPeers: backoff por peer + loga só a transição ----
 test('tailscaleOnlineSet: null (sem tailscale) ou Set de hosts online', () => {
   const s = tailscaleOnlineSet();   // CI sem tailscale => null; máquina c/ tailscale => Set
@@ -227,12 +237,35 @@ test('peerOnline: hostname curto, FQDN, host:porta e IP casam; offline não', ()
   assert.equal(peerOnline(set, '100.64.0.9'), true);                        // IP
   assert.equal(peerOnline(set, '100.64.0.9:47474'), true);                  // IP:porta
   assert.equal(peerOnline(set, 'outro-host'), false);                       // não configurado
-  assert.equal(peerOnline(null, 'qualquer'), true);                         // sem gate => online
+  assert.equal(peerOnline(null, 'qualquer'), false);                        // status falhou => fail closed
 });
 
 test('peerOnline: IPv6 não é tratado como porta (preserva o host)', () => {
   const set = buildOnlineSet({ Peer: { p: { Online: true, HostName: 'n6', TailscaleIPs: ['fd7a:115c:a1e0:b1a:0:0:0:1234'] } } });
   assert.equal(peerOnline(set, 'fd7a:115c:a1e0:b1a:0:0:0:1234'), true);    // IPv6 intacto
+});
+
+test('peerAuthority: valida nomes/IPs e formata IPv6 com colchetes', () => {
+  assert.equal(peerAuthority('notebook.tailab.ts.net', 47474), 'notebook.tailab.ts.net:47474');
+  assert.equal(peerAuthority('100.64.0.9:4242', 47474), '100.64.0.9:4242');
+  assert.equal(peerAuthority('fd7a:115c::1', 47474), '[fd7a:115c::1]:47474');
+  for (const bad of ['https://evil.test', 'user@host', 'host/path', '999.999.1.1', ' host']) {
+    assert.equal(peerAuthority(bad, 47474), null, bad);
+  }
+});
+
+test('fetchTranscriptFromPeer não envia credencial sem identidade Tailscale confirmada', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; throw new Error('não deveria chamar'); };
+  try {
+    assert.deepEqual(await fetchTranscriptFromPeer({
+      host: 'peer', port: 47474, token: 'segredo', key: 's1', onlineSet: null,
+    }), []);
+    assert.equal(calls, 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('pollPeers: peer offline → onPeerState(false) UMA vez (backoff, sem spam)', async () => {

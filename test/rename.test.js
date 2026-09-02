@@ -14,13 +14,17 @@ const CODE = ['agents.js', 'identity.js', 'state-machine.js', 'i18n.js', 'render
 
 function mkEl() {
   return {
-    _l: {}, _attr: {}, children: [], className: '', textContent: '', innerHTML: '', hidden: false, value: '',
+    _l: {}, _attr: {}, _q: {}, children: [], className: '', textContent: '', innerHTML: '', hidden: false, value: '',
     style: { setProperty() {}, removeProperty() {} },
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener(t, f) { (this._l[t] = this._l[t] || []).push(f); },
     dispatch(t, ev) { (this._l[t] || []).forEach((f) => f(ev || {})); },
     append(...e) { this.children.push(...e); },
+    appendChild(e) { this.children.push(e); return e; },
     replaceChildren(...e) { this.children = e; },
+    querySelector(s) { return this._q[s] || (this._q[s] = mkEl()); },
+    querySelectorAll() { return []; },
+    remove() { this.removed = true; },
     setAttribute(k, v) { this._attr[k] = String(v); },
     removeAttribute(k) { delete this._attr[k]; },
     getAttribute(k) { return this._attr[k] != null ? this._attr[k] : null; },
@@ -35,7 +39,7 @@ function mkEl() {
 async function setup() {
   const els = {};
   for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
-  const calls = { setAlias: [] };
+  const calls = { setAlias: [], notify: [], transcriptResolvers: [] };
   let sessionsCb = null;
   const window = {
     addEventListener() {},
@@ -45,13 +49,14 @@ async function setup() {
       onUsage() {}, requestUsage() {}, onUsageMeta() {}, forceUsage() {},
       resizeStart() {}, resizeMove() {}, focus() {},
       getAliases: () => Promise.resolve({}), setAlias: (cwd, v) => calls.setAlias.push([cwd, v]),
-      notify() {}, toggleVisibility() {}, setTrayLevel() {},
+      notify: (...args) => calls.notify.push(args), toggleVisibility() {}, setTrayLevel() {},
       getLaunchers: () => Promise.resolve([]), launchAgent() {},
-      getSettings: () => Promise.resolve(null), onSettingsChanged() {}, // settings (não usados no teste)
+      getSettings: () => Promise.resolve({ revealOnRed: false, soundEnabled: false }), onSettingsChanged() {},
       getVersion: () => Promise.resolve('0.0.0'), getUpdate: () => Promise.resolve(null),
       onUpdateState() {}, checkUpdate() {}, downloadUpdate() {}, installUpdate() {}, // auto-updater
       saveSettings() {}, openSettings() {},
       getLang: () => Promise.resolve('pt'),                             // i18n
+      fetchTranscript: () => new Promise((resolve, reject) => calls.transcriptResolvers.push({ resolve, reject })),
 
     },
   };
@@ -137,4 +142,27 @@ test('#2 guard reseta: novo rename abre após um anterior', async () => {
   const second = openRename();             // 2º deve abrir (renaming não travou)
   assert.ok(second && second !== first, 'novo input abre normalmente');
   key(second, 'Escape');
+});
+
+test('nova sessão local awaiting alerta depois que a origin local reaparece', async () => {
+  const { calls, sessionsCb } = await setup();
+  const now = Math.floor(Date.now() / 1000);
+  sessionsCb([]); // origin local some e é podada de seenOrigins
+  sessionsCb([{ session_id: 's2', pid: 222, agent: 'claude', last_event: 'PermissionRequest', last_event_ts: now }]);
+  assert.equal(calls.notify.length, 1, 'origem local nova passa pela comparação de transição');
+});
+
+test('resposta antiga de transcript não sobrescreve a sessão mais recente', async () => {
+  const { ctx, els, calls } = await setup();
+  ctx.openTranscriptPanel({ session_id: 'old', pid: 1, agent: 'claude', cwd: '/old' });
+  ctx.openTranscriptPanel({ session_id: 'new', pid: 2, agent: 'claude', cwd: '/new' });
+  const body = els.overlay.children.at(-1).querySelector('.ts-body');
+
+  calls.transcriptResolvers[1].resolve([{ role: 'user', text: 'mais novo' }]);
+  await Promise.resolve();
+  assert.equal(body.innerHTML, '', 'resposta atual substituiu o loading');
+
+  calls.transcriptResolvers[0].resolve([]);
+  await Promise.resolve();
+  assert.equal(body.innerHTML, '', 'resposta antiga vazia foi descartada');
 });

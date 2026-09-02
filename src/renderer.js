@@ -239,9 +239,10 @@ function render() {
     // não deve apitar (só transições reais disparam alerta). Sessão marcada
     // lida está em 'read' (não 'awaiting'), então não apita — reacende só com
     // evento vermelho novo (que volta pra 'awaiting' e passa por aqui).
-    // 1ª aparição da ORIGEM (peer novo, ou o boot): semeia prevLevels p/ não
-    // estourar alerta em sessões que JÁ estavam vermelhas quando chegaram.
-    if (newOrigins.has(s.origin || 'local')) prevLevels.set(key, st.level);
+    // 1ª aparição de uma origem REMOTA: semeia prevLevels p/ não estourar
+    // alerta em sessões que JÁ estavam vermelhas quando o peer chegou. A carga
+    // local do boot é coberta por firstRender; sessões locais posteriores não.
+    if (s.origin && s.origin !== 'local' && newOrigins.has(s.origin)) prevLevels.set(key, st.level);
     const was = prevLevels.get(key);
     if (!firstRender && st.level === 'awaiting' && was !== 'awaiting' && !isSnoozed(key)) {
       const nowMs = Date.now();
@@ -451,7 +452,6 @@ function render() {
   $list.hidden = !expanded || sessions.length === 0;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();
-  firstRender = false;
 }
 
 // Barra persistente de Quick Launcher (rodapé do overlay): um botão-ícone por
@@ -777,7 +777,13 @@ window.addEventListener('mouseup', () => { resizing = null; });
 
 // Recebe sessões; pede carga inicial; carrega idioma, apelidos e settings.
 window.trafficLight.getLang().then((l) => { T = makeT(l || 'en'); applyStaticI18n(); render(); });
-window.trafficLight.onSessions((s) => { sessions = s || []; render(); });
+window.trafficLight.onSessions((s) => {
+  sessions = s || [];
+  render();
+  // Só a primeira carga REAL de sessões encerra a hidratação. Renders prévios
+  // disparados por idioma/settings não podem consumir o guard anti-alerta do boot.
+  firstRender = false;
+});
 window.trafficLight.requestSessions();
 window.trafficLight.onUsage((u) => { usageEntries = Array.isArray(u) ? u : []; applyFooterMode(); });
 window.trafficLight.onUsageMeta((m) => applyUsageMeta(m));
@@ -835,6 +841,7 @@ render();
 // demanda (local lê disco; remoto via /transcript no peer) — nunca no poll.
 // textContent p/ o texto da mensagem (sem injeção de HTML vindo do prompt).
 let $tsPanel = null;
+let transcriptRequestSeq = 0;
 function openTranscriptPanel(s) {
   const $ov = document.getElementById('overlay');
   if (!$ov) return;
@@ -849,8 +856,10 @@ function openTranscriptPanel(s) {
     labelFor(s) + (s.origin && s.origin !== 'local' ? ' · ' + s.origin : '');
   const body = $tsPanel.querySelector('.ts-body');
   body.innerHTML = '<div class="ts-loading">' + T('ts_loading') + '…</div>';
+  const requestSeq = ++transcriptRequestSeq;
   window.trafficLight.fetchTranscript(s.origin || 'local', s.session_id, 20)
     .then((msgs) => {
+      if (requestSeq !== transcriptRequestSeq) return;
       if (!Array.isArray(msgs) || !msgs.length) { body.innerHTML = '<div class="ts-empty">' + T('ts_empty') + '</div>'; return; }
       body.innerHTML = '';   // limpa o "loading"
       for (const m of msgs) {
@@ -862,7 +871,10 @@ function openTranscriptPanel(s) {
         body.appendChild(row);
       }
     })
-    .catch(() => { body.innerHTML = '<div class="ts-empty">' + T('ts_error') + '</div>'; });
+    .catch(() => {
+      if (requestSeq !== transcriptRequestSeq) return;
+      body.innerHTML = '<div class="ts-empty">' + T('ts_error') + '</div>';
+    });
 }
 
 // (o terminal embutido mudou-se para src/term.html + src/term-renderer.js —

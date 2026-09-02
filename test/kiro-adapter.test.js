@@ -195,6 +195,24 @@ test('compactação do .jsonl (encolheu) volta a ser lida — não fica surda', 
   assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PostToolUse', 're-leu após encolhimento');
 });
 
+test('última entrada JSONL maior que 64 KiB é lida inteira', () => {
+  const sandbox = loadAdapter(makeFs());
+  const mfs = sandbox.fs;
+  const sid = 'big1';
+  seedLock(mfs, sid, 12);
+  const anterior = JSON.stringify({ kind: 'Prompt', data: {} });
+  const grande = JSON.stringify({
+    kind: 'ToolResults',
+    data: { content: 'x'.repeat(70 * 1024) },
+  });
+  mfs.writeFileSync(`${KDIR}/${sid}.jsonl`, `${anterior}\n${grande}\n`);
+
+  sandbox.handleJsonl(sid);
+
+  assert.equal(mfs._read(`${STATE}/${sid}.json`).last_event, 'PostToolUse',
+    'não recua para o Prompt quando o tail começa no meio do último JSON');
+});
+
 test('jsonl sem .lock não grava state pid:null (zumbi) e add do lock cria a linha', () => {
   const sandbox = loadAdapter(makeFs());
   const mfs = sandbox.fs;
