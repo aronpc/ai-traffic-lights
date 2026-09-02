@@ -145,7 +145,10 @@ function forwardPtyOutput(ws, pty, data, high = 1 << 20) {
 
 // Sanitiza uma sessão pra sair na rede: remove campos machine-local e marca
 // `origin` com o nome DESTE nó (pra o overlay do peerBadge na máquina remota).
-function exportSession(s, nodeName, nowSec) {
+// readAtFor (opcional, #56): (sessãoLocal) → epoch da marca de lido vigente
+// ou undefined. Recebe a sessão ANTES do override de origin — a chave da
+// marca é o namespace local (sessionKey → 'local:<pid>').
+function exportSession(s, nodeName, nowSec, readAtFor) {
   const out = { ...s };
   for (const k of LOCAL_ONLY) delete out[k];
   out.origin = nodeName;
@@ -154,6 +157,15 @@ function exportSession(s, nodeName, nowSec) {
   // skew na escalada idle de sessões remotas (PR-32 #18).
   if (typeof nowSec === 'number' && typeof out.last_event_ts === 'number') {
     out.idleSec = Math.max(0, Math.floor(nowSec) - out.last_event_ts);
+  }
+  // #56: a marca de lido viaja como IDADE RELATIVA (readIdleSec) pelo MESMO
+  // motivo do idleSec acima — o receptor re-ancora (now - readIdleSec) e a
+  // comparação `last_event_ts <= readAt` (state-machine) corre entre dois
+  // timestamps do MESMO relógio. Epoch cru (relógio da origem) misturaria
+  // relógios justamente com o last_event_ts que o anchorRemote reescreveu.
+  const at = (typeof readAtFor === 'function') ? readAtFor(s) : undefined;
+  if (typeof nowSec === 'number' && Number.isFinite(at) && at > 0) {
+    out.readIdleSec = Math.max(0, Math.floor(nowSec) - at);
   }
   return out;
 }
@@ -195,23 +207,25 @@ function readBody(req, cb, limit = 65536) {
   req.on('error', () => finish(400));
 }
 
-// Saneia o payload do POST /read: { marks: [{key, readAt}] }. Retorna array
-// saneado ou null se o body não é JSON/payload válido. Tetos: 100 marks por
-// request, key 1-256 chars, readAt inteiro > 0 (epoch s). Itens inválidos são
-// DESCARTADOS individualmente — um item ruim não derruba o lote inteiro.
+// Saneia o payload do POST /read: { now?, marks: [{key, readAt}] }. Retorna
+// { now, marks } (now = epoch do CLIENTE, ou 0 se ausente/inválido) ou null
+// se o body não é JSON/payload válido. Tetos: 100 marks por request, key
+// 1-256 chars, readAt inteiro > 0 (epoch s). Itens inválidos são DESCARTADOS
+// individualmente — um item ruim não derruba o lote inteiro.
 function parseReadMarks(buf) {
   let body = null;
   try { body = JSON.parse(buf.toString('utf8')); } catch { return null; }
   if (!body || typeof body !== 'object' || !Array.isArray(body.marks)) return null;
-  const out = [];
+  const now = Math.floor(Number(body.now));
+  const marks = [];
   for (const m of body.marks.slice(0, 100)) {
     if (!m || typeof m !== 'object') continue;
     if (typeof m.key !== 'string' || m.key.length < 1 || m.key.length > 256) continue;
     const at = Math.floor(Number(m.readAt));
     if (!Number.isFinite(at) || at <= 0) continue;
-    out.push({ key: m.key, readAt: at });
+    marks.push({ key: m.key, readAt: at });
   }
-  return out;
+  return { now: Number.isFinite(now) && now > 0 ? now : 0, marks };
 }
 
 // Sobe o servidor. Retorna o http.Server. Binda em bindHost (default: IP da
@@ -221,7 +235,9 @@ function parseReadMarks(buf) {
 //   onReadMarks(marks) → aplica marcas de leitura vindas de peer (#56) e
 //     devolve qtd aplicada (0 = nada mudou). Opcional: sem callback a rota
 //     POST /read responde 200 com applied=0 (degrada, não quebra o peer).
-function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, onReadMarks, bindHost, onError }) {
+//   readAtFor(sessãoLocal) → epoch da marca de lido vigente da sessão (#56)
+//     ou undefined; vira readIdleSec no payload de /sessions. Opcional.
+function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, onReadMarks, readAtFor, bindHost, onError }) {
   const server = http.createServer((req, res) => {
     const respond = (code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
     res.setHeader('Content-Type', 'application/json');
@@ -236,8 +252,18 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
       if (url.pathname !== '/read') return respond(405, { error: 'method' });
       return readBody(req, (code, buf) => {
         if (code) return respond(code, { error: 'payload' });
-        const marks = parseReadMarks(buf);
-        if (!marks) return respond(400, { error: 'payload' });
+        const parsed = parseReadMarks(buf);
+        if (!parsed) return respond(400, { error: 'payload' });
+        const marks = parsed.marks;
+        // RELÓGIOS: readAt chega no relógio DO CLIENTE; `now` (epoch dele no
+        // momento do POST) converte pro relógio DESTA origem: drift = agora
+        // - now. O par (readAt ancorado, now) do cliente faz as latências
+        // poll→clique se cancelarem — sobra só o skew real. Sem `now` (peer
+        // antigo) fica cru: degrada ao comportamento sem correção.
+        if (parsed.now > 0) {
+          const drift = Math.floor(Date.now() / 1000) - parsed.now;
+          for (const m of marks) m.readAt = Math.max(1, m.readAt + drift);
+        }
         let applied = 0;
         if (typeof onReadMarks === 'function') {
           try { applied = onReadMarks(marks) || 0; } catch {}
@@ -250,7 +276,7 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
     if (url.pathname === '/sessions') {
       let sessions = [];
       try { sessions = getSessions() || []; } catch {}
-      return respond(200, { node: nodeName, sessions: sessions.map((s) => exportSession(s, nodeName, Math.floor(Date.now() / 1000))) });
+      return respond(200, { node: nodeName, sessions: sessions.map((s) => exportSession(s, nodeName, Math.floor(Date.now() / 1000), readAtFor)) });
     }
     if (url.pathname === '/transcript') {
       if (!shareTranscripts) return respond(403, { error: 'transcripts not shared' });
@@ -421,4 +447,26 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20, onlineS
   } catch { return []; }
 }
 
-if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline, peerAuthority, anchorRemote, forwardPtyOutput };
+// Posta marcas de leitura à ORIGEM de sessões remotas (#56 — cliente do POST
+// /read). A chave já deve estar REESCRITA no namespace da origem
+// (rewriteKeyOrigin: 'peer:1234' → 'local:1234') e o `now` é o epoch DESTE
+// cliente, pra a origem converter o readAt pro relógio dela (ver drift no
+// handler do POST). Caller trata como fire-and-forget: numa falha a marca
+// local otimista segue válida e o poll re-exporta readIdleSec no próximo
+// ciclo — convergência via /sessions, não via retry.
+async function postReadToPeer({ host, port, token, marks, now }) {
+  if (!host || !Array.isArray(marks) || !marks.length) return false;
+  const hostPort = peerAuthority(host, port);
+  if (!hostPort) return false;
+  try {
+    const r = await fetch(`http://${hostPort}/read`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(3000),   // blackhole não pendura o clique
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify({ now, marks }),
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+if (typeof module !== 'undefined') module.exports = { startServer, pollPeers, tokenOk, exportSession, fetchTranscriptFromPeer, postReadToPeer, detectTailnetIP, tailscaleOnlineSet, buildOnlineSet, peerOnline, peerAuthority, anchorRemote, forwardPtyOutput };

@@ -62,6 +62,10 @@ contextBridge.exposeInMainWorld('trafficLight', {
   // readAt > marca atual — nunca rebaixa um "lido" mais recente.
   onReadMarks: (cb) => ipcRenderer.on('read-marks', (_e, state) => cb(state)),
   onRemoteRead: (cb) => ipcRenderer.on('remote-read', (_e, m) => cb(m)),    // m = { key, readAt }
+  // Clique "li" (#56): renderer pinta o cinza otimista NA HORA e avisa o main,
+  // que persiste e — se a sessão é de um PEER — posta a marca na origem (chave
+  // reescrita no namespace dela) p/ propagar a TODOS os peers via /sessions.
+  markRead: (key, readAt, origin) => ipcRenderer.send('mark-read', { key, readAt, origin }),
   onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
   onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
   onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente

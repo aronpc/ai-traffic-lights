@@ -23,6 +23,7 @@ const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const claudePaths = require('./src/claude-config');
 const readMarksLib = require('./src/read-marks');
+const { sessionKey, rewriteKeyOrigin } = require('./src/identity');
 const { spawn } = require('child_process');
 const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 
@@ -766,6 +767,35 @@ ipcMain.handle('fetch-transcript', async (_e, { origin, key, n }) => {
   return net.fetchTranscriptFromPeer({ host, port: s.port, token: s.token, key, n: N, onlineSet });
 });
 
+// #56: clique "marcar como lido" no overlay. Sempre persiste no read-marks
+// (sobrevive restart — o renderer já pintou o cinza otimista na hora). Se a
+// sessão é de um PEER, além disso avisa a ORIGEM: posta a chave reescrita no
+// namespace DELA (rewriteKeyOrigin 'peer:1234' → 'local:1234') e a origem
+// passa a exportar readIdleSec pra TODOS os peers no próximo /sessions.
+// O readAt postado NÃO leva folga: o par (readAt, now) é auto-corretor. O
+// readAt foi ancorado ao relógio local pelo MESMO poll que ancorou o
+// last_event_ts (ambos somam D = latência+skew); o drift `agora - now`
+// calculado na origem remove exatamente esse D. O resíduo é a soma das
+// latências (poll + POST), sempre ≥ 0 — nunca derruba o readAt abaixo do
+// last_event_ts da origem. Folga extra marcaria "lido" um evento que chegasse
+// até 2s DEPOIS do clique.
+ipcMain.on('mark-read', (_e, { key, readAt, origin } = {}) => {
+  if (typeof key !== 'string' || !key || !(Number(readAt) > 0)) return;
+  const at = Math.floor(Number(readAt));
+  applyReadMarks([{ key, readAt: at }]);
+  if (origin && origin !== 'local') {
+    const host = originToHost.get(origin);
+    const s = (settingsCfg && settingsCfg.sync) || {};
+    if (host && s.enabled && s.token) {
+      net.postReadToPeer({
+        host, port: s.port, token: s.token,
+        now: Math.floor(Date.now() / 1000),
+        marks: [{ key: rewriteKeyOrigin(key, origin, 'local'), readAt: at }],
+      }).catch(() => {});   // fire-and-forget: falha não perde nada (o estado local já está persistido)
+    }
+  }
+});
+
 // Preferências espelha o tray: autostart + hooks. Mostrar/ocultar e sair
 // reusam os canais 'toggle-visibility' e 'quit' já registrados.
 ipcMain.handle('get-autostart', () => autostartEnabled());
@@ -844,6 +874,7 @@ function applySync() {
           catch { return []; }
         },
         onReadMarks: applyReadMarks,   // POST /read (#56): marca vinda de peer → merge+persiste+push
+        readAtFor: (s) => readMarksState[sessionKey(s)],   // #56: marca vigente vira readIdleSec no /sessions
       });
       syncServerKey = srvKey;
       try { console.log('[sync] server up ' + (bindHost || '127.0.0.1') + ':' + s.port + ' (' + syncNodeName() + (bindHost ? '' : ' — localhost só, sem tailscale?') + ')'); } catch {}
@@ -872,6 +903,23 @@ function applySync() {
         remoteSessions.set(host, sessions);
         livePeers.add(host);   // ATL ligado no peer → habilita no menu + da termWin
         for (const s of sessions) if (s && s.origin) originToHost.set(s.origin, host); // p/ fetch-transcript remoto
+        // #56: leitura marcada NA ORIGEM (clique lá, ou POST /read de um 3º)
+        // chega como readIdleSec — idade relativa no relógio DO PEER. Re-ancora
+        // no relógio LOCAL (agora - readIdleSec), o MESMO padrão do anchorRemote
+        // que reescreveu o last_event_ts destas sessões: a comparação
+        // `last_event_ts <= readAt` do state-machine corre entre dois
+        // timestamps do MESMO relógio. Chave no namespace do RECEPTOR
+        // (sessionKey → 'peer:<pid>'), igual à marca otimista do clique local.
+        const nowS = Math.floor(Date.now() / 1000);
+        const marks = [];
+        for (const s of sessions) {
+          if (!s || s.readIdleSec == null) continue;
+          const k = sessionKey(s);
+          const at = nowS - Math.max(0, s.readIdleSec | 0);
+          delete s.readIdleSec;   // consumido aqui: não vaza ao renderer
+          if (k && at > 0) marks.push({ key: k, readAt: at });
+        }
+        if (marks.length) applyReadMarks(marks);
         sendSessions();
       },
       // Peer caiu → DESCARTA as sessões dele. Antes só saía de livePeers (menu

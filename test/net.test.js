@@ -2,7 +2,7 @@
 // localhost de verdade (porta efêmera, fetch real) cobrindo /sessions e /transcript.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, tokenOk, exportSession, pollPeers, fetchTranscriptFromPeer, tailscaleOnlineSet, buildOnlineSet, peerOnline, peerAuthority, anchorRemote, forwardPtyOutput } = require('../src/net.js');
+const { startServer, tokenOk, exportSession, pollPeers, fetchTranscriptFromPeer, postReadToPeer, tailscaleOnlineSet, buildOnlineSet, peerOnline, peerAuthority, anchorRemote, forwardPtyOutput } = require('../src/net.js');
 
 // ---- tokenOk: compare constante, fail-safe ----
 test('tokenOk: token correto → true', () => {
@@ -62,6 +62,37 @@ test('anchorRemote: reescreve last_event_ts no relógio local via idleSec (sem c
 test('anchorRemote: sem idleSec (peer antigo) → sessão intacta', () => {
   const s = { session_id: 's1', origin: 'peer', last_event_ts: 999999 };
   assert.equal(anchorRemote(s, 5000), s, 'mesma ref, sem alteração');
+});
+
+// ---- exportSession com readAtFor (#56): a marca de lido viaja como IDADE
+// relativa (readIdleSec), o mesmo padrão do idleSec — nunca epoch cru, senão o
+// clock-skew da origem re-entraria pela comparação `last_event_ts <= readAt`.
+test('exportSession: com readAtFor + nowSec, inclui readIdleSec (idade da marca)', () => {
+  const out = exportSession({ session_id: 's1', pid: 42 }, 'me', 5000, () => 4200);
+  assert.equal(out.readIdleSec, 800, 'readIdleSec = nowSec - readAt');
+});
+
+test('exportSession: sem marca vigente → sem readIdleSec (readAtFor undefined)', () => {
+  const out = exportSession({ session_id: 's1', pid: 42 }, 'me', 5000, () => undefined);
+  assert.equal(out.readIdleSec, undefined, 'sem marca, sem campo');
+  const semCb = exportSession({ session_id: 's1', pid: 42 }, 'me', 5000);
+  assert.equal(semCb.readIdleSec, undefined, 'sem readAtFor (peer legado), sem campo');
+});
+
+// A cadeia inteira num teste só (documentação executável): a ORIGEM exporta
+// idade; o RECEPTOR re-ancora no relógio dele e recupera o readAt EXATO que a
+// origem tinha — mesmo com relógios totalmente diferentes (5000 vs 999999).
+test('cadeia #56: export(idade) → receptor re-ancora → readAt original recuperado', () => {
+  // origem: relógio da origem marca 5000, leitura foi marcada em 4000
+  const exported = exportSession({ session_id: 's1', pid: 42 }, 'me', 5000, () => 4000);
+  assert.equal(exported.readIdleSec, 1000);
+  // receptor: relógio local 6000 quando o poll chega — re-ancora ambos os
+  // campos pelo MESMO now (o anchorRemote já cuida do last_event_ts)
+  const anchored = anchorRemote(exported, 6000);
+  const readAt = 6000 - anchored.readIdleSec;
+  assert.equal(readAt, 5000, 'readAt do receptor = nowLocal - readIdleSec (relógio local)');
+  // last_event_ts e readAt agora vivem no MESMO relógio: a comparação do
+  // state-machine (`last_event_ts <= readAt`) fica skew-free
 });
 
 // ---- startServer: integração localhost (porta efêmera, fetch real) ----
@@ -193,6 +224,91 @@ test('POST /read: body acima do teto (64 KiB) → 413', async () => {
     const { status } = await POST(port, '/read', 'tok', big);
     assert.equal(status, 413);
   } finally { server.close(); }
+});
+
+// ---- drift do POST (#56): o par (readAt, now) converte o readAt ao relógio
+// DA ORIGEM — quem posta é um receptor cuja marca foi re-ancorada pelo poll;
+// sem isso, o readAt chegaria no relógio errado e a comparação interna da
+// origem (last_event_ts <= readAt) quebraria com clock-skew.
+test('POST /read: now no passado distante → readAt chega MAIOR (drift aplicado)', async () => {
+  let received = null;
+  const { server, port } = await up({ onReadMarks: (m) => { received = m; return 1; } });
+  try {
+    const nowPeer = Math.floor(Date.now() / 1000) - 100;   // relógio do cliente 100s atrasado
+    const { status, json } = await POST(port, '/read', 'tok', {
+      now: nowPeer, marks: [{ key: 'local:1234', readAt: 1000 }],
+    });
+    assert.equal(status, 200);
+    assert.equal(json.applied, 1);
+    assert.ok(received, 'onReadMarks chamado');
+    assert.equal(received[0].key, 'local:1234');
+    // drift = agoraOrigem - nowPeer ≈ +100 (tolerância ±5 p/ execução lenta)
+    assert.ok(received[0].readAt >= 1095 && received[0].readAt <= 1105,
+      `readAt re-ancorado ao relógio da origem (veio ${received[0].readAt}, esperado ~1100)`);
+  } finally { server.close(); }
+});
+
+test('POST /read: drift nunca derruba readAt abaixo de 1 (now no futuro)', async () => {
+  let received = null;
+  const { server, port } = await up({ onReadMarks: (m) => { received = m; return 1; } });
+  try {
+    const nowPeer = Math.floor(Date.now() / 1000) + 3600;   // cliente adiantado 1h
+    await POST(port, '/read', 'tok', { now: nowPeer, marks: [{ key: 'local:7', readAt: 500 }] });
+    assert.equal(received[0].readAt, 1, 'clamp: readAt + drift negativo → mínimo 1, nunca 0/negativo');
+  } finally { server.close(); }
+});
+
+// ---- /sessions exporta readIdleSec quando o main alimenta readAtFor ----
+test('server: /sessions com readAtFor → payload inclui readIdleSec da marca vigente', async () => {
+  const nowS = Math.floor(Date.now() / 1000);
+  const { server, port } = await up({
+    readAtFor: (s) => (s.pid === 1 ? nowS - 240 : undefined),
+  });
+  try {
+    const { status, json } = await GET(port, '/sessions', 'tok');
+    assert.equal(status, 200);
+    const sess = json.sessions[0];
+    assert.ok(sess.readIdleSec >= 238 && sess.readIdleSec <= 242,
+      `readIdleSec ≈ 240 (veio ${sess.readIdleSec})`);
+  } finally { server.close(); }
+});
+
+// ---- postReadToPeer (#56): cliente fire-and-forget que posta a marca ----
+test('postReadToPeer: servidor real recebe marks saneadas + now', async () => {
+  let body = null;
+  const { server, port } = await up({ onReadMarks: (m) => { body = m; return m.length; } });
+  try {
+    const ok = await postReadToPeer({
+      host: '127.0.0.1', port, token: 'tok',
+      now: 1730000000, marks: [{ key: 'local:1234', readAt: 1729999000 }],
+    });
+    assert.equal(ok, true, 'POST aceito');
+    // drift = agora - 1730000000 (gigante) mas o assert é do PAR chegando:
+    assert.ok(body, 'onReadMarks recebeu as marks');
+    assert.equal(body[0].key, 'local:1234', 'chave já no namespace da origem');
+  } finally { server.close(); }
+});
+
+test('postReadToPeer: token errado → false (sem throw)', async () => {
+  const { server, port } = await up({ onReadMarks: () => 0 });
+  try {
+    const ok = await postReadToPeer({ host: '127.0.0.1', port, token: 'wrong', marks: [{ key: 'x', readAt: 1 }] });
+    assert.equal(ok, false, '401 vira false, caller segue vivo');
+  } finally { server.close(); }
+});
+
+test('postReadToPeer: host inalcançável → false rápido (timeout, sem throw)', async () => {
+  const ok = await postReadToPeer({
+    host: '127.0.0.1', port: 1, token: 'tok',   // porta 1: nada escuta
+    now: 1, marks: [{ key: 'x', readAt: 1 }],
+  });
+  assert.equal(ok, false, 'ECONNREFUSED vira false');
+});
+
+test('postReadToPeer: guard — sem host ou sem marks → false sem rede', async () => {
+  assert.equal(await postReadToPeer({ port: 1, token: 't', marks: [{ key: 'x', readAt: 1 }] }), false, 'sem host');
+  assert.equal(await postReadToPeer({ host: '127.0.0.1', port: 1, token: 't', marks: [] }), false, 'marks vazio');
+  assert.equal(await postReadToPeer({ host: '127.0.0.1', port: 1, token: 't' }), false, 'sem marks');
 });
 
 test('server: EADDRINUSE (porta em uso) → chama onError, não crasha o processo', async () => {

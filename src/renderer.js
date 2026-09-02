@@ -373,7 +373,11 @@ function render() {
       // Marcar como lido: o MESMO clique foca E silencia o vermelho (vira cinza)
       // — carimba até o evento atual; uma notificação nova (ts maior) reacende.
       if (markRead && st.level === 'awaiting') {
-        readMarks.set(key, s.last_event_ts || nowSec);
+        const at = s.last_event_ts || nowSec;
+        readMarks.set(key, at);
+        // #56: main persiste a marca e, se a sessão é de um PEER, posta na
+        // origem (readAt ancorado ao relógio local + now) p/ todos verem cinza.
+        if (window.trafficLight.markRead) window.trafficLight.markRead(key, at, originOf(s));
         render();                            // reflete o cinza na hora
       }
       clickTimer = setTimeout(() => {
