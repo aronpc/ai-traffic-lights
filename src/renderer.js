@@ -211,6 +211,39 @@ function startRename(s, labelEl) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
+// Rename da CONTA Claude (multi-conta #58): dblclick no nome da barra troca o
+// apelido exibido. Mesmo contrato do rename de sessão (reusa a flag `renaming`
+// → render() não destrói o input), mas persiste via set-account-label — o main
+// resolve o accountId (sfx) de volta pro uuid e grava account-labels.json.
+function startAccountRename(u, nameEl) {
+  if (!u.accountId || renaming) return;
+  renaming = true;
+  const input = document.createElement('input');
+  input.className = 'row-input';
+  input.value = u.account || '';
+  nameEl.replaceChildren(input);
+  input.focus(); input.select();
+
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    renaming = false;
+    if (save && input.value.trim() !== (u.account || '')) {
+      u.account = input.value.trim() || undefined;   // otimista: label já muda
+      window.trafficLight.setAccountLabel(u.accountId, input.value);
+    }
+    render();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', () => finish(true));   // clicar fora = commit
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
+
 function render() {
   if (renaming) return;                    // não destrói o input aberto (issue #2)
   const nowSec = Math.floor(Date.now() / 1000);
@@ -490,7 +523,11 @@ function usageLabel(u) {
   const provider = USAGE_PROVIDER[u.agent] || (u.plan ? u.plan.split(/[\s(]/)[0] : (u.agent || '?'));
   const plan = usagePlanName(u);
   const win = usageWindow(u);
-  const head = plan ? `${provider}(${plan})` : provider;
+  // Multi-conta Claude (#58): o rótulo da conta distingue as barras —
+  // "Claude(Max 5× · ghost)". Só o apelido/identidade aparece; uuid e email
+  // nunca chegam ao renderer (o main resolve tudo).
+  const planFull = plan && u.account ? `${plan} · ${u.account}` : (plan || u.account || '');
+  const head = planFull ? `${provider}(${planFull})` : provider;
   return win ? `${head} ${win}` : head;
 }
 
@@ -600,6 +637,8 @@ function renderUsage() {
 
     const name = document.createElement('span'); name.className = 'urow__name'; name.textContent = nameTxt;
     name.setAttribute('data-tip', tipTxt);
+    // Multi-conta (#58): dblclick no nome = apelido da conta (persiste no main).
+    if (u.accountId) name.addEventListener('dblclick', () => startAccountRename(u, name));
 
     // leitura: número grande (cor da faixa) + sinal % pequeno; "—" quando sem dado.
     const read = document.createElement('span'); read.className = 'urow__read';

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   focus: (target) => ipcRenderer.send('focus', target),       // click-to-focus {pid, windowid}
   getAliases: () => ipcRenderer.invoke('get-aliases'),        // rename in-place
   setAlias: (key, alias) => ipcRenderer.send('set-alias', { key, alias }),
+  setAccountLabel: (accountId, label) => ipcRenderer.send('set-account-label', { accountId, label }), // apelido da CONTA Claude (multi-conta #58)
   notify: (title, body) => ipcRenderer.send('notify', { title, body }), // alerta vermelho
   toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
   revealOverlay: () => ipcRenderer.send('reveal-overlay'),       // traz à frente (transição p/ vermelho)

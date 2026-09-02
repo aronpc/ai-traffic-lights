@@ -9,7 +9,7 @@ const {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits,
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
-  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter,
+  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
@@ -89,7 +89,8 @@ test('parseClaudeConfig: sem oauthAccount → plan null (sem conta, some do over
 
 test('parseClaudeConfig: payload vazio/malformado → tudo null', () => {
   const r = parseClaudeConfig({}, NOW);
-  assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null });
+  assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
+    accountUuid: null, accountName: null, accountEmail: null });
   assert.deepEqual(parseClaudeConfig(null, NOW).plan, null);
 });
 
@@ -1177,4 +1178,100 @@ test('detectReset: 2 entries mesmo id numa coleta → só 1 notificação', () =
   const e = RESET_ENTRY('glm-tokens', 4, '2026-07-07T22:00:00Z');
   const { toNotify } = detectReset(s1, [e, e], later, 90);
   assert.equal(toNotify.length, 1, 'duplicata de id não duplica o aviso');
+});
+
+// =========================== multi-conta Claude (#58) ===========================
+
+test('claudeAccountSfx: sha256-6 estável e distinto por fonte', () => {
+  assert.match(claudeAccountSfx('uuid-A'), /^[0-9a-f]{6}$/);
+  assert.equal(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-A'));
+  assert.notEqual(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-B'));
+});
+
+test('parseClaudeConfig: extrai identidade da conta (uuid/org/email) p/ multi-conta', () => {
+  const r = parseClaudeConfig({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x',
+    accountUuid: 'uuid-123', organizationName: 'Ghost Org', emailAddress: 'ghost@ex.com',
+  } }, NOW);
+  assert.equal(r.accountUuid, 'uuid-123');
+  assert.equal(r.accountName, 'Ghost Org');
+  assert.equal(r.accountEmail, 'ghost@ex.com');
+});
+
+// Duas contas nomeadas (sem .credentials.json → plano-só, 1 linha por conta).
+// A conta B não tem organizationName → rótulo cai no local-part do email
+// (o email COMPLETO nunca aparece — o corte é no claudeAccountLabel).
+test('collectUsage: 2 contas Claude → uma barra por conta, id sufixado + rótulo', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-A', organizationName: 'Alpha Org' } }));
+  fs.writeFileSync(path.join(dirB, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-B', emailAddress: 'beta@ex.com' } }));
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 2, 'uma barra por conta');
+  const a = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A'));
+  const b = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-B'));
+  assert.ok(a && b, 'ids sufixados pelo uuid (claude-plan:<sha6>)');
+  assert.equal(a.account, 'Alpha Org', 'rótulo = organizationName');
+  assert.equal(b.account, 'beta', 'sem org → local-part do email');
+  assert.equal(a.accountId, claudeAccountSfx('uuid-A'), 'accountId = endereço do rename');
+  assert.equal(out[0].plan, 'Claude Max 5×');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('collectUsage: apelido manual (label do account-labels.json) vence o org name', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-A', organizationName: 'Alpha Org' } }));
+  fs.writeFileSync(path.join(dirB, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-B' } }));
+  const out = await collectUsage({
+    home: tmp,
+    claudeAccounts: [{ dir: dirA, label: 'Ghost' }, { dir: dirB }],
+    now: NOW,
+  });
+  const a = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A'));
+  assert.ok(a);
+  assert.equal(a.account, 'Ghost', 'label manual tem precedência sobre organizationName');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('collectUsage: 2 dirs MESMO uuid → 1 barra canônica (dedup por identidade)', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  for (const d of [dirA, dirB]) {
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-X' } }));
+  }
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 1, 'dois perfis, mesmo login → uma barra');
+  assert.equal(out[0].id, 'claude-plan', 'conta única → id canônico, sem sufixo');
+  assert.equal(out[0].account, undefined);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('isSummaryEntry: claude-plan sufixado (multi-conta) é resumo', () => {
+  assert.ok(isSummaryEntry({ id: 'claude-plan:abc123' }));
+  assert.ok(!isSummaryEntry({ id: 'claude-5h:abc123' }), 'janela concreta não é resumo');
+});
+
+// A chave de conteúdo do mergeUsage inclui `account`: duas contas com o MESMO
+// plano e a MESMA janela não podem colapsar numa linha só (era o comportamento
+// se a chave ignorasse a conta).
+test('mergeUsage: contas distintas, mesmo plano/janela → não colapsam', () => {
+  const mk = (sfx, account, pct) => ({
+    id: 'claude-5h:' + sfx, agent: 'claude', title: 'Claude Max 5× · 5 h window',
+    plan: 'Claude Max 5×', account, accountId: sfx, usedPct: pct,
+    resetAt: new Date(NOW + 3600e3).toISOString(), resetInMin: 60, error: null,
+  });
+  const merged = mergeUsage([], [mk('sfxA', 'Alpha', 10), mk('sfxB', 'Beta', 20)], NOW);
+  assert.equal(merged.length, 2, 'uma linha por conta, mesmo plano igual');
 });

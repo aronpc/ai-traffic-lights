@@ -26,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const os = require('os');
+const claudePaths = require('./claude-config.js');
 
 // ---- tradução de tier Claude Max → label humano ----
 const CLAUDE_TIER_LABEL = {
@@ -45,12 +46,17 @@ const CLAUDE_ORG_LABEL = {
 
 // =========================== LÓGICA PURA (parse) ===========================
 
-// Extrai reset/plano/passes de um objeto .claude.json já parseado.
-// `now` em ms. Devolve {usedPct:null, resetAt, resetInMin, plan, passes}.
+// Extrai reset/plano/passes/identidade de um objeto .claude.json já parseado.
+// `now` em ms. Devolve {usedPct:null, resetAt, resetInMin, plan, passes,
+// accountUuid, accountName, accountEmail}.
 // O % do ciclo do Claude Max NÃO fica persistido em disco (só em runtime da
 // API Anthropic) → usedPct é sempre null aqui (honesto: não inventa número).
+// Identidade (multi-conta, #58): accountUuid dedupa contas (dois perfis com o
+// mesmo login = uma barra); organizationName/emailAddress só rotulam — o email
+// COMPLETO nunca aparece na UI (só o local-part, e só no renderer).
 function parseClaudeConfig(cfg, now) {
-  const out = { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null };
+  const out = { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
+    accountUuid: null, accountName: null, accountEmail: null };
   if (!cfg || typeof cfg !== 'object') return out;
 
   // reset do plano: cachedGrowthBookFeatures.tengu_saffron_lattice.planLimitsEndDate
@@ -62,6 +68,9 @@ function parseClaudeConfig(cfg, now) {
   // presente mas desconhecida (rótulo genérico "Claude"). Só fica null quando
   // NÃO há conta OAuth alguma — aí o coletor omite o Claude do overlay.
   const acc = cfg.oauthAccount || {};
+  if (acc.accountUuid && typeof acc.accountUuid === 'string') out.accountUuid = acc.accountUuid;
+  if (acc.organizationName && typeof acc.organizationName === 'string') out.accountName = acc.organizationName;
+  if (acc.emailAddress && typeof acc.emailAddress === 'string') out.accountEmail = acc.emailAddress;
   if (acc.organizationRateLimitTier && CLAUDE_TIER_LABEL[acc.organizationRateLimitTier]) {
     out.plan = 'Claude ' + CLAUDE_TIER_LABEL[acc.organizationRateLimitTier];
   } else if (acc.organizationType && CLAUDE_ORG_LABEL[acc.organizationType]) {
@@ -265,11 +274,36 @@ function windowTitle(min) {
 // campos de identidade) — distingue "sem Claude" de "Claude sem plano mapeado".
 // Obs.: parsed.resetAt aqui é o planLimitsEndDate (fim do ciclo do PLANO), NÃO o
 // reset da janela de uso — por isso o caller o ignora no tile plano-só.
-function readClaudeConfig({ home, now } = {}) {
+//
+// Path pelo claude-config.js: <configdir>/.claude.json (vivo; configdir pode ser
+// symlink de perfil/dd-claude) com fallback legado ~/.claude.json (congelado).
+// Cache por mtime do .claude.json (arquivo grande, ~170 KB): multi-conta lê N
+// destes por ciclo de coleta — re-parsear N× a cada tick seria desperdício. O
+// mtime muda em cada escrita do Claude Code, então a invalidação é automática.
+// resetInMin depende de `now` → recalculado a cada retorno, sem re-parsear.
+const _claudeCfgCache = new Map(); // file → { mtime, parsed }
+function readClaudeConfig({ home, now, dir } = {}) {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.claude.json'), 'utf8'));
-    const parsed = parseClaudeConfig(cfg, now || Date.now());
-    return parsed.plan ? parsed : null;   // sem conta (plan null) → null
+    for (const f of claudePaths.configCandidates({ home, dir })) {
+      let raw, mtime;
+      try { raw = fs.readFileSync(f, 'utf8'); mtime = fs.statSync(f).mtimeMs; } catch { continue; }
+      let hit = _claudeCfgCache.get(f);
+      if (!hit || hit.mtime !== mtime) {
+        hit = { mtime, parsed: parseClaudeConfig(JSON.parse(raw), now || Date.now()) };
+        _claudeCfgCache.set(f, hit);
+      }
+      const parsed = hit.parsed;
+      // resetInMin é derivado do agora — sempre fresco, mesmo com cache:
+      if (parsed.resetAt) {
+        const ms = Date.parse(parsed.resetAt) - (now || Date.now());
+        parsed.resetInMin = ms > 0 ? Math.round(ms / 60000) : 0;
+      }
+      // Legível → É a fonte, com ou sem conta: um dir novo sem OAuth NÃO pode
+      // cair no legado congelado (conta de outro login) — seria o bug do #58
+      // de novo, invertido. Sem plan → sem conta, fim.
+      return parsed.plan ? parsed : null;
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -285,9 +319,11 @@ function readClaudeOAuthToken({ home } = {}) {
 // dois últimos são a fonte MAIS confiável do plano (o .claude.json pode trazer um
 // tier interno opaco como 'default_raven', enquanto as credenciais trazem o tier
 // real 'default_claude_max_5x'). Nunca lança — campos ausentes viram null.
-function readClaudeCreds({ home } = {}) {
+// Path pelo claude-config.js: <configdir>/.credentials.json (configdir pode ser
+// symlink de perfil/dd-claude — atravessa sozinho no acesso).
+function readClaudeCreds({ home, dir } = {}) {
   try {
-    const creds = JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.claude/.credentials.json'), 'utf8'));
+    const creds = JSON.parse(fs.readFileSync(claudePaths.credsFile({ home, dir }), 'utf8'));
     const o = (creds && creds.claudeAiOauth) || {};
     return {
       accessToken: typeof o.accessToken === 'string' && o.accessToken ? o.accessToken : null,
@@ -319,9 +355,9 @@ function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
 // na API: devolvemos o último valor bom conhecido, ou o plano-só. Assim o tile
 // não some nem pisca ⚠ e a janela de rate limit expira sozinha.
 const _claudeCacheByToken = new Map(); // token → { at, entries, cooldownUntil }
-async function readClaudeUsage({ home, now, fetcher, cooldownUntil, cooldownFails, setCooldown, allowFetch = true } = {}) {
-  const pc = readClaudeConfig({ home, now });
-  const creds = readClaudeCreds({ home });
+async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldownFails, setCooldown, allowFetch = true } = {}) {
+  const pc = readClaudeConfig({ home, now, dir });
+  const creds = readClaudeCreds({ home, dir });
   // Plano: credenciais primeiro (tier/subscription REAIS — ex.: 'default_claude_max_5x'),
   // depois o .claude.json (que pode ter só um tier interno opaco). Se nenhum
   // resolve mas há conta, cai no genérico do .claude.json (ou null = sem conta).
@@ -821,6 +857,15 @@ async function readOpencodeUsage({ env, now, fetcher, label, suffix } = {}) {
 
 function _clearOpencodeCache() { _opencodeCacheByToken.clear(); }
 
+// Sufixo estável da conta Claude multi-conta (#58; mesmo padrão do GLM):
+// sha256-6 do uuid — o dir pode mudar de nome (perfil renomeado) sem perder o
+// histórico de merge. Exportado: o main.js usa o MESMO sfx p/ mapear o rename
+// de apelido (renderer manda accountId=sfx → main resolve uuid → grava label).
+function claudeAccountSfx(src) {
+  try { return require('crypto').createHash('sha256').update(String(src)).digest('hex').slice(0, 6); }
+  catch { return String(src).slice(0, 6); }
+}
+
 // =========================== ORQUESTRADOR ===========================
 
 // Junta todas as fontes. Ordem estável: Claude (local) primeiro, GLM depois.
@@ -841,20 +886,56 @@ async function collectUsage(opts = {}) {
     : (opts.env ? [{ env: opts.env }] : []);
   const multi = creds.length > 1;              // >1 conta → rotula cada bloco
 
-  // Claude (OAuth) + OpenCode Go + todas as contas GLM em paralelo — I/O de rede
+  // Claude multi-conta (#58): opts.claudeAccounts = [{ dir, label? }] — o
+  // main.js coleta os CLAUDE_CONFIG_DIRs dos environ das sessões vivas
+  // (dir null = conta default do symlink ~/.claude). O dedup por accountUuid
+  // acontece AQUI, não no main: só quem lê o .claude.json de cada dir conhece
+  // o uuid (dois perfis com o mesmo login = uma barra). Fallback sem
+  // claudeAccounts = 1 conta default — ids canônicos, UI idêntica a hoje.
+  const accountsIn = Array.isArray(opts.claudeAccounts) && opts.claudeAccounts.length
+    ? opts.claudeAccounts
+    : [{ dir: null }];
+  const seenUuid = new Set();
+  const claudeAccounts = [];
+  for (const a of accountsIn) {
+    if (!a) continue;
+    const pc = readClaudeConfig({ home: opts.home, now: opts.now, dir: a.dir });
+    const uuid = pc && pc.accountUuid;
+    if (uuid) {
+      if (seenUuid.has(uuid)) continue;         // mesma conta noutro perfil → 1 barra
+      seenUuid.add(uuid);
+    }
+    claudeAccounts.push({ dir: a.dir, label: a.label, pc, uuid });
+  }
+  const multiClaude = claudeAccounts.length > 1;
+
+  // Rótulo da barra (#58): apelido dado (account-labels.json) > nome da org >
+  // local-part do email (email completo nunca aparece; o corte é aqui) >
+  // basename do dir. Cair no plano não distingue nada (2 barras, mesmo plano) —
+  // o nome do perfil é local, da própria máquina do usuário, e distingue.
+  function claudeAccountLabel(acc) {
+    if (acc.label) return acc.label;
+    const pc = acc.pc;
+    if (pc && pc.accountName) return pc.accountName;
+    if (pc && pc.accountEmail) return pc.accountEmail.split('@')[0];
+    if (acc.dir) { const b = String(acc.dir).replace(/\/+$/, '').split('/').pop(); if (b) return b; }
+    return null;
+  }
+
+  // Contas Claude + OpenCode Go + todas as contas GLM em paralelo — I/O de rede
   // independente. Claude usa opts.claudeFetcher (separado do de GLM/OpenCode:
   // cada API tem schema/mock próprio; em teste sem claudeFetcher e sem token, o
   // Claude cai no plano-só).
-  const [claude, antigravity, opencode, ...glm] = await Promise.all([
-    readClaudeUsage({
-      home: opts.home, now: opts.now, fetcher: opts.claudeFetcher,
+  const results = await Promise.all([
+    ...claudeAccounts.map((acc) => readClaudeUsage({
+      home: opts.home, dir: acc.dir, now: opts.now, fetcher: opts.claudeFetcher,
       cooldownUntil: opts.claudeCooldownUntil, cooldownFails: opts.claudeCooldownFails,
       setCooldown: opts.claudeSetCooldown,
       // Lazy: só bate na API do Claude quando o caller pede (gatilho de UI). O
       // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
       // omite → false. Default true preserva o contrato dos testes/uso direto.
       allowFetch: opts.claudeAllowFetch !== false,
-    }).catch(() => null),
+    }).catch(() => null)),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
     readOpencodeUsage({
       env: opts.opencodeEnv, now: opts.now, fetcher: opts.fetcher,
@@ -866,7 +947,27 @@ async function collectUsage(opts = {}) {
       suffix: multi ? c.suffix : undefined,
     }).catch(() => null)),                       // readGlmUsage já captura; dupla defesa
   ]);
-  if (Array.isArray(claude)) out.push(...claude);
+  const nClaude = claudeAccounts.length;
+  const antigravity = results[nClaude];
+  const opencode = results[nClaude + 1];
+  const glm = results.slice(nClaude + 2);
+
+  // Claude: >1 conta → id sufixado (claude-5h:<sfx>, como glm-month:<sha>) +
+  // campos account/accountId pro renderer e pro rename de apelido. 1 conta →
+  // ids canônicos, nenhum campo novo (regressão zero na UI de 1 conta).
+  results.slice(0, nClaude).forEach((entries, i) => {
+    if (!Array.isArray(entries)) return;
+    const acc = claudeAccounts[i];
+    if (!multiClaude) { out.push(...entries); return; }
+    const sfx = claudeAccountSfx(acc.uuid || acc.dir || 'default');
+    const label = claudeAccountLabel(acc);
+    for (const e of entries) {
+      e.id = e.id + ':' + sfx;
+      e.accountId = sfx;                 // endereço do rename (main mapeia sfx→uuid)
+      if (label) e.account = label;
+      out.push(e);
+    }
+  });
   if (Array.isArray(antigravity)) out.push(...antigravity);
   if (Array.isArray(opencode)) out.push(...opencode);
 
@@ -902,10 +1003,11 @@ const USAGE_DROP_MS = 20 * 60 * 1000;   // ~20 min → remove
 // entre OK (reais) e falha (fallback) entre ticks, isso evita "Claude Max" e
 // "Claude Max 5× - 5 h" na mesma tela. (issue: overlay duplicando tiles às vezes.)
 // glm:suffix é multi-conta; glm-tokens/month (com hífen) NÃO são resumo.
+// claude-plan:zzzzzz é o plano-só de UMA conta multi-conta (id sufixado).
 function isSummaryEntry(e) {
   if (!e || !e.id) return false;
   const id = String(e.id);
-  return id === 'claude-plan' || id === 'antigravity-plan' || id === 'glm' || id.startsWith('glm:') || id === 'opencode' || id.startsWith('opencode:');
+  return id === 'claude-plan' || id.startsWith('claude-plan:') || id === 'antigravity-plan' || id === 'glm' || id.startsWith('glm:') || id === 'opencode' || id.startsWith('opencode:');
 }
 
 // Funde a coleta nova (fresh) com o estado anterior (prev), por `id`. Resolve o
@@ -991,7 +1093,10 @@ function mergeUsage(prev, fresh, now) {
     // distintas têm resets separados por muito mais que 1s.
     const resetMs = e.resetAt ? Date.parse(e.resetAt) : NaN;
     const resetKey = Number.isNaN(resetMs) ? '' : Math.floor(resetMs / 1000);
-    const key = [e.agent, e.title || '', planNorm, resetKey].join('|');
+    // `account` (multi-conta Claude, #58) entra na chave: duas contas com o
+    // mesmo plano e a mesma janela são linhas DIFERENTES — sem isto o dedup por
+    // conteúdo as colapsaria numa barra só.
+    const key = [e.agent, e.title || '', e.account || '', planNorm, resetKey].join('|');
     const prev = byContent.get(key);
     if (!prev) { byContent.set(key, e); continue; }
     // escolhe a melhor: valor bom > stale menor > fetchedAt maior.
@@ -1073,10 +1178,10 @@ function detectReset(prevState, entries, now, threshold) {
 
 if (typeof module !== 'undefined') module.exports = {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits, parseAntigravityTier, parseAntigravityQuota, parseOpencodeUsage,
-  readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, readOpencodeUsage, collectUsage, parseEnviron,
+  readClaudeConfig, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, readOpencodeUsage, collectUsage, parseEnviron,
   findCodexRollout, lastCodexRateLimits, mergeUsage, isSummaryEntry, detectReset, parseRetryAfter,
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
-  readClaudeCreds, claudePlanFromCreds,
+  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx,
 };

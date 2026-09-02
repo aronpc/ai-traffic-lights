@@ -21,6 +21,7 @@ const settingsLib = require('./src/settings');
 const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
+const claudePaths = require('./src/claude-config');
 const { spawn } = require('child_process');
 const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 
@@ -64,6 +65,7 @@ const BASE_DIR = path.join(DATA_HOME, 'ai-traffic-lights');
 const STATE_DIR = path.join(BASE_DIR, 'state');
 const BOUNDS_FILE = path.join(BASE_DIR, 'window.json'); // {x, y, width}
 const ALIASES_FILE = path.join(BASE_DIR, 'aliases.json'); // {sessionKey: apelido}
+const ACCOUNT_LABELS_FILE = path.join(BASE_DIR, 'account-labels.json'); // {accountUuid|dir: apelido da CONTA Claude (#58)
 const SETTINGS_FILE = path.join(BASE_DIR, 'settings.json'); // {idleThresholdSec, escalateIdle, shortcut}
 const USAGE_FILE = path.join(BASE_DIR, 'usage.json'); // último uso conhecido (sobrevive a reinício; mostrado stale até refrescar)
 const CLAUDE_COOLDOWN_FILE = path.join(BASE_DIR, 'claude-cooldown.json'); // {until:<ms>} — cooldown do 429 da API de uso (SÓ o timestamp, nunca o token)
@@ -1276,6 +1278,11 @@ app.whenReady().then(() => {
       }
     },
   });
+  require('./src/ipc/account-labels').setupAccountLabelsIpc({   // multi-conta #58
+    ipcMain, ACCOUNT_LABELS_FILE,
+    getLastAccountIds: () => lastAccountIds,
+    recollect: () => collectAndSendUsage({ claudeFetch: false }),
+  });
   require('./src/ipc/focus').setupFocusIpc({   // focus extraído (REF passo 4)
     ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND,
   });
@@ -1542,6 +1549,66 @@ function codexCwdsFromSessions() {
   return [...cwds];
 }
 
+// ---- multi-conta Claude (#58): uma barra por conta com sessão viva ----
+// Perfis nomeados (dd-claude) lançam o claude com CLAUDE_CONFIG_DIR no environ
+// do processo; sessões SEM a var são da conta default (~/.claude → symlink do
+// perfil ativo). Descoberta = varrer o environ dos pids claude vivos (mesmo
+// padrão do glmCredsFromSessions), dedup por REALPATH do dir — o dedup fino
+// por identidade (accountUuid) acontece no collectUsage. A default entra
+// sempre (a barra nunca some) e primeiro. Labels manuais de account-labels.json
+// são aplicados aqui por uuid; lastAccountIds (sfx→uuid) deixa o IPC de rename
+// resolver a chave a partir do accountId que o renderer manda.
+let lastAccountIds = {}; // accountId (sfx da barra) → accountUuid|dir da conta
+function claudeAccountsFromSessions() {
+  let sessionsList = [];
+  try { sessionsList = readSessions(); } catch { return [{ dir: null }]; }
+  const seenReal = new Set();
+  const named = [];
+  // realpath do config dir default (~/.claude pode ser symlink dd-claude)
+  let defReal = null;
+  try { defReal = fs.realpathSync(claudePaths.configDir()); } catch {}
+  let hasDefault = false;
+  for (const s of sessionsList) {
+    if (!s.pid || agentOf(s) !== 'claude') continue;
+    let env;
+    try { env = usage.parseEnviron(getProcessEnviron(s.pid), ['CLAUDE_CONFIG_DIR']); }
+    catch { continue; } // processo morreu entre readSessions e a leitura
+    const d = env.CLAUDE_CONFIG_DIR;
+    if (d) {
+      let real;
+      try {
+        if (!fs.statSync(d).isDirectory()) continue;
+        real = fs.realpathSync(d);
+      } catch { continue; }
+      if (defReal && real === defReal) { hasDefault = true; continue; } // é a default disfarçada
+      if (seenReal.has(real)) continue;
+      seenReal.add(real);
+      named.push({ dir: d });
+    } else {
+      hasDefault = true; // claude puro → conta do symlink default
+    }
+  }
+  // A default entra quando tem sessão viva (sem a var, ou var apontando pro
+  // próprio ~/.claude) OU quando NÃO há nenhuma conta descoberta — a barra
+  // sempre existe. Só-sessões-named → só as named (conta default não está em uso).
+  const accounts = (hasDefault || !named.length) ? [{ dir: null }, ...named] : named;
+  // Apelidos manuais (#58): chave = accountUuid (fallback dir) — mesmo source
+  // do sfx, então o rótulo sobrevive à troca de nome do perfil no disco.
+  let labels = {};
+  try { labels = JSON.parse(fs.readFileSync(ACCOUNT_LABELS_FILE, 'utf8')) || {}; } catch {}
+  lastAccountIds = {};
+  for (const a of accounts) {
+    // home injetado = conta do symlink ~/.claude, não a var ambiente do ATL
+    const pc = usage.readClaudeConfig({ home: app.getPath('home'), dir: a.dir });
+    if (!pc) continue;
+    const key = pc.accountUuid || a.dir || 'default';
+    const sfx = usage.claudeAccountSfx(key);
+    lastAccountIds[sfx] = key;
+    if (labels[key]) a.label = labels[key];
+  }
+  return accounts;
+}
+
 async function collectAndSendUsage({ claudeFetch = false } = {}) {
   try {
     let glmCreds = glmCredsFromSessions();
@@ -1562,8 +1629,9 @@ async function collectAndSendUsage({ claudeFetch = false } = {}) {
     const ocCred = opencodeApiCreds();
 
     const codexCwds = codexCwdsFromSessions();
+    const claudeAccounts = claudeAccountsFromSessions();   // multi-conta #58
     const entries = await usage.collectUsage({
-      glmCreds, codexCwds, home: app.getPath('home'),
+      glmCreds, codexCwds, home: app.getPath('home'), claudeAccounts,
       opencodeEnv: ocCred ? ocCred.env : undefined,
       opencodeLabel: ocCred ? ocCred.label : undefined,
       opencodeSuffix: ocCred ? ocCred.suffix : undefined,

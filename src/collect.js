@@ -18,6 +18,7 @@ const { execFileSync } = require('child_process');
 const sessions = require('./sessions.js');
 const { AGENTS } = require('./agents.js');
 const validate = require('./validate.js');
+const claudePaths = require('./claude-config.js');
 const { atomicWrite } = require('./state-writer.js');
 
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(process.env.HOME, '.local/share');
@@ -60,16 +61,15 @@ function readSessions() {
   } catch { return []; }
 }
 
-// Acha o transcript de uma sessão pelo session_id (procura em .claude e .zclaude).
+// Acha o transcript de uma sessão pelo session_id (procura nos roots de projects
+// do claude-config.js: config dir — incl. symlink de perfil/dd-claude — e os
+// históricos ~/.claude e ~/.zclaude).
 function findTranscript(sid) {
   // sid chega do peer via /transcript?key= (controlado pela rede). Sem validação,
   // "../foo" vira path traversal (path.join) e lê qualquer .jsonl do host.
   // Rejeita antes de virar path — mesmo validador dos adapters (validate.js).
   if (!validate.validSessionId(sid)) return null;
-  for (const root of [
-    path.join(process.env.HOME, '.claude/projects'),
-    path.join(process.env.HOME, '.zclaude/projects'),
-  ]) {
+  for (const root of claudePaths.projectsRoots()) {
     try {
       for (const proj of fs.readdirSync(root)) {
         const p = path.join(root, proj, sid + '.jsonl');
