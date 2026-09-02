@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-02
+
 ### Added
+
 - **Atualização automática no macOS, sem Developer ID.** O `electron-updater`
   delega ao Squirrel.Mac, que exige assinatura válida — inviável com o app
   assinado ad-hoc. O updater agora baixa o `.dmg` da release e reproduz os
@@ -18,8 +21,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Botão na linha só quando ele não repete o clique.** O clique já abre o
   padrão de cada tipo de sessão, então sobrou um único botão (⧉ embutido) e só
   em sessão local com tmux, onde ele é o outro caminho.
+- **Sincronização P2P multi-máquina via Tailscale (opt-in).** Nós podem
+  compartilhar sessões por HTTP autenticado com Bearer token, observar peers,
+  identificar a origem de cada linha e evitar colisões de PID entre máquinas.
+  O poller usa o status local do Tailscale, backoff exponencial e ordenação
+  estável por origem/sessão.
+- **Painel “ver prompt” sob demanda.** Exibe as últimas mensagens de transcripts
+  locais ou remotos; compartilhamento remoto é uma permissão separada e
+  desligada por padrão. O leitor processa apenas o final do JSONL em chunks e
+  agrega blocos de streaming por `message.id`.
+- **Agente headless (`agent.js`).** Servidores sem display podem participar como
+  fonte do mesh sem Electron, com overrides `ATL_SYNC_*` e unit systemd de
+  exemplo.
+- **Captura de `tmux_session`** nos adapters como fundação para um futuro fluxo
+  de attach remoto.
+- **Foco de painel tmux.** Clicar no semáforo foca o painel exato do agente
+  dentro do tmux (via `$TMUX_PANE`), por cima do foco de janela e do canal de
+  aba (Warp/Tilix). O pane é validado (`/^%[0-9]+$/`) antes de virar argumento
+  do `tmux` e não cruza a rede (local-only).
+- **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
+- **Dicas de foco/tmux nas Preferências (aba Integração).** Como o clique acha
+  o agente (janela → aba → painel tmux) e os casos que "não funcionam" com
+  causa conhecida: sessão tmux detached (sem cliente anexado não há aba para
+  focar), painel recriado (o hook regrava no próximo evento) e GNOME Terminal
+  no Wayland (inalcançável para apps de terceiros).
+- **Requisito de Tailscale documentado na aba Sincronização.** Como instalar,
+  conferir (`tailscale status`) e endereçar peers (IPs 100.x.y.z ou MagicDNS).
 
 ### Changed
+
 - **A regra "preserve, don't regress" virou função testada.** Quem escreve state
   file de dentro do overlay usa o `mergeState()`/`atomicWrite()` de
   `src/state-writer.js`: chaves de terceiros, `transcript_path` e os campos de
@@ -52,8 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   janela existia, mas fora do Space atual. `setVisibleOnAllWorkspaces` faz a
   janela pertencer a todos os Spaces; o show() aparece no Space em uso.
   Trade-off: também aparece sobre apps em tela cheia — aceitável pra um overlay.
+- **Identidade de sessão agora inclui a origem** no merge, alertas, snooze e
+  marca de lido. Sessões remotas não podem ser renomeadas/focadas localmente e
+  a primeira hidratação de um peer não dispara alertas em massa.
+- **Ordem estável dentro do mesmo nível de urgência.** Tool calls deixam de
+  fazer as linhas pularem continuamente; local vem antes dos peers e a chave
+  de sessão decide a ordem.
 
 ### Fixed
+
 - **O canal beta nunca recebeu artefato macOS.** O `upload-mac` valida a versão
   com `^X.Y.Z$`, então o modo documentado no próprio cabeçalho do script
   (`upload-mac --version 0.8.0-beta.3`) morria em "versão inválida" — o job
@@ -187,48 +224,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock cascateia pelo próprio `writeState` (um read+write a menos por evento)
   e o bootstrap é deferido com `setImmediate` — a janela abre na frente e o
   state inicial chega na primeira refresh.
-
-## [0.8.0] - 2026-08-27
-
-### Added
-- **Foco de aba no iTerm2** (macOS) via `ITERM_SESSION_ID` + AppleScript. Não
-  validado em macOS.
-- **Sincronização P2P multi-máquina via Tailscale (opt-in).** Nós podem
-  compartilhar sessões por HTTP autenticado com Bearer token, observar peers,
-  identificar a origem de cada linha e evitar colisões de PID entre máquinas.
-  O poller usa o status local do Tailscale, backoff exponencial e ordenação
-  estável por origem/sessão.
-- **Painel “ver prompt” sob demanda.** Exibe as últimas mensagens de transcripts
-  locais ou remotos; compartilhamento remoto é uma permissão separada e
-  desligada por padrão. O leitor processa apenas o final do JSONL em chunks e
-  agrega blocos de streaming por `message.id`.
-- **Agente headless (`agent.js`).** Servidores sem display podem participar como
-  fonte do mesh sem Electron, com overrides `ATL_SYNC_*` e unit systemd de
-  exemplo.
-- **Captura de `tmux_session`** nos adapters como fundação para um futuro fluxo
-  de attach remoto.
-- **Foco de painel tmux.** Clicar no semáforo foca o painel exato do agente
-  dentro do tmux (via `$TMUX_PANE`), por cima do foco de janela e do canal de
-  aba (Warp/Tilix). O pane é validado (`/^%[0-9]+$/`) antes de virar argumento
-  do `tmux` e não cruza a rede (local-only).
-- **Suporte ao consumo do OpenCode Go**: a barra de uso agora exibe as janelas de cota (5h, Semana, Mês) extraídas nativamente da API oficial (`/zen/go/v1/usage`).
-- **Dicas de foco/tmux nas Preferências (aba Integração).** Como o clique acha
-  o agente (janela → aba → painel tmux) e os casos que "não funcionam" com
-  causa conhecida: sessão tmux detached (sem cliente anexado não há aba para
-  focar), painel recriado (o hook regrava no próximo evento) e GNOME Terminal
-  no Wayland (inalcançável para apps de terceiros).
-- **Requisito de Tailscale documentado na aba Sincronização.** Como instalar,
-  conferir (`tailscale status`) e endereçar peers (IPs 100.x.y.z ou MagicDNS).
-
-### Changed
-- **Identidade de sessão agora inclui a origem** no merge, alertas, snooze e
-  marca de lido. Sessões remotas não podem ser renomeadas/focadas localmente e
-  a primeira hidratação de um peer não dispara alertas em massa.
-- **Ordem estável dentro do mesmo nível de urgência.** Tool calls deixam de
-  fazer as linhas pularem continuamente; local vem antes dos peers e a chave
-  de sessão decide a ordem.
-
-### Fixed
 - **Instalador do macOS mentia "Concluído" sem instalar nada.** Quando o release
   não publica `.dmg` (hoje: sempre, pois o `release.yml` só builda Linux), o
   `install_macos.sh` apenas avisava e seguia — gravava os aliases apontando para
@@ -994,7 +989,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bilingual docs (EN / pt-BR), `setup-hook` installer with a stable hook copy
   (AppImage-safe, move-safe), AppImage + `.deb` packaging.
 
-[Unreleased]: https://github.com/aronpc/ai-traffic-lights/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/aronpc/ai-traffic-lights/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/aronpc/ai-traffic-lights/compare/v0.7.3...v0.9.0
 [0.3.1]: https://github.com/aronpc/ai-traffic-lights/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/aronpc/ai-traffic-lights/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aronpc/ai-traffic-lights/compare/v0.1.1...v0.2.0
