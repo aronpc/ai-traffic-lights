@@ -9,7 +9,7 @@ const {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits,
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
-  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, accountLabel,
+  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, accountLabel, apiProviderFromSettings,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
@@ -1217,6 +1217,30 @@ test('accountLabel: precedência manual > org > local-part > basename', () => {
   assert.equal(accountLabel({ accountEmail: 'ghost@ex.com' }, '/home/x/.ghost'), 'ghost', 'local-part, nunca o email completo');
   assert.equal(accountLabel(null, '/home/x/.ghost'), 'ghost', 'basename do dir sem o ponto');
   assert.equal(accountLabel(null, null), null, 'nada resolvido → null (linha ausente no modal)');
+});
+
+// apiProviderFromSettings: provedor de API alternativo do perfil (detalhes da
+// sessão). settings.json do dir com env.ANTHROPIC_BASE_URL → host[:porta];
+// sem base_url / sem arquivo / dir null → null (perfil usa a API oficial).
+test('apiProviderFromSettings: host[:porta] do base_url; null quando API oficial', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const mk = (name, settings) => {
+    const d = path.join(tmp, name);
+    fs.mkdirSync(d);
+    if (settings !== null) fs.writeFileSync(path.join(d, 'settings.json'), JSON.stringify(settings));
+    return d;
+  };
+  const proxy = mk('gh', { env: { ANTHROPIC_BASE_URL: 'http://vm-contabo:20128/v1', ANTHROPIC_AUTH_TOKEN: 'sekret' } });
+  const httpsApi = mk('zai', { env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' } });
+  const official = mk('artemis', { env: { API_TIMEOUT_MS: '30000' }, model: 'opus' });
+  const noFile = mk('vazio', null);
+  assert.equal(apiProviderFromSettings(proxy), 'vm-contabo:20128', 'http com porta explícita');
+  assert.equal(apiProviderFromSettings(httpsApi), 'api.z.ai', 'porta 443 padrão não aparece');
+  assert.equal(apiProviderFromSettings(official), null, 'sem base_url → API oficial → null');
+  assert.equal(apiProviderFromSettings(noFile), null, 'sem settings.json → null');
+  assert.equal(apiProviderFromSettings(path.join(tmp, 'nunca-existiu')), null, 'dir inexistente → null, não throw');
+  assert.equal(apiProviderFromSettings(null), null, 'dir null (conta do symlink) → null');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('parseClaudeConfig: extrai identidade da conta (uuid/org/email) p/ multi-conta', () => {

@@ -47,6 +47,13 @@ function credsFile({ home, dir } = {}) {
   return path.join(dir || configDir({ home }), '.credentials.json');
 }
 
+// settings.json do config dir (model default, hooks, e o bloco `env` que pode
+// trocar a API por um proxy próprio via ANTHROPIC_BASE_URL — perfis técnicos).
+// VIVE no dir (não há fallback legado no HOME) e `dir` explícito = conta nomeada.
+function settingsFile({ home, dir } = {}) {
+  return path.join(dir || configDir({ home }), 'settings.json');
+}
+
 // Roots de transcripts em ordem de preferência: o do config dir, depois os
 // dois históricos hardcoded (~/.claude/projects cobre default+symlink;
 // ~/.zclaude/projects cobre o perfil zclaude pré-descoberta-dinâmica).
@@ -60,4 +67,4 @@ function projectsRoots({ home } = {}) {
   ])];
 }
 
-module.exports = { configDir, configCandidates, credsFile, projectsRoots };
+module.exports = { configDir, configCandidates, credsFile, settingsFile, projectsRoots };

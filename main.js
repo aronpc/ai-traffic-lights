@@ -175,6 +175,13 @@ function annotateClaudeAccounts(sessions) {
       const manual = labels[key] || (pc && pc.accountUuid && labels[pc.accountUuid]) || null;
       label = usage.accountLabel(pc, dir, manual);
     } catch {}
+    // API alternativa do perfil (settings.json env.ANTHROPIC_BASE_URL):
+    // sessão de perfil técnico (ex. gh-claude → proxy vm-contabo/GLM) mostra
+    // "gh-claude · vm-contabo:20128" em vez do nome seco do dir — o host diz
+    // QUAL API a sessão realmente usa. Perfis de org não têm base_url →
+    // rótulo intacto. dir null (conta default do symlink) → sem provedor.
+    const api = dir && usage.apiProviderFromSettings(dir);
+    if (label && api) label += ' · ' + api;
     _pidAccount.set(s.pid, label);
     if (label) s.account = label;
   }

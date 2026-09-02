@@ -883,6 +883,25 @@ function accountLabel(pc, dir, manual) {
   return null;
 }
 
+// Provedor de API alternativo do perfil (detalhes da sessão): o settings.json
+// do config dir pode trocar a API do Claude Code por um proxy/roteador próprio
+// (env.ANTHROPIC_BASE_URL — ex. ~/.gh-claude aponta pra vm-contabo, que roteia
+// GLM). Devolve host[:porta] legível pra compor "gh-claude · vm-contabo:20128",
+// ou null quando o perfil usa a API oficial (sem base_url). Pura e exportada —
+// o main compõe o sufixo no rótulo da conta de cada sessão. O AUTH_TOKEN do
+// mesmo bloco `env` NUNCA é lido/retornado.
+function apiProviderFromSettings(dir) {
+  if (!dir) return null;
+  try {
+    const raw = fs.readFileSync(claudePaths.settingsFile({ dir }), 'utf8');
+    const url = ((JSON.parse(raw) || {}).env || {}).ANTHROPIC_BASE_URL;
+    if (!url) return null;
+    const u = new URL(String(url));
+    const port = u.port && u.port !== '80' && u.port !== '443' ? ':' + u.port : '';
+    return u.hostname + port;
+  } catch { return null; }
+}
+
 // =========================== ORQUESTRADOR ===========================
 
 // Junta todas as fontes. Ordem estável: Claude (local) primeiro, GLM depois.
@@ -1255,5 +1274,5 @@ if (typeof module !== 'undefined') module.exports = {
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
-  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, accountLabel,
+  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, accountLabel, apiProviderFromSettings,
 };
