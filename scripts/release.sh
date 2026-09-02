@@ -368,11 +368,11 @@ release_promote() {
     VERSION="$(printf '%s' "$last_beta" | sed -E 's/^v//; s/-beta\.[0-9]+$//')"
     info "última beta: $last_beta → promovendo para $VERSION"
   fi
-  # Aceita X.Y.Z (estável) E X.Y.Z-beta.N. Sem a beta, o canal beta nunca tinha
-  # artefato macOS: o build só existia no promote, então o código em teste não
-  # tinha como chegar a um Mac — inclusive o próprio updater do macOS.
-  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] \
-    || die "versão inválida: '$VERSION' (esperado X.Y.Z ou X.Y.Z-beta.N)"
+  # Só X.Y.Z: o promote publica SEM --prerelease e move /releases/latest, então
+  # uma tag -beta.N aqui entregaria uma beta a todo o canal estável. O artefato
+  # macOS da beta sai pelo modo `upload-mac`, que aceita -beta.N.
+  [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "versão inválida: '$VERSION' (esperado X.Y.Z)"
   local tag="v$VERSION"
 
   # Pré-requisitos editoriais do runbook — o script NÃO os inventa.

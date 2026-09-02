@@ -75,10 +75,17 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   }
   // Compara versões semver ('0.3.2' vs '0.4.0'); >0 se a>b, 0 se iguais, <0 se a<b.
   function semverCmp(a, b) {
-    const pa = String(a || '').replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-    const pb = String(b || '').replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-    for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
-    return 0;
+    const parse = (v) => {
+      const s = String(v || '').replace(/^v/, '');
+      const [core, pre] = s.split('-');
+      return { n: core.split('.').map((x) => parseInt(x, 10) || 0), pre: pre || '' };
+    };
+    const pa = parse(a), pb = parse(b);
+    for (let i = 0; i < 3; i++) if ((pa.n[i] || 0) !== (pb.n[i] || 0)) return (pa.n[i] || 0) - (pb.n[i] || 0);
+    // Mesmo core: quem NÃO tem pre-release é maior (0.9.0 > 0.9.0-beta.1).
+    if (!pa.pre && pb.pre) return 1;
+    if (pa.pre && !pb.pre) return -1;
+    return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
   }
 
   // ---- auto-updater (AppImage) + estado de update ----

@@ -48,7 +48,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
   }
   let lastModel = null    // último modelID visto (mensagens do assistant)
   let capturedWin = null  // janela ativa no último prompt (X11)
-  let lastIdleAt = 0      // ms do último session.idle — janela anti-clobber do Stop
+  const lastIdleAt = new Map()   // sessionID -> ms do último session.idle — janela anti-clobber do Stop (por sessão, não global)
 
   // Tools de PERGUNTA ao usuário: quando o agente chama uma destas, ele está
   // ESPERANDO uma resposta sua — é um "precisa de você" (🔴🔑), não um passo de
@@ -161,12 +161,12 @@ export const AiTrafficLights = async ({ directory, $ }) => {
           // o session.idle — se re-gravasse UserPromptSubmit aí, o Stop sairia
           // sobrescrito e a sessão ficaria 💛 presa no último prompt (bug visto:
           // sessão terminada sem tools ficava amarela pra sempre). Janela de 2s.
-          if (info.role === "user" && Date.now() - lastIdleAt >= 2000) {
+          if (info.role === "user" && Date.now() - (lastIdleAt.get(sid) || 0) >= 2000) {
             await captureWindow(); write(sid, "UserPromptSubmit", null)
           }
           return
         }
-        if (t === "session.idle") { lastIdleAt = Date.now(); return write(sid, "Stop", null) }
+        if (t === "session.idle") { lastIdleAt.set(sid, Date.now()); return write(sid, "Stop", null) }
         // pediu permissão → 🔴🔑 (permission.asked é o evento; o hook
         // permission.ask acima é o caminho principal — os dois são idempotentes)
         if (t === "permission.ask" || t === "permission.asked") return write(sid, "PermissionRequest", null)

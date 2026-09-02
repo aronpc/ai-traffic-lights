@@ -134,16 +134,15 @@ main() {
   #  Tilix → TILIX_ID (uuid) via gdbus activate-terminal
   local win="${WINDOWID:-}" tp="${TERM_PROGRAM:-}" zs="${ZELLIJ_SESSION_NAME:-}"
   local furl="${WARP_FOCUS_URL:-}" tid="${TILIX_ID:-}"
-  # tmux: nome da sessão (p/ attach remoto "tmux attach -t <name>"). Só fork
-  # quando $TMUX está setado — agentes fora do tmux => zero custo.
+  # tmux: nome da sessão (p/ attach remoto "tmux attach -t <name>"). A captura
+  # fica ABAIXO, depois da leitura do state file: o nome não muda dentro da
+  # mesma sessão, então o valor persistido é reaproveitado (zero fork) e o
+  # `tmux display-message` roda só na 1ª vez — não a cada evento.
   # tmux_pane ($TMUX_PANE, ex "%3"): p/ FOCO do painel local (zero fork, é env).
   local tmuxs="" tmuxp="${TMUX_PANE:-}"
   # iTerm2 (macOS): ITERM_SESSION_ID = "w0t0p0:<uuid>" → foco de aba exato via
   # osascript. Leitura de env já exportada: zero fork, orçamento intacto.
   local iid="${ITERM_SESSION_ID:-}"
-  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmuxs=$(tmux display-message -p '#S' 2>/dev/null) || tmuxs=""
-  fi
 
   # windowid REAL: no UserPromptSubmit/SessionStart a janela focada do desktop
   # É o terminal da sessão (o usuário acabou de digitar nela). Resolve Warp
@@ -166,6 +165,17 @@ main() {
 
   local existing=""
   [ -f "$file" ] && existing=$(<"$file")     # idiom bash (sem cat); só lê se existir
+
+  # tmux_session: reaproveita o já persistido (regex sobre o JSON compacto,
+  # zero fork); só consulta o binário tmux na 1ª vez, quando não há valor.
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    if [ -n "$existing" ]; then
+      [[ $existing =~ \"tmux_session\":\ ?\"([^\"]+)\" ]] && tmuxs="${BASH_REMATCH[1]}"
+    fi
+    if [ -z "$tmuxs" ]; then
+      tmuxs=$(tmux display-message -p '#S' 2>/dev/null) || tmuxs=""
+    fi
+  fi
 
   # 1 jq: extrai campos do input ($in) + merge com existente ($ex) + rolling
   # windowid: prioriza a janela ativa capturada agora ($awin); senão WINDOWID

@@ -37,11 +37,13 @@ flowchart LR
         A2["Gemini CLI"]
         A3["Codex"]
         A4["OpenCode"]
+        A5["Kiro"]
     end
 
     subgraph adapters["Adapter — KEY PIECE 1"]
         H["hooks/traffic-hook.sh<br/>native hook (bash)"]
         P["adapters/opencode/…js<br/>in-process plugin"]
+        W["adapters/kiro/…js<br/>file watcher (in overlay)"]
     end
 
     SF["state file — KEY PIECE 2<br/>state/&lt;session_id&gt;.json"]
@@ -55,6 +57,8 @@ flowchart LR
     A2 --> H
     A3 --> H
     A4 --> P
+    A5 -->|"~/.kiro/sessions/cli"| W
+    W --> M
     H --> SF
     P --> SF
     SF --> M
@@ -63,10 +67,13 @@ flowchart LR
 ```
 
 - **Adapters** translate each agent's native events into a shared vocabulary and
-  write the state file. Two shapes exist: a native **hook**
+  write the state file. Three shapes exist: a native **hook**
   (`hooks/traffic-hook.sh`, one bash script that already serves Claude Code,
-  Gemini and Codex) and an **in-process plugin**
-  (`adapters/opencode/ai-traffic-lights.js`, JS running inside OpenCode).
+  Gemini and Codex), an **in-process plugin**
+  (`adapters/opencode/ai-traffic-lights.js`, JS running inside OpenCode) and a
+  **file watcher** (`adapters/kiro/ai-traffic-lights.js`, loaded by `main.js`
+  and watching `~/.kiro/sessions/cli` — Kiro has no hook and no plugin API,
+  but leaves `<uuid>.jsonl/.json/.lock` files on disk).
 - **`main.js`** watches the state directory with `chokidar` and also probes
   `/proc` for live agent processes that have no state file yet (`readSessions()`
   merges both, deduped by `src/sessions.js`), then pushes the list to the

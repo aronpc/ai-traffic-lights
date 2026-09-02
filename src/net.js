@@ -316,6 +316,7 @@ function pollPeers({ peers, port, token, intervalMs = 5000, maxDelayMs = 5 * 60 
       const r = await fetch(`http://${hostPort}/sessions`, { headers, signal: AbortSignal.timeout(3000) });   // PR-32 #05: peer em blackhole não trava o ciclo de poll
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
+      if (stopped) return;   // teardown durante o fetch: não repopula o Map já limpo pelo caller
       const origin = data.node || p.name || p.host;
       onSessions(p.host, (data.sessions || []).map((s) => anchorRemote({ ...s, origin }, Math.floor(Date.now() / 1000))));   // PR-32 #18: âncora last_event_ts no relógio local (idleSec do peer)
       ok = true;

@@ -159,7 +159,7 @@ function getKiroLockPid() {
 function kiroRejeitado(agent, pid, kiroLockPid, existingAgentPids) {
   if (agent !== 'kiro' || kiroLockPid === pid) return false;
   const statePids = existingAgentPids && existingAgentPids.get('kiro');
-  return !!statePids && !statePids.has(pid);
+  return !statePids || !statePids.has(pid);
 }
 
 function discoverAgentProcs(existingAgentPids) {

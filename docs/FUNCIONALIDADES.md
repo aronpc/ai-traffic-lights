@@ -5,9 +5,9 @@ implementado mas ainda não foi lançado e o que existe apenas como intenção.
 Ele complementa a [arquitetura](ARCHITECTURE.md), que explica principalmente
 como as camadas se relacionam.
 
-**Recorte analisado:** branch `feat/sync-p2p`, commit `83f1252`, em 2026-07-17.
-A última versão publicada no repositório é `v0.7.2`; por isso, código presente
-nesta branch não é automaticamente uma funcionalidade lançada.
+**Recorte analisado:** branch `develop`, em 2026-09-02 (preparação da `v0.9.0`).
+A última versão publicada no repositório é `v0.7.3`; o que está na develop e
+entra na `v0.9.0` sai do status "branch" no dia da release estável.
 
 ## Legenda de status
 

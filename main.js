@@ -1208,11 +1208,11 @@ app.whenReady().then(() => {
   }
   applyShortcut();                                   // usa settingsCfg.shortcut (+ legado)
   if (collect.backfillModels()) sendSessions(); // preenche model das sessões existentes de cara
-  chokidar
+  _stateWatcher = chokidar
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })
     .on('all', () => sendSessions());
   reapDead();
-  setInterval(() => { collect.invalidateDiscovery(); reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
+  _sessionInterval = setInterval(() => { collect.invalidateDiscovery(); reapDead(); sendSessions(); saveBounds(); }, 5000); // descobre novos + limpa mortos + captura posição (drag externo p/ ex.)
   // Consumo/reset dos agentes: GLM (rede, cache 30s) + Codex/Antigravity (disco).
   // Cadência própria (60s) — desacoplada das sessões (que refrescam a cada 5s).
   // O Claude é LAZY: o loop de fundo NÃO bate na API dele (limite agregado do

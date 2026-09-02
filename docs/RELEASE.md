@@ -22,6 +22,9 @@ npm run release:promote              # promove a última beta pra estável
 npm run release:promote -- --version 0.7.3
 ```
 
+O modo `upload-mac` não é chamado à mão: o job `build-mac` do workflow o invoca
+depois do job `release` para compilar e anexar o `.dmg` (beta e estável).
+
 Flags extras: `--skip-tests` (pula o gate `npm test`), `--yes` (não pergunta
 nada; é o padrão quando `CI` está setada).
 
@@ -64,10 +67,15 @@ tag estável tiver mudado.
 
 ## Assets
 
-- **beta:** `ai-traffic-lights-X.Y.Z-beta.N.AppImage` + `latest-linux.yml`.
-  Sem `.deb`: o updater do deb é apenas informativo e resolve por
-  `/releases/latest`, então uma instalação deb não consegue estar no canal beta.
-- **estável:** AppImage + `.deb` + `latest-linux.yml` (os 3 assets de sempre).
+- **beta:** `ai-traffic-lights-X.Y.Z-beta.N.AppImage` +
+  `<AppImage>.sha512` + `latest-linux.yml`. Sem `.deb`: o updater do deb é
+  apenas informativo e resolve por `/releases/latest`, então uma instalação
+  deb não consegue estar no canal beta.
+- **estável:** AppImage + `.deb` + `latest-linux.yml` + um `.sha512` por
+  binário.
+- **macOS (beta e estável):** `.dmg` + `<dmg>.sha512`, enviados pelo job
+  `build-mac` via `scripts/release.sh upload-mac`. Sem o sidecar, os
+  instaladores e o updater do macOS tratam a release como "sem checksum".
 
 ## Ciclo completo
 

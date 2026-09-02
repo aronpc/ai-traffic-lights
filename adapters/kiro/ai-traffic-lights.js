@@ -297,6 +297,7 @@ function bootstrap() {
 let _watcher = null;
 let _onFirstWrite = null;
 let _staleTimer = null;
+let _bootstrapImmediate = null;
 
 const PROCESSING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
 
@@ -324,7 +325,7 @@ function start(chokidar, onFirstWrite) {
   // bootstrap DEFERIDO: os reads de sessões já abertas NÃO podem travar o
   // createWindow() do ready (s8 da PR-46) — o watcher entra ativo antes, e a
   // janela abre na frente; o state inicial chega na primeira sendSessions.
-  setImmediate(bootstrap);
+  _bootstrapImmediate = setImmediate(() => { _bootstrapImmediate = null; bootstrap(); });
 
   _watcher = chokidar.watch(KIRO_SESSIONS_DIR, {
     ignoreInitial:    true,
@@ -355,6 +356,7 @@ function start(chokidar, onFirstWrite) {
 }
 
 function stop() {
+  if (_bootstrapImmediate) { clearImmediate(_bootstrapImmediate); _bootstrapImmediate = null; }
   if (_watcher) { _watcher.close().catch(() => {}); _watcher = null; }
   if (_staleTimer) { clearInterval(_staleTimer); _staleTimer = null; }
 }

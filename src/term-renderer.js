@@ -153,6 +153,7 @@ window.trafficLight.onTermTabRemoved(({ tabId }) => {
   const t = terms.get(tabId);
   if (t) { try { t.term.dispose(); } catch {} }
   terms.delete(tabId);
+  pendingOut.delete(tabId);   // saída tardia de sessão removida não recria buffer órfão
   for (const b of $tabs.querySelectorAll('.tab[data-tab="' + tabId + '"]')) b.remove();
   if (activeTabId === tabId) {
     const next = terms.keys().next();
