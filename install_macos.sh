@@ -27,13 +27,97 @@ need() { command -v "$1" >/dev/null 2>&1 || die "faltando dependência: $1"; }
 # electron-builder publica no release (paridade com o install.sh Linux — PR-32
 # #07: antes baixava o .dmg sem nenhuma verificação). Best-effort: sem yml/sha512
 # ou openssl, prossegue com aviso (não bloqueia a instalação).
+# Compara o sha512 (base64) de um arquivo com o esperado. Separada porque os
+# dois tiers — sidecar e yml — terminam no mesmo lugar.
+compara_checksum() {
+  local file="$1" expected="$2" base="$3" actual
+  if command -v openssl >/dev/null 2>&1; then
+    actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | openssl base64 -A)"
+  elif command -v shasum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
+    actual="$(shasum -a 512 "$file" | awk '{print $1}' | xxd -r -p | base64 | tr -d '\n')"
+  else
+    warn "sem openssl/shasum — pulei a verificação de integridade"; return 0
+  fi
+  if [ "$actual" = "$expected" ]; then
+    ok "integridade verificada (sha512)"
+  else
+    die "checksum NÃO confere ($base) — download corrompido ou adulterado. Abortei."
+  fi
+}
+
 verify_checksum() {
-  local file="$1" asset_url="$2" yml yml_url base expected actual
+  local file="$1" asset_url="$2" yml yml_url base base_decoded expected actual
   base="$(basename "${asset_url%%\?*}")"
+  # O GitHub codifica espaços na URL como %20, mas o electron-builder grava o
+  # yml com hífens (ex: AI-Traffic-Lights-0.7.3-arm64.dmg). Decodifica %20→espaço
+  # e também tenta a versão com espaços→hífens para localizar o sha512 correto.
+  base_decoded="$(printf '%s' "$base" | sed 's/%20/ /g')"
+
+  # Tier 0: o sidecar <arquivo>.sha512 publicado pelo release.sh. É o caminho
+  # preferido e o MESMO nos dois instaladores: não depende do formato do
+  # electron-builder, nem do nome do arquivo dentro do yml, nem de qual target
+  # foi construído. Importa aqui porque o build do macOS deixou de gerar o zip,
+  # e o latest-mac.yml só sai com ele (ArchiveTarget: isWriteUpdateInfo && zip).
+  # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
+  # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
+  # Três desfechos DIFERENTES, e tratá-los igual era o furo: `expected=""`
+  # colapsava tudo em "não tem sidecar", caindo no tier 1 e, como o
+  # latest-mac.yml não é mais publicado (ver acima), terminando em
+  # "pulei a verificação" + instala.
+  #
+  #   404            release antiga, anterior ao sidecar  -> fallback (tier 1)
+  #   falha de rede  não dá para saber                    -> ABORTA
+  #   200 malformado alguém no meio do caminho            -> ABORTA
+  #
+  # O 200 malformado é o mais perigoso: um proxy, portal cativo ou borda de CDN
+  # devolvendo corpo próprio com status 200 desligaria o controle inteiro se
+  # virasse "sem sidecar". Um artefato que chega junto com um sidecar ilegível
+  # não é uma release antiga — é um sinal de que a origem não é confiável.
+  local sc_body sc_code
+  sc_body="$(mktemp)"
+  sc_code="$(curl -sSL --connect-timeout 15 --max-time 30 \
+    -o "$sc_body" -w '%{http_code}' "${asset_url%%\?*}.sha512" 2>/dev/null)" || sc_code="000"
+
+  if [ "$sc_code" = "200" ]; then
+    expected="$(tr -d '\r\n' < "$sc_body")"
+    rm -f "$sc_body"
+    # 88 chars base64 terminando em '==' é o tamanho fixo de um sha512.
+    if [[ ! "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]]; then
+      die "sidecar .sha512 chegou com conteúdo inválido (HTTP 200, ${#expected} bytes).
+   Isso não é uma release sem checksum — é um corpo adulterado ou interceptado.
+   Abortando em vez de instalar sem verificação."
+    fi
+    compara_checksum "$file" "$expected" "$base"; return $?
+  fi
+  rm -f "$sc_body"
+
+  if [ "$sc_code" != "404" ]; then
+    die "não foi possível buscar o sidecar .sha512 (HTTP ${sc_code}).
+   Sem ele não há como verificar a integridade do download.
+   Tente de novo em instantes; se persistir, baixe o .dmg manualmente pelo GitHub Releases."
+  fi
+
+  # Daqui para baixo: HTTP 404 confirmado. Release anterior ao sidecar, e a
+  # política de fallback vale — é o que permite atualizar a partir de uma
+  # release antiga.
+
   yml_url="${asset_url%/*}/latest-mac.yml"
   yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
-    || { warn "sem latest-mac.yml — pulei a verificação de integridade"; return 0; }
-  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
+    || { warn "sem sidecar .sha512 nem latest-mac.yml — pulei a verificação de integridade"; return 0; }
+  # Tenta: nome decodificado, depois nome com espaços→hífens, depois qualquer .dmg no yml.
+  # `|| :` em cada tentativa: sob `set -euo pipefail` um grep sem match derrubaria o
+  # script ANTES de atingir o fallback — o best-effort prometido pela função não
+  # poderia nunca disparar (PR-46 review #2). A falha vira expected vazio → cai p/ o
+  # próximo tier ou p/ o aviso "sha512 não encontrado".
+  local base_hyphens; base_hyphens="$(printf '%s' "$base_decoded" | tr ' ' '-')"
+  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_hyphens" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  if [ -z "$expected" ]; then
+    expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_decoded" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  fi
+  if [ -z "$expected" ]; then
+    # Fallback: pega o sha512 associado a qualquer entrada .dmg no yml
+    expected="$(printf '%s\n' "$yml" | grep -A3 'url:.*\.dmg' | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  fi
   [ -n "$expected" ] || { warn "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
   if command -v openssl >/dev/null 2>&1; then
     actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | base64 | tr -d '\n')"
@@ -50,7 +134,34 @@ verify_checksum() {
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 [ "$OS" = "Darwin" ] || die "Este instalador é exclusivo do macOS. SO atual: $OS"
-need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq/brew NÃO são exigidos
+need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq é verificado abaixo
+
+# O hook de eventos que o app instala (traffic-hook.sh) REQUER jq para gravar o
+# state de cada sessão — e jq não vem de fábrica no macOS. Sem ele o hook roda
+# em todo tool call, falha na escrita e o overlay fica silenciosamente vazio.
+# Instalamos via Homebrew quando dá; sem brew, aviso forte com o comando manual.
+ensure_jq() {
+  # command -v aprova um jq quebrado (shim corrompido): sonda executabilidade.
+  if command -v jq >/dev/null 2>&1 && jq --version >/dev/null 2>&1; then
+    ok "jq presente (o hook de eventos exige)"
+    return 0
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    info "instalando jq via Homebrew (o hook de eventos exige)..."
+    # Re-checa o PATH pós-install: brew via wrapper pode linkar fora do PATH.
+    if brew install jq && command -v jq >/dev/null 2>&1; then
+      ok "jq instalado"
+    else
+      warn "jq não ficou utilizável após o brew — reabra o terminal ou instale manualmente."
+      warn "Sem jq o app NÃO monitora nenhuma sessão (overlay vazio)."
+    fi
+  else
+    warn "jq AUSENTE e Homebrew não encontrado."
+    warn "O hook de eventos exige jq — sem ele o app abre vazio (nenhuma sessão no overlay). Instale:"
+    warn '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && brew install jq'
+  fi
+}
+ensure_jq
 
 # O build publicado é Apple Silicon (arm64). Em Intel, o .dmg arm64 não abre
 # (Rosetta não traduz arm64→x86). Avisamos forte; a verificação pós-install
@@ -77,6 +188,14 @@ rm -f "$GH_ERR"
 download_url="$(printf '%s\n' "$json" | grep -oE '"browser_download_url":[[:space:]]*"[^"]+\.dmg"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')" || true
 version="$(printf '%s\n' "$json" | grep -oE '"tag_name":[[:space:]]*"v?[^"]+"' | head -1 | sed -E 's/.*"v?([^"]+)"$/\1/')" || true
 
+# Detecta o modo dev ANTES de decidir o que fazer sem .dmg: dentro do repo a
+# ausência do build é tolerável (o alias cai para 'npx electron .'); via
+# curl|bash não é — sem app instalado o alias aponta para o vazio.
+LOCAL_REPO=""
+if [ -f "package.json" ] && grep -q '"name": "ai-traffic-lights"' package.json 2>/dev/null; then
+  LOCAL_REPO="$(pwd)"
+fi
+
 # --- diretório temporário com limpeza garantida (detach do dmg + rm) ---
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/atl-install.XXXXXX")"
 MOUNT_POINT="$TMP_DIR/mount"
@@ -88,6 +207,7 @@ trap cleanup EXIT INT TERM
 DMG_PATH="$TMP_DIR/$DMG_NAME"
 
 DEST="/Applications/$APP_NAME"
+APP_INSTALLED=0
 if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   info "baixando v${version:-?}..."
   curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 -o "$DMG_PATH" "$download_url"
@@ -110,6 +230,7 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   fi
   hdiutil detach -force "$MOUNT_POINT" >/dev/null 2>&1 || true
   ok "app copiado para $DEST"
+  APP_INSTALLED=1
 
   # --- destrava o Gatekeeper: remove quarantine + re-assina ad-hoc LOCALMENTE ---
   # Sem isto, um app não-notarizado baixado via curl é bloqueado com
@@ -132,16 +253,27 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
       *) warn "o binário ($archs) não casa com seu Mac ($ARCH) — pode não abrir. Compile do fonte se necessário." ;;
     esac
   fi
+elif [ -n "$LOCAL_REPO" ]; then
+  # Dentro do repo há plano B: o alias cai para 'npx electron .', que roda sem
+  # o .app. Seguimos para instalar deps e escrever os aliases.
+  warn "nenhum .dmg no release ${version:+v$version }do GitHub — seguindo em modo desenvolvimento."
+  warn "Para gerar o .app: npm run dist:mac (o bundle sai em dist/)."
 else
-  warn "nenhum .dmg encontrado no release do GitHub ainda."
-  warn "Se estiver compilando local, rode 'npm run dist:mac' e copie o app para /Applications."
+  # Via curl|bash NÃO há plano B: sem .dmg nada foi instalado. Falhar aqui é o
+  # que impede o script de gravar aliases órfãos e imprimir "✓ Concluído!" —
+  # o usuário seguia as dicas de xattr/codesign e batia em "No such file".
+  # Paridade com o install.sh do Linux, que já morre sem o asset .AppImage.
+  printf '\n' >&2
+  warn "o release ${version:+v$version }de $REPO não publica .dmg para macOS."
+  warn "NADA foi instalado. Para rodar no seu Mac, compile do fonte:"
+  warn "  git clone https://github.com/$REPO"
+  warn "  cd ai-traffic-lights && npm install && npm run dist:mac"
+  warn "  cp -R dist/mac*/\"$APP_NAME\" /Applications/"   # arm64: dist/mac-arm64/
+  warn "  bash install_macos.sh   # rode de novo AQUI DENTRO para os aliases"
+  die "instalação abortada — sem build macOS publicado."
 fi
 
 # --- modo dev: rodando dentro do repo → instala deps Node ---
-LOCAL_REPO=""
-if [ -f "package.json" ] && grep -q '"name": "ai-traffic-lights"' package.json 2>/dev/null; then
-  LOCAL_REPO="$(pwd)"
-fi
 if [ -n "$LOCAL_REPO" ]; then
   need node; need npm
   info "modo desenvolvimento — instalando dependências Node..."
@@ -171,15 +303,26 @@ setup_profile_aliases() {
 setup_profile_aliases "$HOME/.zshrc"
 [ -f "$HOME/.bash_profile" ] && setup_profile_aliases "$HOME/.bash_profile"
 
+# As dicas de Gatekeeper só fazem sentido com o .app no disco: imprimi-las sem
+# instalação levava o usuário a rodar xattr/codesign num path inexistente.
+GATEKEEPER_TIP=""
+[ "$APP_INSTALLED" = 1 ] && GATEKEEPER_TIP="
+  Se o macOS disser que o app \"não pôde ser aberto\" ou está \"danificado\":
+    xattr -dr com.apple.quarantine \"$DEST\"
+    codesign --force --deep --sign - \"$DEST\"
+"
+
 printf '\n\033[1;32m✓ Concluído!\033[0m\n\n'
 cat <<EOF
   Abra um novo terminal (ou rode: source ~/.zshrc) e inicie com:
     atl
-
-  Se o macOS disser que o app "não pôde ser aberto" ou está "danificado":
-    xattr -dr com.apple.quarantine "$DEST"
-    codesign --force --deep --sign - "$DEST"
-
+$GATEKEEPER_TIP
   Monitorar Claude Code, Antigravity, etc.: abra o app → engrenagem
   (Preferências) → "Install/update hooks".
+
+  Opcional — melhor foco e multi-máquina:
+    • tmux      — brew install tmux · o clique no semáforo foca o PAINEL exato
+                  do agente (dentro do tmux), além da aba do terminal
+    • Tailscale — https://tailscale.com · sincronize o overlay entre máquinas
+                  (aba "Sincronização" nas Preferências, builds beta)
 EOF

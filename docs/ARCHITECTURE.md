@@ -1,5 +1,10 @@
 # Architecture
 
+> Implementation status changes faster than this architectural overview. The
+> [feature and roadmap catalog](FUNCIONALIDADES.md) distinguishes released,
+> branch-only, partial, and planned behavior, and records known documentation
+> gaps such as the incomplete Gemini product integration.
+
 AI Traffic Lights is a translucent, always-on-top Electron overlay that renders
 one traffic light (🟢 done · 🟡 working · 🔴 needs you) per **terminal AI agent
 session** — Claude Code, Gemini CLI, Codex and OpenCode today. Agents never talk
@@ -32,11 +37,13 @@ flowchart LR
         A2["Gemini CLI"]
         A3["Codex"]
         A4["OpenCode"]
+        A5["Kiro"]
     end
 
     subgraph adapters["Adapter — KEY PIECE 1"]
         H["hooks/traffic-hook.sh<br/>native hook (bash)"]
         P["adapters/opencode/…js<br/>in-process plugin"]
+        W["adapters/kiro/…js<br/>file watcher (in overlay)"]
     end
 
     SF["state file — KEY PIECE 2<br/>state/&lt;session_id&gt;.json"]
@@ -50,6 +57,8 @@ flowchart LR
     A2 --> H
     A3 --> H
     A4 --> P
+    A5 -->|"~/.kiro/sessions/cli"| W
+    W --> M
     H --> SF
     P --> SF
     SF --> M
@@ -58,10 +67,13 @@ flowchart LR
 ```
 
 - **Adapters** translate each agent's native events into a shared vocabulary and
-  write the state file. Two shapes exist: a native **hook**
+  write the state file. Three shapes exist: a native **hook**
   (`hooks/traffic-hook.sh`, one bash script that already serves Claude Code,
-  Gemini and Codex) and an **in-process plugin**
-  (`adapters/opencode/ai-traffic-lights.js`, JS running inside OpenCode).
+  Gemini and Codex), an **in-process plugin**
+  (`adapters/opencode/ai-traffic-lights.js`, JS running inside OpenCode) and a
+  **file watcher** (`adapters/kiro/ai-traffic-lights.js`, loaded by `main.js`
+  and watching `~/.kiro/sessions/cli` — Kiro has no hook and no plugin API,
+  but leaves `<uuid>.jsonl/.json/.lock` files on disk).
 - **`main.js`** watches the state directory with `chokidar` and also probes
   `/proc` for live agent processes that have no state file yet (`readSessions()`
   merges both, deduped by `src/sessions.js`), then pushes the list to the
@@ -88,6 +100,8 @@ A real file (trimmed):
   "windowid": "58720263",
   "focus_url": "warp://session/f20da655c0c144a19e05fa176c36993d",
   "tilix_id": null,
+  "iterm_id": null,
+  "tmux_pane": "%82",
   "zellij_session": null,
   "last_event": "Stop",
   "last_event_ts": 1783436758,
@@ -114,6 +128,8 @@ A real file (trimmed):
 | `windowid` | string \| null | Optional | X11 window id (decimal or `0x…` hex; app normalizes) for click-to-focus. |
 | `focus_url` | string \| null | Optional | Warp tab focus URI (`warp://session/<uuid>`), opened via `xdg-open`. |
 | `tilix_id` | string \| null | Optional | Tilix terminal id for exact-tab focus via D-Bus `activate-terminal`. |
+| `iterm_id` | string \| null | Optional | iTerm2 session id (`$ITERM_SESSION_ID`, `"w0t0p0:<uuid>"`) for exact-tab focus via AppleScript (macOS). |
+| `tmux_pane` | string \| null | Optional | `$TMUX_PANE` (`"%N"`). Anchors the click on the attached tmux client — see §7. |
 | `zellij_session` | string \| null | Optional | zellij session name when running inside zellij. |
 | `last_event` | string | Core | Last canonical event — **this is what `computeState` maps to a color**. |
 | `last_event_ts` | int (epoch s) | Core | Epoch seconds of the last event. Feeds the idle-escalation clock. |
@@ -158,7 +174,8 @@ Notes:
 - **Writes are atomic:** the adapter writes `<file>.tmp` then `rename`s it over
   the target, so the overlay never reads a half-written file. Orphan `.tmp`
   files older than 60s are swept by `reapDead`.
-- **Merge-preserve:** `windowid` / `focus_url` / `tilix_id` are captured at
+- **Merge-preserve:** `windowid` / `focus_url` / `tilix_id` / `iterm_id` /
+  `tmux_pane` are captured at
   prompt time and carried forward — a later event without them reuses the
   existing value instead of regressing to `null`.
 - **Crash safety:** if a session dies without `SessionEnd`, `reapDead` removes
@@ -235,12 +252,30 @@ myagent: {
 ### Step 2 — write an adapter that writes state files
 
 The adapter translates the agent's native events into the **canonical
-vocabulary** and writes the state file. Two proven shapes:
+vocabulary** and writes the state file. Three proven shapes:
 
 | Shape | Reference | When |
 |---|---|---|
 | Native **hook** (out-of-process) | [`hooks/traffic-hook.sh`](../hooks/traffic-hook.sh) | The agent can run a shell command per event (Claude Code / Gemini / Codex). |
 | In-process **plugin** | [`adapters/opencode/ai-traffic-lights.js`](../adapters/opencode/ai-traffic-lights.js) | The agent loads plugins in its own process (OpenCode). |
+| **File watcher** (in the overlay) | [`adapters/kiro/ai-traffic-lights.js`](../adapters/kiro/ai-traffic-lights.js) | The agent offers no hook and no plugin API, but leaves session files on disk (Kiro). |
+
+Where the writer lives decides what it can reuse. An adapter running **inside
+the overlay** gets the contract's merge rule for free from
+[`src/state-writer.js`](../src/state-writer.js) (`mergeState` + `atomicWrite`,
+covered by `test/state-writer.test.js`). A hook or a plugin runs in *another*
+process — the bash hook in the agent's, the OpenCode plugin from
+`~/.config/opencode/plugin/` — and cannot reach this repo at all, so each
+carries its own copy by necessity. That is why the rule is a tested function
+and not only a paragraph: three of the four writers can only follow it by
+being told, and the fourth used to get it wrong.
+
+The watcher shape is the fallback of last resort, and it carries costs the other
+two don't: it runs inside the overlay's own process (so an unhandled exception
+takes the whole app down, not just one agent's monitoring), and it has to
+*infer* events the agent never emits. Kiro, for instance, has no end-of-turn
+marker at all — the adapter synthesises `Stop` from a quiet `.jsonl`. Prefer a
+hook or a plugin whenever the agent supports one.
 
 **Canonical event vocabulary** (translate the agent's dialect into this):
 
@@ -276,7 +311,8 @@ dialects. Unknown events pass through and resolve to a conservative green.
    as a file name, so a malicious/buggy payload can't escape the state dir with
    `../`.
 5. **Preserve, don't regress** — merge focus fields (`windowid`, `focus_url`,
-   `tilix_id`) from the existing file when the current event doesn't carry them;
+   `tilix_id`, `iterm_id`, `tmux_pane`) from the existing file when the current
+   event doesn't carry them;
    keep `events` append-only and capped at the last 50.
 
 Test an adapter standalone:
@@ -335,3 +371,105 @@ flowchart TD
   Cached for 4s.
 - **Reaping** — every 5s `reapDead()` removes state files whose `pid` no longer
   exists, so crashed/killed sessions don't linger as zombie lights.
+
+---
+
+## 7. Click-to-focus: how a click reaches the right window
+
+Clicking a session line sends `{pid, origin, windowid, focus_url, tilix_id,
+iterm_id, tmux_pane}` to the main process, and
+[`src/ipc/focus.js`](../src/ipc/focus.js) resolves the real target. The
+decisions are pure and live in [`src/focus.js`](../src/focus.js); the IPC module
+supplies the I/O.
+
+### Step 0 — is this session even ours?
+
+A session synced from a peer carries an `origin` other than `local`, and **its
+`pid` belongs to another kernel**. Interpreting it here would walk a local
+process tree and focus an unrelated local window — the same class of error as a
+recycled X11 id, one level up. `isRemoteSession()` refuses before any I/O and
+the user is told to use the terminal tab instead.
+
+### Step 1 — the anchor PID
+
+Everything downstream keys off *a process whose ancestor chain reaches the
+emulator*. For a plain terminal that's the agent itself. **Under tmux it is
+not:** the server is daemonized, so its parent is init and the chain
+`agent → shell → tmux server → init` never contains the process that draws the
+window.
+
+The attached **client** reconnects the chain. `$TMUX_PANE` (`%N`) identifies the
+agent's pane; `tmux list-panes -a` maps pane → session and `tmux list-clients`
+maps session → client pid, disambiguating by `client_activity` when several
+clients share a session. Outcomes:
+
+| situation | anchor | note |
+|---|---|---|
+| no tmux | the agent | normal path |
+| tmux, client attached | the client | tab hints are re-read from the client |
+| tmux, no client | the agent, `detached: true` | the session exists, a window does not |
+
+Under an anchor the tab hints are replaced **wholesale** from the client, not
+merged with `||`. That distinction is the whole fix: a server born inside Warp
+keeps `WARP_FOCUS_URL` frozen in its environment forever, and when that server
+is later attached from Tilix the client has no `WARP_FOCUS_URL` at all — a `||`
+would let the dead `warp://` through and raise Warp over the real terminal.
+
+### Step 2 — the window
+
+`pickWindow(windowid, wins, ancestorPids)` accepts the recorded `windowid` only
+if that window still exists **and** its owner pid is in the anchor's chain — X11
+ids get recycled, and an unvalidated id focuses someone else's app. Without a
+valid id it falls back to the first window owned by the chain; with neither, it
+returns `null`.
+
+### Step 3 — the tab, and the pane
+
+The window belongs to the window manager; the *tab* is internal to the terminal
+and only its native channel reaches it. Every channel requires **proof**: the
+hint alone is not enough, because an inherited hint outlives the app that
+created it. The IPC module walks the anchor's chain, matches a process against
+`TERMINALS`, and only then does `tabChannel()` release the matching channel. No
+proof → no channel, and the click degrades to raising the window: it never opens
+the wrong app.
+
+Finally `tmux select-window` / `select-pane` focuses the agent's pane *inside*
+the multiplexer — complementary to both steps above, and skipped when detached
+because nothing would see it.
+
+Adding a terminal is three lines: `TERMINALS` (ipc/focus.js) for the proof,
+`TAB_CHANNELS` (src/focus.js) for the hint field, and a branch in `focusTab()`
+for the executor.
+
+### Platform support
+
+Each primitive answers for itself and degrades silently when it cannot; nothing
+here ever throws.
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| read another process's env | `/proc/<pid>/environ` | `ps -p <pid> -E` | **not possible** without native code |
+| ancestor chain | `/proc/<pid>/status` | `ps -o ppid=` | not implemented |
+| raise a window | `wmctrl` (X11 only — blind to native Wayland) | `osascript` by pid, app name as fallback | not implemented |
+| tab channel | Tilix (D-Bus), Warp (`xdg-open`) | Warp (`open`), iTerm2 (AppleScript) | none known |
+| tmux anchor | `tmux list-panes/list-clients` | same | n/a |
+
+There is **no Windows build target** in `package.json`, and the hook is bash.
+The blocker is structural, not a missing branch: without reading another
+process's environment there are no focus hints, no anchor and no proof, so the
+whole resolution collapses to whatever the hook recorded. A Windows port needs a
+native env reader (or a PowerShell hook that records the hints at capture time)
+plus a window activator — `(New-Object -ComObject WScript.Shell).AppActivate($pid)`
+is the cheapest dependency-free candidate.
+
+The iTerm2 channel is implemented but **has not been validated on macOS**.
+
+### When the click does nothing
+
+`focusFailure()` names the reason so the user gets a notification instead of
+silence — the worst outcome is a click that quietly does nothing:
+
+- `remote` — the session belongs to another machine; attach via the terminal tab.
+- `detached` — tmux with no client attached; attach it first.
+- `wayland` — native Wayland and the terminal exposes no tab channel.
+- `nowindow` — no window found and no channel; the terminal may have closed.

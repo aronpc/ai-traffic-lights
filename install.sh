@@ -143,18 +143,42 @@ smoke_test() {
   return 0
 }
 
-# Verifica a integridade (sha512) do arquivo baixado contra o latest-linux.yml
-# que o electron-builder publica no release. Best-effort: sem yml/sha512/ferramenta,
-# apenas avisa; se o hash NÃO confere, aborta (corrompido ou adulterado).
+# Verifica a integridade (sha512) do arquivo baixado. Só um 404 confirmado no
+# sidecar habilita o fallback legado via latest-linux.yml; falha de rede/TLS,
+# HTTP inesperado ou corpo malformado abortam.
 verify_checksum() {
   local file="$1" asset_url="$2" yml yml_url base expected actual
   base="$(basename "${asset_url%%\?*}")"
-  yml_url="${asset_url%/*}/latest-linux.yml"
-  yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
-    || { info "sem latest-linux.yml — pulei a verificação de integridade"; return 0; }
-  expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
-  [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')"
-  [ -n "$expected" ] || { info "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
+  # Tier 0: o sidecar <arquivo>.sha512 publicado pelo release.sh. É o caminho
+  # preferido porque não depende do formato do electron-builder nem de qual
+  # target foi construído — o macOS perdeu o latest-mac.yml quando o build
+  # deixou de gerar o zip (ArchiveTarget só emite update info para `zip`).
+  # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
+  # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
+  local sc_body sc_code
+  sc_body="$(mktemp)"
+  sc_code="$(curl -sSL --connect-timeout 15 --max-time 30 \
+    -o "$sc_body" -w '%{http_code}' "${asset_url%%\?*}.sha512" 2>/dev/null)" || sc_code="000"
+  if [ "$sc_code" = "200" ]; then
+    expected="$(tr -d '\r\n' < "$sc_body")"
+    rm -f "$sc_body"
+    [[ "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]] \
+      || die "sidecar .sha512 chegou com conteúdo inválido (HTTP 200, ${#expected} bytes). Abortando em vez de instalar sem verificação."
+  elif [ "$sc_code" = "404" ]; then
+    rm -f "$sc_body"
+    yml_url="${asset_url%/*}/latest-linux.yml"
+    yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
+      || { info "sem sidecar .sha512 nem latest-linux.yml — pulei a verificação de integridade"; return 0; }
+    # `|| :` em cada tentativa: sob set -euo pipefail um grep sem match derruba o
+    # script AQUI, sem mensagem, e os tiers de baixo viram código morto. É o
+    # mesmo perigo que o install_macos.sh já tratava (achado #2 do review da PR-46).
+    expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+    [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
+  else
+    rm -f "$sc_body"
+    die "não foi possível buscar o sidecar .sha512 (HTTP ${sc_code}). Abortando em vez de instalar sem verificação."
+  fi
+  [ -n "$expected" ] || { info "sha512 não encontrado p/ $base — pulei a verificação"; return 0; }
   if command -v openssl >/dev/null 2>&1; then
     actual="$(openssl dgst -sha512 -binary "$file" 2>/dev/null | base64 | tr -d '\n')"
   elif command -v sha512sum >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
@@ -349,6 +373,14 @@ cat <<EOF
     • Tilix  — foca a aba via D-Bus
     • tmux   — foca o PAINEL do agente (já instalado por este script)
     (GNOME Terminal no Wayland não é alcançável por apps de terceiros.)
+
+  Monitorar Claude Code, Antigravity, etc.: abra o app → engrenagem
+  (Preferências) → "Install/update hooks". Sem o hook, nenhuma sessão
+  aparece no overlay.
+
+  Opcional — sincronizar o overlay entre máquinas:
+    • Tailscale (https://tailscale.com): conecte as máquinas na mesma
+      tailnet e ative a aba "Sincronização" nas Preferências (builds beta).
 
   O app se AUTO-ATUALIZA (AppImage): avisa quando há versão nova e baixa +
   reinicia pela própria interface — sem refazer este install.

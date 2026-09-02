@@ -8,7 +8,8 @@ Overlay de desktop (Electron) com um semáforo 🟢🟡🔴 **por sessão** de a
 ## Key Files
 | File | Description |
 |------|-------------|
-| `main.js` | Processo **main** do Electron: coleta (state files + `/proc`), IPC, tray, settings, uso, foco de aba, auto-update. Ponto quente do repo. |
+| `main.js` | Processo **main** do Electron: coleta (state files + `/proc`), IPC, tray, settings, uso, foco de aba, auto-update, sync P2P (`applySync`). Ponto quente do repo. |
+| `agent.js` | **Sync headless** (Node puro, sem `require('electron')`) — servidor sem display entra no mesh como fonte. Reusa `src/collect.js`+`net.js`+`transcript.js`. Roda via systemd (ver `scripts/atl-agent.service`). |
 | `preload.js` | Ponte `contextBridge` (`window.trafficLight.*`) entre renderer e main. |
 | `package.json` | Manifesto + `electron-builder` (`build.publish`=GitHub). Scripts: `start` (`electron . --no-sandbox …`), `test` (`node --test`), `dist`. |
 | `install.sh` / `install_macos.sh` | Instaladores CLI (instalam o app + hooks nos settings dos agentes). |
@@ -39,8 +40,8 @@ Overlay de desktop (Electron) com um semáforo 🟢🟡🔴 **por sessão** de a
 - **Release é manual** (o CI só testa). Fluxo completo e convenção em `.omc/RELEASE_RULE.md`.
 
 ### Testing Requirements
-- `npm test` (= `node --test`, ~191 testes). Sempre verde antes de commitar.
-- CI (`.github/workflows/ci.yml`): syntax checks (`bash -n hooks/*.sh`, `node --check main.js preload.js src/*.js scripts/*.js`) + `npm test`.
+- `npm test` (= `node --test`, ~211 testes). Sempre verde antes de commitar.
+- CI (`.github/workflows/ci.yml`): syntax checks (`bash -n` em `hooks/*.sh` e `install_macos.sh`; `node --check` em `main.js preload.js src/*.js scripts/*.js adapters/*/ai-traffic-lights.js`) + `npm test`.
 
 ### Common Patterns
 - **Módulos puros testáveis sem Electron** em `src/` (sessions, state-machine, focus, usage, validate) — todo I/O fica no `main.js`, a decisão é injetável/testável.

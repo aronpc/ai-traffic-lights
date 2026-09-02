@@ -22,6 +22,9 @@ npm run release:promote              # promove a última beta pra estável
 npm run release:promote -- --version 0.7.3
 ```
 
+O modo `upload-mac` não é chamado à mão: o job `build-mac` do workflow o invoca
+depois do job `release` para compilar e anexar o `.dmg` (beta e estável).
+
 Flags extras: `--skip-tests` (pula o gate `npm test`), `--yes` (não pergunta
 nada; é o padrão quando `CI` está setada).
 
@@ -64,10 +67,15 @@ tag estável tiver mudado.
 
 ## Assets
 
-- **beta:** `ai-traffic-lights-X.Y.Z-beta.N.AppImage` + `latest-linux.yml`.
-  Sem `.deb`: o updater do deb é apenas informativo e resolve por
-  `/releases/latest`, então uma instalação deb não consegue estar no canal beta.
-- **estável:** AppImage + `.deb` + `latest-linux.yml` (os 3 assets de sempre).
+- **beta:** `ai-traffic-lights-X.Y.Z-beta.N.AppImage` +
+  `<AppImage>.sha512` + `latest-linux.yml`. Sem `.deb`: o updater do deb é
+  apenas informativo e resolve por `/releases/latest`, então uma instalação
+  deb não consegue estar no canal beta.
+- **estável:** AppImage + `.deb` + `latest-linux.yml` + um `.sha512` por
+  binário.
+- **macOS (beta e estável):** `.dmg` + `<dmg>.sha512`, enviados pelo job
+  `build-mac` via `scripts/release.sh upload-mac`. Sem o sidecar, os
+  instaladores e o updater do macOS tratam a release como "sem checksum".
 
 ## Ciclo completo
 
@@ -162,3 +170,29 @@ canal só haveria o download manual do AppImage da página da pre-release.
 Corolário: **toda branch que for virar beta precisa conter o toggle**. Uma beta
 cortada de uma branch anterior à 0.7.3 tiraria a aba Atualizações de quem a
 instalasse, deixando a pessoa sem como sair do canal pela UI.
+
+---
+
+## macOS: por que não usamos o Squirrel
+
+O `electron-updater` delega a atualização do macOS ao **Squirrel.Mac**, que exige
+assinatura Developer ID válida — e exige que a assinatura do update satisfaça o
+*designated requirement* do app em execução. Aqui o app é assinado **ad-hoc**
+pelo `install_macos.sh` (sem Team ID) e o artefato do CI não é assinado, então a
+verificação nunca casa. Não há como desligá-la: só o `NsisUpdater` (Windows)
+expõe um gancho de verificação; no macOS a checagem vive no código nativo.
+
+Em vez de assinatura, o updater do macOS ([`src/ipc/update.js`](../src/ipc/update.js))
+baixa o **`.dmg`** da release e reproduz os passos que o `install_macos.sh` já
+executa: monta o dmg, troca o bundle com `ditto` (com rollback), remove a
+quarentena e re-assina ad-hoc. O script roda destacado porque o app precisa sair
+antes de ser substituído; ele espera o pid morrer e relança no fim.
+
+Por isso o build do macOS gera **só o `.dmg`**. O `-mac.zip` e o `latest-mac.yml`
+existem exclusivamente para o Squirrel e eram publicados sem nenhum leitor.
+
+**Se um dia houver Developer ID**, o caminho certo passa a ser o Squirrel: some
+o script de troca, voltam `hardenedRuntime: true` + `notarize` no `package.json`,
+entram `CSC_LINK`/`APPLE_ID`/`APPLE_TEAM_ID` no workflow, e o `codesign` ad-hoc
+sai do instalador — ele deixa de ser necessário e passa a atrapalhar.
+

@@ -26,6 +26,17 @@ const DEFAULTS = Object.freeze({
   revealOnReset: false,        // trazer à frente quando a cota reseta
   revealOnUpdate: false,       // trazer à frente quando há uma nova versão disponível
   updateChannel: 'stable',     // canal de atualização: 'stable' (default) | 'beta' (builds de teste)
+  // ---- sync multi-máquina (P2P via Tailscale) — OPT-IN TOTAL, tudo OFF ----
+  sync: Object.freeze({
+    enabled: false,            // chave-mestra: liga/desliga servidor E cliente
+    share: false,              // subir o servidor /sessions (expõe meu estado)
+    shareTranscripts: false,   // habilitar /transcript (expõe meus prompts) — exige share
+    allowAttach: false,        // habilitar /pty (attach remoto ao meu terminal) — exige share; = exec remoto
+    port: 47474,               // porta comum a todos os nós (convenção p/ os peers)
+    token: '',                 // segredo compartilhado (obrigatório se enabled; compare constante)
+    node: '',                  // nome deste nó no overlay (default = hostname; vazio → hostname)
+    peers: [],                 // [{name, host}] nós que EU observo (cliente). host = IP/name Tailscale
+  }),
 });
 
 const UPDATE_CHANNELS = Object.freeze(['stable', 'beta']);
@@ -49,9 +60,15 @@ const UPDATE_CHANNELS = Object.freeze(['stable', 'beta']);
 // de `0.7.4-beta.3` para o estável `0.7.3` é uma descida em semver, e sem esta
 // flag o app ficaria preso na beta. Fica ligada só nesse caso (rodando
 // pre-release e pedindo estável) — nunca num app estável, onde só faria mal.
+// True se a versão em execução é uma pre-release do canal beta (tem sufixo
+// após X.Y.Z, ex.: 0.7.4-beta.1). Reusada pelo updater (allowDowngrade) e pelo
+// gate da feature de sync — a aba Sincronização só existe em build beta.
+function isPrerelease(appVersion) {
+  return /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
+}
 function updaterFlags(channel, appVersion) {
   const wantBeta = channel === 'beta';
-  const onPrerelease = /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
+  const onPrerelease = isPrerelease(appVersion);
   return { allowPrerelease: wantBeta, allowDowngrade: !wantBeta && onPrerelease };
 }
 
@@ -124,8 +141,34 @@ function mergeWithDefaults(raw) {
       }
       out.launchers = clean;
     }
+    // sync (P2P): sub-objeto OPT-IN. Tudo OFF/seguro por default; valida cada
+    // campo e saneia peers (host vem de config — anti-abuso de tamanho/formato).
+    if (raw.sync && typeof raw.sync === 'object' && !Array.isArray(raw.sync)) {
+      const s = { ...DEFAULTS.sync };
+      if (typeof raw.sync.enabled === 'boolean') s.enabled = raw.sync.enabled;
+      if (typeof raw.sync.share === 'boolean') s.share = raw.sync.share;
+      if (typeof raw.sync.shareTranscripts === 'boolean') s.shareTranscripts = raw.sync.shareTranscripts;
+      if (typeof raw.sync.allowAttach === 'boolean') s.allowAttach = raw.sync.allowAttach;
+      if (typeof raw.sync.port === 'number' && Number.isFinite(raw.sync.port)) {
+        s.port = Math.max(1, Math.min(65535, Math.round(raw.sync.port)));
+      }
+      if (typeof raw.sync.token === 'string' && raw.sync.token.length <= 256) s.token = raw.sync.token;
+      if (typeof raw.sync.node === 'string' && raw.sync.node.length <= 64) s.node = raw.sync.node;
+      if (Array.isArray(raw.sync.peers)) {
+        const cleanPeers = [];
+        for (const p of raw.sync.peers) {
+          if (!p || typeof p !== 'object') continue;
+          const name = typeof p.name === 'string' ? p.name.slice(0, 64) : '';
+          const host = typeof p.host === 'string' ? p.host.slice(0, 256) : '';
+          if (host) cleanPeers.push({ name: name || host, host });
+          if (cleanPeers.length >= 32) break;     // teto anti-abuso
+        }
+        s.peers = cleanPeers;
+      }
+      out.sync = Object.freeze(s);
+    }
   }
   return out;
 }
 
-if (typeof module !== 'undefined') module.exports = { DEFAULTS, UPDATE_CHANNELS, isValidShortcut, mergeWithDefaults, updaterFlags };
+if (typeof module !== 'undefined') module.exports = { DEFAULTS, UPDATE_CHANNELS, isValidShortcut, mergeWithDefaults, updaterFlags, isPrerelease };

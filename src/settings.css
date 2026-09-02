@@ -41,11 +41,14 @@ body { background: transparent; }
   border-radius: 8px 8px 0 0;
   color: var(--ink-dim);
   font: inherit;
-  /* 4 abas em 420px: "Notificações"/"Atualizações" só cabem com fonte e padding
-     apertados. Se entrar uma 5ª, provavelmente é hora de repensar a navegação. */
+  /* 5 abas: a largura da janela (SETTINGS_W) foi para 520 por causa delas. O
+     ellipsis é rede de segurança — se um rótulo traduzido crescer, ele corta em
+     vez de estourar a barra. Uma 6ª aba pede repensar a navegação, não mais px. */
   font-size: 11.5px;
   font-weight: 600;
   padding: 8px 4px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.12s, background 0.12s, border-color 0.12s;
@@ -90,6 +93,38 @@ select, .shortcut {
 select:focus, .shortcut.capturing { border-color: var(--green); }
 .shortcut { cursor: pointer; font-variant-numeric: tabular-nums; }
 .shortcut.capturing { color: var(--ink-dim); font-style: italic; }
+
+/* input number + textarea (porta, peers) no MESMO visual dos demais campos:
+   antes vinham sem classe e herdavam o fundo branco/spinners nativos do browser,
+   destoando do tema dark. Alinhamos fundo/borda/canto/foco com select/.shortcut. */
+input[type=number], textarea {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.12s, background 0.12s;
+}
+input[type=number]:focus, textarea:focus { border-color: var(--green); background: rgba(255, 255, 255, 0.07); }
+/* Porta: campo curto, algarismos tabulares, sem os spinners nativos (faixa
+   1–65535 — fica mais limpo e consistente com os outros inputs). */
+#syncPort { width: 120px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+#syncPort::-webkit-inner-spin-button,
+#syncPort::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+/* Peers: mono (IPs/hosts alinham em coluna), altura mínima generosa, resize só
+   vertical e placeholder discreto no tom do tema. */
+#syncPeers {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+#syncPeers::placeholder { color: var(--ink-dim); opacity: 0.65; }
 
 /* select customizado — dropdown estilizado no tema dark (o <select> nativo,
    cujo popup não é estilizável, fica escondido e serve de fonte de verdade). */
@@ -200,3 +235,7 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63, 1
   border-bottom: 1px dotted transparent; transition: color 0.12s, border-color 0.12s;
 }
 .appmeta .repolink:hover { color: var(--ink); border-bottom-color: var(--ink-dim); }
+
+/* Sub-toggles do sync desabilitados quando o mestre `enabled` está off. */
+input:disabled, textarea:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
+.row:has(input:disabled) > label { opacity: 0.5; }

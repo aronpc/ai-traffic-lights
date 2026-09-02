@@ -25,4 +25,23 @@ function desktopEscape(s) {
   return s.replace(/[\\$" `'*?();<>|&#~]/g, (c) => '\\' + c);
 }
 
-if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape };
+if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape, boundsOnScreen };
+
+// A posição salva de uma janela ainda cai DENTRO de alguma tela ativa?
+// Valida contra TODAS as telas (não só a primária): num setup multi-monitor a
+// janela movida pro monitor da esquerda/direita tinha a posição descartada em
+// silêncio a cada reabertura, anulando o persist (PR-32 #19). Também protege o
+// caso do monitor desconectado — aí nenhuma tela contém o ponto e o caller
+// cai no default (centraliza no primário).
+//   bounds:   {x, y}                    (posição salva)
+//   displays: [{workArea:{x,y,width,height}}]   (screen.getAllDisplays())
+function boundsOnScreen(bounds, displays) {
+  if (!bounds || typeof bounds.x !== 'number' || typeof bounds.y !== 'number') return false;
+  if (!Array.isArray(displays)) return false;
+  return displays.some((d) => {
+    const a = d && d.workArea;
+    if (!a) return false;
+    return bounds.x >= a.x && bounds.x < a.x + a.width &&
+           bounds.y >= a.y && bounds.y < a.y + a.height;
+  });
+}

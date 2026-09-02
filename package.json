@@ -1,6 +1,6 @@
 {
   "name": "ai-traffic-lights",
-  "version": "0.7.3",
+  "version": "0.9.0",
   "description": "Overlay com um semáforo 🟢🟡🔴 por sessão de agente de IA no desktop — Claude Code, Antigravity, Codex e OpenCode via adapters",
   "main": "main.js",
   "scripts": {
@@ -25,6 +25,9 @@
     "url": "https://github.com/aronpc/ai-traffic-lights/issues"
   },
   "build": {
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "appId": "dev.aitrafficlights.app",
     "productName": "AI Traffic Lights",
     "files": [
@@ -61,23 +64,27 @@
     },
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
       "category": "public.app-category.utilities",
       "icon": "build/icon.png",
-      "hardenedRuntime": false
-    },
-    "toolsets": {
-      "appimage": "1.0.3"
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "LSUIElement": 1
+      }
     }
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "chokidar": "^3.6.0",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.1"
   }
 }

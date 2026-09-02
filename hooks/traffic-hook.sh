@@ -120,7 +120,7 @@ main() {
       ps_out=$(ps -p "$pid" -o ppid=,comm= 2>/dev/null)
       ppid="" comm=""
       read -r ppid comm <<< "$ps_out"
-      comm=$(basename "$comm")
+      comm="${comm##*/}"  # basename sem fork (evita "basename: illegal option" com -zsh)
       case "$AGENT:$comm" in
         claude:claude|claude:claude-agent-acp|gemini:node|antigravity:node|antigravity:agy|antigravity:antigravity|codex:codex) agent_pid="$pid"; break ;;
       esac
@@ -134,6 +134,15 @@ main() {
   #  Tilix → TILIX_ID (uuid) via gdbus activate-terminal
   local win="${WINDOWID:-}" tp="${TERM_PROGRAM:-}" zs="${ZELLIJ_SESSION_NAME:-}"
   local furl="${WARP_FOCUS_URL:-}" tid="${TILIX_ID:-}"
+  # tmux: nome da sessão (p/ attach remoto "tmux attach -t <name>"). A captura
+  # fica ABAIXO, depois da leitura do state file: o nome não muda dentro da
+  # mesma sessão, então o valor persistido é reaproveitado (zero fork) e o
+  # `tmux display-message` roda só na 1ª vez — não a cada evento.
+  # tmux_pane ($TMUX_PANE, ex "%3"): p/ FOCO do painel local (zero fork, é env).
+  local tmuxs="" tmuxp="${TMUX_PANE:-}"
+  # iTerm2 (macOS): ITERM_SESSION_ID = "w0t0p0:<uuid>" → foco de aba exato via
+  # osascript. Leitura de env já exportada: zero fork, orçamento intacto.
+  local iid="${ITERM_SESSION_ID:-}"
 
   # windowid REAL: no UserPromptSubmit/SessionStart a janela focada do desktop
   # É o terminal da sessão (o usuário acabou de digitar nela). Resolve Warp
@@ -157,6 +166,17 @@ main() {
   local existing=""
   [ -f "$file" ] && existing=$(<"$file")     # idiom bash (sem cat); só lê se existir
 
+  # tmux_session: reaproveita o já persistido (regex sobre o JSON compacto,
+  # zero fork); só consulta o binário tmux na 1ª vez, quando não há valor.
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    if [ -n "$existing" ]; then
+      [[ $existing =~ \"tmux_session\":\ ?\"([^\"]+)\" ]] && tmuxs="${BASH_REMATCH[1]}"
+    fi
+    if [ -z "$tmuxs" ]; then
+      tmuxs=$(tmux display-message -p '#S' 2>/dev/null) || tmuxs=""
+    fi
+  fi
+
   # 1 jq: extrai campos do input ($in) + merge com existente ($ex) + rolling
   # windowid: prioriza a janela ativa capturada agora ($awin); senão WINDOWID
   # do ambiente; senão PRESERVA o valor já gravado (não regride pra null).
@@ -169,25 +189,28 @@ main() {
     --argjson pid "$agent_pid" \
     --argjson ts "$ts" \
     --arg agent "$AGENT" --arg cevt "$evt" \
-    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" \
-    --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
+    --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" --arg iid "$iid" \
+    --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg tmuxs "$tmuxs" --arg tmuxp "$tmuxp" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
       (try ($exs | fromjson) catch {}) as $ex
       | ($in.session_id // "") as $sid
       | $cevt as $evt
       | ($in.cwd // "") as $cwd
       | ($in.tool_name // "") as $tool
-      | {
+      | $ex + {
           schema_version: 2,
           agent: $agent,
           session_id: $sid, pid: $pid,
-          cwd: (if $cwd == "" then null else $cwd end),
-          transcript_path: (if $tpath == "" then null else $tpath end),
-          model: (if $model == "" then null else $model end),
-          term_program: (if $tp == "" then null else $tp end),
+          cwd: (if $cwd == "" then ($ex.cwd // null) else $cwd end),
+          transcript_path: (if $tpath == "" then ($ex.transcript_path // null) else $tpath end),
+          model: (if $model == "" then ($ex.model // null) else $model end),
+          term_program: (if $tp == "" then ($ex.term_program // null) else $tp end),
           windowid: (if $awin != "" then $awin elif $win != "" then $win else ($ex.windowid // null) end),
           focus_url: (if $furl != "" then $furl else ($ex.focus_url // null) end),
           tilix_id: (if $tid != "" then $tid else ($ex.tilix_id // null) end),
-          zellij_session: (if $zs == "" then null else $zs end),
+          zellij_session: (if $zs == "" then ($ex.zellij_session // null) else $zs end),
+          tmux_session: (if $tmuxs == "" then ($ex.tmux_session // null) else $tmuxs end),
+          tmux_pane: (if $tmuxp == "" then ($ex.tmux_pane // null) else $tmuxp end),
+          iterm_id: (if $iid != "" then $iid else ($ex.iterm_id // null) end),
           last_event: $evt, last_event_ts: $ts,
           last_tool: (if $tool == "" then null else $tool end),
           notification_type: (if $ntype == "" then null else $ntype end),
