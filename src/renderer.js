@@ -47,6 +47,7 @@ const $forceUsage = document.getElementById('forceUsageBtn');
 const $summaryLed = document.getElementById('summaryLed');
 const $expand = document.getElementById('expandBtn');
 const $quit = document.getElementById('quitBtn');
+const $groupBtn = document.getElementById('groupBtn');
 
 function basename(p) {
   if (!p) return '';
@@ -69,6 +70,10 @@ function labelFor(s) {
 
 // Sessão desta máquina? (remota vem do sync P2P e carrega origin do peer)
 function isLocal(s) { return !s.origin || s.origin === 'local'; }
+
+// Dot de nível p/ o header de grupo por host (#54) — mesmos emojis do contador
+// do header; read (cinza) também aparece porque um bloco pode ser só lidas.
+const LEVEL_DOT = { awaiting: '🔴', processing: '🟡', done: '🟢', read: '⚪' };
 
 // As DUAS formas de abrir uma sessão — expostas como botões na linha porque a
 // escolha é do usuário, não do app:
@@ -308,10 +313,30 @@ function render() {
   for (const o of seenOrigins) if (!liveOrigins.has(o)) seenOrigins.delete(o);
 
   // 2. ordena por urgência: 🔴 no topo, depois 🟡, depois 🟢 (state-machine.js).
-  const ordered = sortByUrgency(ranked);
+  // No modo agrupado (#54) a ORIGEM vira chave primária (blocos contíguos) e a
+  // urgência ordena DENTRO do bloco — com urgência primária um peer 🔴entraria
+  // no meio das linhas locais e fragmentaria o bloco do host.
+  const ordered = sortByUrgency(ranked, { originFirst: groupByHostOn() });
+
+  // Agrupamento por host (#54): com o toggle ligado E >1 bloco de origem, um
+  // li.group-header abre cada bloco (a ordenação acima já deixa os hosts
+  // contíguos: local primeiro, peers alfabéticos) e o badge de origem da linha
+  // sai — o header já diz de onde vem. 1 host só: sem header, com badge — a
+  // remota única continua se identificando sozinha (idêntico a hoje).
+  const breaks = groupByHostOn() ? groupBreaks(ordered) : [];
+  const grouped = breaks.length > 1;
+  const breakAt = new Map(grouped ? breaks.map((b) => [b.startIdx, b]) : []);
 
   // 3. monta as linhas na ordem ordenada.
-  const rows = ordered.map(({ s, st }) => {
+  const rows = [];
+  ordered.forEach(({ s, st }, idx) => {
+    const brk = breakAt.get(idx);
+    if (brk) {
+      const hdr = document.createElement('li');
+      hdr.className = 'group-header';
+      hdr.textContent = `${brk.origin} · ${brk.count} ${LEVEL_DOT[brk.worst] || ''}`.trim();
+      rows.push(hdr);
+    }
     const label = labelFor(s);
     const key = sessionKey(s);     // p/ marcar como lido no clique
     const agent = AGENTS[agentOf(s)];
@@ -395,8 +420,9 @@ function render() {
     subInline.addEventListener('click', openTs);
     subInline.title = T('ts_see_prompt');
 
-    // Badge de origem em sessão REMOTA (de qual máquina/peer veio).
-    if (s.origin && s.origin !== 'local') {
+    // Badge de origem em sessão REMOTA (de qual máquina/peer veio). Some quando
+    // a lista está agrupada por host (#54) — o header do bloco já diz.
+    if (!grouped && s.origin && s.origin !== 'local') {
       const badge = document.createElement('span');
       badge.className = 'row__origin';
       badge.textContent = s.origin;
@@ -448,11 +474,18 @@ function render() {
     }
     li.append(snoozeWrap);
 
-    return li;
+    rows.push(li);
   });
 
   $list.replaceChildren(...rows);
   $summaryLed.className = `led led-summary led--${worst}`;
+
+  // Toggle de agrupamento (#54): só faz sentido com sessão remota viva — 1 host
+  // não tem o que agrupar e sem sync o botão nem aparece.
+  if ($groupBtn) {
+    $groupBtn.hidden = !sessions.some((s) => s.origin && s.origin !== 'local');
+    $groupBtn.classList.toggle('is-on', grouped);
+  }
 
   const parts = [];
   if (tally.processing) parts.push(`🟡${tally.processing}`);
@@ -574,6 +607,11 @@ function applyAppearance() {
 // alterna e persiste via save-settings.
 function footerShowsUsage() {
   return !settingsCfg || settingsCfg.showUsage !== false;
+}
+// Agrupar por host (#54): default ON (mergeWithDefaults); o toggle do header
+// alterna e persiste em settings.groupByHost via persistUI.
+function groupByHostOn() {
+  return !settingsCfg || settingsCfg.groupByHost !== false;
 }
 function applyFooterMode() {
   const showUsage = footerShowsUsage();
@@ -759,6 +797,11 @@ document.getElementById('settingsBtn').addEventListener('click', () => window.tr
 if ($toggleFooter) $toggleFooter.addEventListener('click', () => {
   persistUI({ showUsage: !footerShowsUsage() });
   applyFooterMode();
+});
+// Agrupar por host (#54): alterna os headers de máquina e persiste.
+if ($groupBtn) $groupBtn.addEventListener('click', () => {
+  persistUI({ groupByHost: !groupByHostOn() });
+  render();
 });
 // Force (⟳): recoleta o uso na hora (fura o cache de conveniência; o cooldown do
 // 429 continua respeitado no main). Gira o ícone ~600ms como feedback — o push

@@ -102,27 +102,66 @@ function iconFor(st) {
 // depois id da sessão. Ordenar por last_event_ts faria a lista reordenar a cada
 // tool call (~2s), confundindo local/remoto e causando mis-click no topo.
 const URGENCY_RANK = { awaiting: 0, processing: 1, done: 2, read: 3 };
-function sortByUrgency(ranked) {
+// opts.originFirst (modo agrupado, #54): ORIGEM como chave primária (local antes,
+// peers alfabéticos) e urgência DENTRO do bloco. Sem ela a urgência é primária —
+// um peer 🔴 vem antes de local 🟢 — o que é o comportamento da lista plana, mas
+// fragmentaria os blocos de host em vários pedaços (header repetido no meio).
+function sortByUrgency(ranked, opts) {
   // Chave ESTÁVEL por id (não por last_event_ts, que muda a cada tool call e
   // faria a lista REORDENAR a cada ~2s — confundia local/remoto, causava
   // mis-click). A lista só muda quando a URGÊNCIA muda.
   const skey = (x) => ((x.s && (x.s.session_id || x.s.pid)) || '');
   const originOf = (x) => ((x.s && x.s.origin) || 'local');
   const isLocal = (x) => { const o = originOf(x); return !o || o === 'local'; };
-  return [...ranked].sort((a, b) => {
-    const la = (a.st && a.st.level) || 'done';
-    const lb = (b.st && b.st.level) || 'done';
-    if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
-    // Mesmo nível: LOCAL (este host) sempre antes dos peers — evita mis-click e
+  const originFirst = !!(opts && opts.originFirst);
+  const byOrigin = (a, b) => {
+    // LOCAL (este host) sempre antes dos peers — evita mis-click e
     // agrupa a máquina do usuário no topo. Antes era string pura de origin, e
     // hostnames comuns ("alienware") ordenavam antes de "local" (PR-32 #20).
     const al = isLocal(a), bl = isLocal(b);
     if (al !== bl) return al ? -1 : 1;
     const oa = originOf(a), ob = originOf(b);
     if (oa !== ob) return oa < ob ? -1 : 1;   // peers: ordem alfabética estável
+    return 0;
+  };
+  return [...ranked].sort((a, b) => {
+    const la = (a.st && a.st.level) || 'done';
+    const lb = (b.st && b.st.level) || 'done';
+    if (originFirst) {
+      const o = byOrigin(a, b);
+      if (o) return o;
+    }
+    if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
+    if (!originFirst) {
+      const o = byOrigin(a, b);
+      if (o) return o;
+    }
     const ka = skey(a), kb = skey(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 }
 
-if (typeof module !== 'undefined') module.exports = { computeState, iconFor, sortByUrgency };
+// ---- agrupamento por host (#54) ----
+// Cortes de grupo de uma lista JÁ ordenada por sortByUrgency (que deixa as
+// sessões contíguas por origem: local primeiro, peers alfabéticos). Cada corte
+// descreve um bloco: {origin, startIdx, count, worst} — startIdx é o índice em
+// `ordered` onde o bloco começa, worst o nível mais urgente dentro dele (p/ o
+// header resumir "notebook-hg · 3 🔴"). Pura: o renderer decide se desenha.
+function groupBreaks(ordered) {
+  const breaks = [];
+  let cur = null;
+  for (let i = 0; i < ordered.length; i++) {
+    const s = (ordered[i] && ordered[i].s) || {};
+    const level = (ordered[i].st && ordered[i].st.level) || 'done';
+    const origin = s.origin || 'local';
+    if (!cur || cur.origin !== origin) {
+      cur = { origin, startIdx: i, count: 0, worst: level };
+      breaks.push(cur);
+    }
+    cur.count++;
+    if (URGENCY_RANK[level] < URGENCY_RANK[cur.worst]) cur.worst = level;
+  }
+  return breaks;
+}
+
+if (typeof module !== 'undefined') module.exports = { computeState, iconFor, sortByUrgency, groupBreaks };

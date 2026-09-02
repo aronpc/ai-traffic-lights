@@ -13,6 +13,7 @@ const DEFAULTS = Object.freeze({
   terminalCmd: '',              // comando customizado p/ 'custom' (ex.: 'kitty --directory {cwd} -e {cmd}')
   launchers: {},                // override de path por agente: { claude: '/usr/local/bin/claude' }
   showUsage: true,              // footer: true = barras de uso | false = ícones do launcher
+  groupByHost: true,            // lista: headers por máquina quando há sessões de >1 host (#54)
   collapsed: false,             // estado da janela: recolhido (só header+rodapé) | expandido
   opacity: 0.97,               // transparência do painel (0.6–1.0; alpha do fundo do overlay)
   markReadOnClick: true,       // clicar num terminal vermelho marca como lido (cinza) até a próxima notificação
@@ -101,6 +102,7 @@ function mergeWithDefaults(raw) {
     }
     if (typeof raw.escalateIdle === 'boolean') out.escalateIdle = raw.escalateIdle;
     if (typeof raw.showUsage === 'boolean') out.showUsage = raw.showUsage;
+    if (typeof raw.groupByHost === 'boolean') out.groupByHost = raw.groupByHost;
     if (typeof raw.collapsed === 'boolean') out.collapsed = raw.collapsed;
     // opacity: número em [0.6, 1.0] (abaixo de 0.6 fica ilegível). Fora da faixa
     // ou não-número → clampa/ignora, nunca vira undefined.

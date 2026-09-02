@@ -2,7 +2,7 @@
 // agentOf (agents.js). Rodam com `node --test` (nativo, sem dependências).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { computeState, iconFor, sortByUrgency } = require('../src/state-machine.js');
+const { computeState, iconFor, sortByUrgency, groupBreaks } = require('../src/state-machine.js');
 const { agentOf } = require('../src/agents.js');
 
 const NOW = 1_800_000_000;                 // epoch fixo (testes determinísticos)
@@ -118,6 +118,51 @@ test('sortByUrgency: não muta o array original', () => {
   const snap = ranked.map((r) => r.st.level);
   sortByUrgency(ranked);
   assert.deepEqual(ranked.map((r) => r.st.level), snap, 'original intacto');
+});
+
+// ---- sortByUrgency originFirst (#54): blocos de host contíguos ----
+test('sortByUrgency {originFirst}: origem é chave primária — peer 🔴 NÃO invade o bloco local', () => {
+  const mk = (level, id, origin) => ({ s: { session_id: id, origin: origin || 'local', last_event_ts: 0 }, st: { level } });
+  // mesmo cenário do teste acima, mas com originFirst: a urgência (peer 🔴)
+  // ordena DENTRO do bloco, não entre blocos — sem isso o header do peer
+  // apareceria no MEIO das linhas locais (bloco fragmentado).
+  const ranked = [mk('done', 'd1'), mk('awaiting', 'r1', 'local'), mk('processing', 'p1'), mk('awaiting', 'r2', 'notebook-hg')];
+  const out = sortByUrgency(ranked, { originFirst: true }).map((r) => `${r.s.origin}:${r.s.session_id}`);
+  assert.deepEqual(out, ['local:r1', 'local:p1', 'local:d1', 'notebook-hg:r2'],
+    'bloco local contíguo (urgência interna), depois o peer');
+});
+
+test('sortByUrgency {originFirst}: peers entre si em ordem alfabética, blocos contíguos', () => {
+  const mk = (level, id, origin) => ({ s: { session_id: id, origin, last_event_ts: 0 }, st: { level } });
+  const ranked = [mk('done', 'z1', 'zeta'), mk('awaiting', 'a1', 'alpha'), mk('processing', 'l1', 'local')];
+  const out = sortByUrgency(ranked, { originFirst: true }).map((r) => `${r.s.origin}:${r.s.session_id}`);
+  assert.deepEqual(out, ['local:l1', 'alpha:a1', 'zeta:z1'], 'local, depois peers A→Z, cada um contíguo');
+});
+
+// ---- groupBreaks (#54): cortes de bloco por origem numa lista já ordenada ----
+test('groupBreaks: um corte por transição de origem, com count e startIdx', () => {
+  const mk = (id, origin) => ({ s: { session_id: id, origin }, st: { level: 'done' } });
+  // lista JÁ ordenada (sortByUrgency): 2 locais, 2 do peer A, 1 do peer B
+  const ordered = [mk('l1'), mk('l2'), mk('a1', 'alpha'), mk('a2', 'alpha'), mk('b1', 'beta')];
+  assert.deepEqual(groupBreaks(ordered), [
+    { origin: 'local', startIdx: 0, count: 2, worst: 'done' },
+    { origin: 'alpha', startIdx: 2, count: 2, worst: 'done' },
+    { origin: 'beta', startIdx: 4, count: 1, worst: 'done' },
+  ]);
+});
+
+test('groupBreaks: worst é o nível mais urgente do bloco (awaiting > processing > done > read)', () => {
+  const mk = (id, origin, level) => ({ s: { session_id: id, origin }, st: { level } });
+  const ordered = [mk('r1', 'local', 'read'), mk('d1', 'local', 'done'), mk('p1', 'alpha', 'processing'), mk('a1', 'alpha', 'awaiting')];
+  const breaks = groupBreaks(ordered);
+  assert.equal(breaks[0].worst, 'done', 'done mais urgente que read');
+  assert.equal(breaks[1].worst, 'awaiting', 'awaiting mais urgente que processing');
+});
+
+test('groupBreaks: lista vazia e bloco único', () => {
+  assert.deepEqual(groupBreaks([]), []);
+  const mk = (id) => ({ s: { session_id: id, origin: 'local' }, st: { level: 'done' } });
+  assert.deepEqual(groupBreaks([mk('l1'), mk('l2')]), [{ origin: 'local', startIdx: 0, count: 2, worst: 'done' }], '1 bloco = 1 corte');
 });
 
 test('sortByUrgency: mesmo nível NÃO reordena por timestamp (estável — evita a lista pular a cada evento)', () => {

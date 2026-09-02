@@ -121,6 +121,7 @@ html, body {
   line-height: 1;
 }
 .btn:hover { background: rgba(255,255,255,0.10); color: var(--ink); }
+.btn.is-on { background: rgba(255,255,255,0.12); color: var(--ink); }   /* toggle ativo (agrupar por host, modo launcher) */
 .btn-close:hover { background: rgba(224,86,63,0.22); color: var(--red); }
 /* Force (⟳): gira o ícone enquanto recoleta (feedback de "atualizando"). */
 .btn.is-spinning svg { animation: spin 0.6s linear; transform-origin: center; }
@@ -361,6 +362,20 @@ html, body {
   border-radius: 9px;
   cursor: pointer;
   transition: background 0.12s;
+}
+/* Header de grupo por máquina (#54): abre cada bloco de host na lista. */
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 2px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  user-select: none;
+  cursor: default;
 }
 .row + .row { margin-top: 1px; } /* respiro entre linhas */
 .row:hover { background: var(--row-hover); }
