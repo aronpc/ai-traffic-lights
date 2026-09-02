@@ -38,4 +38,15 @@ function rewriteKeyOrigin(key, from, to) {
   return key;
 }
 
-if (typeof module !== 'undefined') module.exports = { originOf, sessionKey, rewriteKeyOrigin };
+// Chave do APELIDO (rename) — o session_id do AGENTE (UUID que o `claude
+// --resume` aceita), não a chave interna do ATL: o apelido é da SESSÃO do
+// agente, sobrevive a restarts do overlay e viaja bem entre máquinas. Fallback
+// pid p/ processos headless sem session_id. Antes vivia no renderer.js;
+// movida para cá quando a janela de detalhes (details.js) passou a resolver
+// apelidos também — é identidade de sessão, as duas páginas precisam da
+// MESMA função (chave divergente = apelido nunca casa).
+function aliasKey(s) {
+  return String((s && (s.session_id || s.pid)) || '');
+}
+
+if (typeof module !== 'undefined') module.exports = { originOf, sessionKey, rewriteKeyOrigin, aliasKey };

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<!-- details.html — JANELA solta de detalhes da sessão (#59). Antes o painel
+     era um modal BLOQUEANTE dentro do overlay (backdrop por cima da lista);
+     agora é uma BrowserWindow própria: a lista continua clicável, a janela
+     pode ficar aberta ao lado monitorando (o main empurra a sessão viva a
+     cada refresh) e Esc/× destroem a janela. Mesmo CSS do overlay (styles.css,
+     bloco .dt-*) com overrides locais: sem backdrop, card ocupa a janela e o
+     header arrasta a janela (frameless). -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Detalhes da sessão</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Overrides da JANELA (o CSS dt-* nasceu para o modal do overlay):
+       fundo cheio, sem backdrop, card = 100% da janela, header arrasta. */
+    body { background: var(--bg); overflow: hidden; cursor: default; }
+    .dt-panel { position: static; background: none; backdrop-filter: none; display: block; }
+    .dt-card { width: auto; max-width: none; height: 100vh; max-height: none; margin: 0; border-radius: 0; border: none; }
+    .dt-head { -webkit-app-region: drag; cursor: default; }
+    .dt-head .ts-close { -webkit-app-region: no-drag; }
+  </style>
+</head>
+<body>
+  <div class="dt-panel">
+    <div class="dt-card">
+      <div class="dt-head">
+        <span class="dt-title"></span>
+        <button class="ts-close" aria-label="fechar">×</button>
+      </div>
+      <div class="dt-body"></div>
+    </div>
+  </div>
+  <script src="agents.js"></script>
+  <script src="identity.js"></script>
+  <script src="i18n.js"></script>
+  <script src="details.js"></script>
+</body>
+</html>

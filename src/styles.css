@@ -637,11 +637,12 @@ html, body {
   background: var(--border);
 }
 
-/* ---------- modal de detalhes da sessão ----------
-   Backdrop escurecido + card central (idioma do .ts-panel, z-index acima:
-   55 > 50 do transcript). Conteúdo selecionável — é um modal de DADOS, o
-   overlay é user-select:none. Sobrevive ao re-render de 2s (irmão da lista);
-   os dados são um snapshot da abertura (reabrir atualiza). */
+/* ---------- detalhes da sessão ----------
+   Bloco compartilhado entre a JANELA solta de detalhes (details.html — uso
+   primário desde #59: card ocupa a janela inteira, sem backdrop) e o
+   modal .ts-panel de onde o layout nasceu (z-index 55 > 50 do transcript,
+   mantido caso volte a ser embutido). Conteúdo selecionável — é um card de
+   DADOS, o overlay é user-select:none. */
 .dt-panel {
   position: absolute; inset: 0; z-index: 55;
   display: flex; align-items: flex-start; justify-content: center;

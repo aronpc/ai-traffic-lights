@@ -403,7 +403,9 @@ function sendToRenderer(channel, payload) {
 }
 
 function sendSessions() {
-  sendToRenderer('sessions', readSessions());
+  const list = readSessions();
+  sendToRenderer('sessions', list);
+  pushDetails(list);   // janela de detalhes aberta → dados AO VIVO (a cada refresh)
 }
 
 // ---- marcas de leitura (#56) ----
@@ -427,6 +429,83 @@ function applyReadMarks(marks) {
   for (const m of applied) sendToRenderer('remote-read', m);
   return applied.length;
 }
+
+// ---- janela SOLTA de detalhes da sessão (#59) ----
+// Antes: painel BLOQUEANTE dentro do overlay (backdrop em cima da lista, dados
+// congelados na abertura). Agora: BrowserWindow própria frameless (padrão
+// termWin), o overlay segue clicável e o main EMPURRA a sessão a cada refresh
+// de 5s — deixar aberta = monitorar ao vivo. Uma janela por vez (reabrir com
+// outra sessão troca o conteúdo); sessão que morre → push com s=null e a
+// página mostra "sessão encerrou" em vez do último snapshot.
+let detailsWin = null;
+let detailsKey = null;                 // sessionKey exibida (null = janela fechada)
+let detailsBoundsTimer = null;
+const DETAILS_BOUNDS_FILE = path.join(BASE_DIR, 'details-window.json');
+function loadDetailsBounds() {
+  try {
+    const b = JSON.parse(fs.readFileSync(DETAILS_BOUNDS_FILE, 'utf8'));
+    if (b && [b.x, b.y, b.width, b.height].every((n) => typeof n === 'number')) return b;
+  } catch {}
+  return null;
+}
+function saveDetailsBounds() {
+  if (!detailsWin || detailsWin.isDestroyed() || detailsWin.isMaximized()) return;
+  clearTimeout(detailsBoundsTimer);
+  detailsBoundsTimer = setTimeout(() => {
+    try {
+      const b = detailsWin.getBounds();
+      fs.writeFileSync(DETAILS_BOUNDS_FILE, JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height }));
+    } catch {}
+  }, 300);
+}
+// Push à janela aberta: a sessão casada por key + a marca de leitura vigente
+// (readMarksState vive aqui no main — a página não tem estado próprio).
+function pushDetails(list) {
+  if (!detailsWin || detailsWin.isDestroyed() || !detailsKey) return;
+  const s = (list || []).find((x) => sessionKey(x) === detailsKey) || null;
+  const readAt = readMarksState[detailsKey] || 0;
+  try { detailsWin.webContents.send('details-data', { s, readAt }); } catch {}
+}
+function ensureDetailsWin() {
+  if (detailsWin && !detailsWin.isDestroyed()) return;
+  const b = loadDetailsBounds() || {};
+  // Fora de qualquer tela (monitor desconectado) → undefined, o Electron
+  // centraliza no primário (mesma razão do termWin).
+  const keep = boundsOnScreen(b, screen.getAllDisplays());
+  detailsWin = new BrowserWindow({
+    width: b.width || 420, height: b.height || 540, minWidth: 320, minHeight: 240,
+    x: keep ? b.x : undefined, y: keep ? b.y : undefined,
+    frame: false, transparent: true, resizable: true,
+    hasShadow: false, backgroundColor: '#00000000',
+    alwaysOnTop: true, skipTaskbar: false, autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  // Mesma camada do overlay (o painel nasceu DENTRO dele): sem isto a janela
+  // nova fica atrás do always-on-top do overlay sempre que se sobrepõem.
+  // macOS 'floating' pelo mesmo motivo do overlay (menu bar / 2º clique tray).
+  detailsWin.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'screen-saver');
+  // Mesmo nível do overlay → quem reafirma por último fica na frente: o blur
+  // do overlay o re-empilha (quirk Mutter), então a details reafirma o seu
+  // topo ao ganhar foco — clicar nela a traz de volta pra frente.
+  detailsWin.on('focus', () => { try { detailsWin.moveTop(); } catch {} });
+  detailsWin.loadFile(path.join(__dirname, 'src/details.html'));
+  detailsWin.webContents.once('did-finish-load', () => {
+    try { pushDetails(readSessions()); } catch {}   // 1º push não espera o tick
+  });
+  detailsWin.on('resize', saveDetailsBounds);
+  detailsWin.on('move', saveDetailsBounds);
+  detailsWin.on('closed', () => { detailsWin = null; detailsKey = null; });
+}
+ipcMain.on('details-open', (_e, { key } = {}) => {
+  if (!key) return;
+  const existed = !!(detailsWin && !detailsWin.isDestroyed());
+  detailsKey = key;
+  ensureDetailsWin();
+  if (existed) { try { detailsWin.moveTop(); detailsWin.focus(); pushDetails(readSessions()); } catch {} }
+});
+ipcMain.on('details-close', () => {
+  if (detailsWin && !detailsWin.isDestroyed()) detailsWin.close();
+});
 
 // Limpeza: remove state files cujo PID morreu (sem SessionEnd — ex.: crash/kill
 // do terminal). process.kill(pid,0) só testa existência (não afetado por ptrace).

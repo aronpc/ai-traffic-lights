@@ -67,6 +67,12 @@ contextBridge.exposeInMainWorld('trafficLight', {
   // reescrita no namespace dela) p/ propagar a TODOS os peers via /sessions.
   markRead: (key, readAt, origin) => ipcRenderer.send('mark-read', { key, readAt, origin }),
   copyText: (text) => ipcRenderer.send('copy-text', text), // menu de contexto da linha → clipboard (main valida o tamanho)
+  // Janela SOLTA de detalhes (#59): o overlay pede para abrir por sessionKey;
+  // o main empurra { s, readAt } à janela a cada refresh (s=null = encerrou);
+  // Esc/× da janela pedem o close (main destrói a BrowserWindow).
+  openDetails: (key) => ipcRenderer.send('details-open', { key }),
+  onDetailsData: (cb) => ipcRenderer.on('details-data', (_e, p) => cb(p)),
+  closeDetails: () => ipcRenderer.send('details-close'),
   onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
   onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
   onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente

@@ -49,6 +49,7 @@ const STRINGS = {
     dt_read_until: 'Read until',
     dt_copy: 'copy',
     dt_no_events: 'No events recorded.',
+    dt_gone: 'Session ended — this window can be closed.',
     tooltip_toggle_footer: 'toggle usage / launcher',
     tooltip_force_usage: 'refresh usage now',
     tooltip_force_cooldown: 'rate-limited — wait {min} min',
@@ -231,6 +232,7 @@ const STRINGS = {
     dt_read_until: 'Lida até',
     dt_copy: 'copiar',
     dt_no_events: 'Sem eventos registrados.',
+    dt_gone: 'Sessão encerrada — pode fechar esta janela.',
     tooltip_toggle_footer: 'alternar uso / launcher',
     tooltip_force_usage: 'atualizar uso agora',
     tooltip_force_cooldown: 'rate-limited — aguarde {min} min',
@@ -391,4 +393,15 @@ function translate(lang, key, vars) {
 // t parcial por idioma — os call sites ficam limpos: T('empty_state').
 function makeT(lang) { return (key, vars) => translate(lang, key, vars); }
 
-if (typeof module !== 'undefined') module.exports = { STRINGS, pickLang, translate, makeT };
+// "há quanto tempo" do evento (3s / 12min / 2h05). Antes vivia no renderer.js;
+// movida para cá quando a janela de detalhes (details.js) passou a precisar
+// dela também — i18n/formato é o lugar compartilhável entre as páginas.
+function ageText(nowSec, ts) {
+  if (!ts) return '';
+  const s = Math.max(0, nowSec - ts);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}min`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}`;
+}
+
+if (typeof module !== 'undefined') module.exports = { STRINGS, pickLang, translate, makeT, ageText };

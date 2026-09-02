@@ -27,7 +27,8 @@ function snoozeKey(s) { return sessionKey(s); }
 // session_id primeiro: é o que Claude/Codex reusam no --resume e persistem em
 // disco, então o apelido sobrevive a restart do app/sessão; pid é o fallback
 // (procs headless, cujo session_id já é `proc-<pid>`). String() p/ o guard do IPC.
-function aliasKey(s) { return String(s.session_id || s.pid || ''); }
+// aliasKey agora vive em identity.js (a janela de detalhes resolve apelidos
+// com a MESMA chave — divergência aqui = apelido nunca casa entre páginas).
 function isSnoozed(key) {
   const until = snoozed.get(key);
   if (!until) return false;
@@ -56,13 +57,8 @@ function basename(p) {
   const parts = p.replace(/\/+$/, '').split('/');
   return parts[parts.length - 1] || p;
 }
-function ageText(nowSec, ts) {
-  if (!ts) return '';
-  const s = Math.max(0, nowSec - ts);
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}min`;
-  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}`;
-}
+// ageText agora vive em i18n.js (a janela de detalhes, details.js, precisa do
+// mesmo "há 3min" — formato é coisa de i18n, não do overlay).
 function labelFor(s) {
   const alias = aliases[aliasKey(s)];
   if (alias) return alias;
@@ -226,7 +222,9 @@ function openCtx(s, st, labelEl, ev) {
   const sep = document.createElement('div');
   sep.className = 'ctx__sep';
   $ctx.append(sep);
-  $ctx.append(ctxItem(T('ctx_details'), () => openDetails(s)));
+  // Detalhes abre numa JANELA solta própria (#59) — o overlay não bloqueia e a
+  // janela atualiza ao vivo. O main é quem empurra os dados da sessão por key.
+  $ctx.append(ctxItem(T('ctx_details'), () => window.trafficLight.openDetails(key)));
   if (canRename) $ctx.append(ctxItem(T('ctx_rename'), () => startRename(s, labelEl)));
   if (canMark) $ctx.append(ctxItem(T('ctx_mark_read'), () => {
     const at = s.last_event_ts || Math.floor(Date.now() / 1000);
@@ -254,139 +252,12 @@ function openCtx(s, st, labelEl, ev) {
   ctxBindings = { onDown, onKey, onBlur };
 }
 
-// ---- modal de detalhes da sessão ----
-// Snapshot dos dados crus que o hook grava (hooks/traffic-hook.sh, schema
-// v2) + o que só existe no receptor (origin, marca de lida). Painel único
-// reaproveitado (padrão $tsPanel), irmão da lista → sobrevive ao re-render;
-// os dados congelam na abertura (reabrir atualiza). Corpo montado com
-// createElement/append — texto selecionável e enxergável no vm de teste.
-let $dtPanel = null;
-let dtKeyHandler = null;
-function closeDetails() {
-  if (dtKeyHandler) {
-    window.removeEventListener('keydown', dtKeyHandler, true);
-    dtKeyHandler = null;
-  }
-  if ($dtPanel) $dtPanel.remove();
-}
-function dtSec(title) {
-  const h = document.createElement('div');
-  h.className = 'dt-sec';
-  h.textContent = title;
-  return h;
-}
-function dtRow(label, value, copyText) {
-  const row = document.createElement('div');
-  row.className = 'dt-row';
-  const k = document.createElement('span');
-  k.className = 'dt-k';
-  k.textContent = label;
-  const v = document.createElement('span');
-  v.className = 'dt-v';
-  v.textContent = value;
-  row.append(k, v);
-  if (copyText && window.trafficLight.copyText) {
-    const b = document.createElement('button');
-    b.className = 'dt-copy';
-    b.textContent = T('dt_copy');
-    b.addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.copyText(copyText); });
-    row.append(b);
-  }
-  return row;
-}
-function openDetails(s) {
-  const $ov = document.getElementById('overlay');
-  if (!$ov) return;
-  if (!$dtPanel) {
-    $dtPanel = document.createElement('div');
-    $dtPanel.className = 'dt-panel';
-    $dtPanel.innerHTML = '<div class="dt-card"><div class="dt-head"><span class="dt-title"></span><button class="ts-close" aria-label="fechar">×</button></div><div class="dt-body"></div></div>';
-    $dtPanel.querySelector('.ts-close').addEventListener('click', closeDetails);
-    $dtPanel.addEventListener('contextmenu', (e) => e.preventDefault());  // dado é selecionável, menu nativo atrapalha
-  }
-  closeDetails();                                // solta o keydown de uma abertura anterior
-  $ov.appendChild($dtPanel);
-  $dtPanel.querySelector('.dt-title').textContent = labelFor(s);
-
-  const body = $dtPanel.querySelector('.dt-body');
-  body.replaceChildren();
-
-  // — Sessão —
-  body.append(dtSec(T('dt_session')));
-  const ag = AGENTS[agentOf(s)];
-  body.append(dtRow(T('dt_agent'), ag ? ag.label : agentOf(s)));
-  body.append(dtRow(T('dt_sid'), s.session_id || '—', s.session_id));
-  const alias = aliases[aliasKey(s)];
-  if (alias) body.append(dtRow(T('dt_alias'), alias));
-  if (s.model) body.append(dtRow(T('dt_model'), s.model));
-  // Conta Claude da sessão (#58): rótulo anotado no main a partir do
-  // CLAUDE_CONFIG_DIR do environ do pid — distingue perfis dd-claude com
-  // autenticações diferentes rodando ao mesmo tempo. Remota traz o rótulo
-  // da conta DA ORIGEM. Sem rótulo resolvido = linha ausente.
-  if (s.account) body.append(dtRow(T('dt_account'), s.account));
-  if (s.pid) body.append(dtRow(T('dt_pid'), String(s.pid)));
-
-  // — Contexto — (windowid é LOCAL_ONLY: na remota o campo nem existe)
-  body.append(dtSec(T('dt_context')));
-  if (s.cwd) body.append(dtRow(T('dt_cwd'), s.cwd, s.cwd));
-  if (s.term_program && s.term_program !== 'terminal') body.append(dtRow(T('dt_term'), s.term_program));
-  if (s.tmux_session) body.append(dtRow(T('dt_tmux'), s.tmux_session));
-  body.append(dtRow(T('dt_origin'), s.origin || 'local'));
-  if (s.windowid) body.append(dtRow(T('dt_window'), String(s.windowid)));
-
-  // — Atividade —
-  body.append(dtSec(T('dt_activity')));
-  const age = ageText(Math.floor(Date.now() / 1000), s.last_event_ts);
-  body.append(dtRow(T('dt_last_event'), (s.last_event || '—') + (age ? ' · ' + age : '')));
-  if (s.last_tool) body.append(dtRow(T('dt_last_tool'), s.last_tool));
-  if (s.notification_type) body.append(dtRow(T('dt_notification'), s.notification_type));
-  const readAt = readMarks.get(sessionKey(s));
-  if (readAt) body.append(dtRow(T('dt_read_until'), new Date(readAt * 1000).toLocaleTimeString()));
-
-  // — Linha do tempo — events[] rolling de 50 do hook; COLAPSADA por padrão
-  // (50 linhas despejadas empurrariam os campos de cima pra fora da dobra).
-  // Header mostra a contagem; expandir é explícito.
-  const evs = Array.isArray(s.events) ? [...s.events].reverse() : [];
-  if (!evs.length) {
-    body.append(dtSec(T('dt_timeline')));
-    const e = document.createElement('div');
-    e.className = 'dt-v';
-    e.textContent = T('dt_no_events');
-    body.append(e);
-  } else {
-    const head = document.createElement('div');
-    head.className = 'dt-sec dt-toggle';
-    const lbl = document.createElement('span');
-    lbl.textContent = `${T('dt_timeline')} (${evs.length})`;
-    const caret = document.createElement('span');
-    caret.className = 'dt-caret';
-    caret.textContent = '▸';
-    head.append(lbl, caret);
-    body.append(head);
-    const evsBox = document.createElement('div');
-    evsBox.className = 'dt-evs';
-    evsBox.hidden = true;
-    for (const ev of evs) {
-      const row = document.createElement('div');
-      row.className = 'dt-ev';
-      const t = document.createElement('time');
-      t.textContent = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '—';
-      const x = document.createElement('span');
-      x.textContent = ev.event + (ev.tool ? ' · ' + ev.tool : '');
-      row.append(t, x);
-      evsBox.append(row);
-    }
-    body.append(evsBox);
-    head.addEventListener('click', () => {
-      evsBox.hidden = !evsBox.hidden;
-      caret.textContent = evsBox.hidden ? '▸' : '▾';
-    });
-  }
-
-  const onKey = (e) => { if (e.key === 'Escape') closeDetails(); };
-  window.addEventListener('keydown', onKey, true);
-  dtKeyHandler = onKey;
-}
+// ---- detalhes da sessão ----
+// O painel migrou para uma JANELA solta própria (#59 — src/details.html +
+// src/details.js): antes era modal BLOQUEANTE do overlay com dados congelados;
+// agora o ctx item chama trafficLight.openDetails(key) e o main empurra a
+// sessão viva à janela a cada refresh. Montagem/cópia/timeline vivem em
+// src/details.js (testadas lá — test/details.test.js).
 
 // ---- rename in-place ----
 // Enquanto o input está aberto, `renaming` suspende render() — senão o
