@@ -121,6 +121,17 @@ html, body {
 .search:focus { border-color: var(--border-bright); }
 .search::placeholder { color: var(--ink-dim); opacity: 0.7; }
 .search[hidden] { display: none; }
+/* Modo busca (#55): abrir a lupa recolhe o ruído do header — divider, counts
+   e os botões do meio somem e o input (flex:1) expande pelo header inteiro.
+   Ficam de fora a própria lupa (fecha, já acesa via .is-on) e o × de ocultar. */
+.bar--searching .bar-divider,
+.bar--searching .counts,
+.bar--searching .btn-ver,
+.bar--searching #groupBtn,
+.bar--searching #forceUsageBtn,
+.bar--searching #toggleFooterBtn,
+.bar--searching #settingsBtn,
+.bar--searching #expandBtn { display: none; }
 .btn {
   -webkit-app-region: no-drag;
   background: transparent;

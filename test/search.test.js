@@ -44,6 +44,18 @@ async function setup() {
   els.searchInput.hidden = true;
   els.searchInput.focused = false;
   els.searchInput.focus = function () { this.focused = true; };
+  // Header (.bar): o modo busca (#55) recolhe o header e expande o input —
+  // setSearchOpen alterna a classe bar--searching nele via closest('.bar').
+  // O mock genérico não tem closest/classList com estado; este tem.
+  els.bar = mkEl();
+  els.bar.classes = new Set();
+  els.bar.classList = {
+    add: (c) => els.bar.classes.add(c),
+    remove: (c) => els.bar.classes.delete(c),
+    toggle: (c, on) => { if (on) els.bar.classes.add(c); else els.bar.classes.delete(c); },
+    contains: (c) => els.bar.classes.has(c),
+  };
+  els.searchInput.closest = (sel) => (sel === '.bar' ? els.bar : null);
   const winListeners = {};
   let sessionsCb = null;
   const window = {
@@ -137,12 +149,14 @@ test('#55 "/" abre a busca focada; Esc limpa, fecha e restaura a lista', async (
   keydown({ key: '/', preventDefault() {}, target: {} });
   assert.equal(els.searchInput.hidden, false, 'input aberto');
   assert.equal(els.searchInput.focused, true, 'e focado');
+  assert.ok(els.bar.classes.has('bar--searching'), 'header em modo busca (input expande)');
   // digita e dá Esc
   els.searchInput.value = 'web';
   els.searchInput.dispatch('input', {});
   assert.equal(rows(els).length, 1);
   els.searchInput.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
   assert.equal(els.searchInput.hidden, true, 'Esc fecha');
+  assert.ok(!els.bar.classes.has('bar--searching'), 'header volta ao normal');
   assert.equal(els.searchInput.value, '', 'Esc limpa o valor');
   assert.equal(rows(els).length, 2, 'lista restaurada');
 });

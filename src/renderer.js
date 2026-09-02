@@ -840,6 +840,11 @@ function setSearchOpen(open) {
   if (!open) $search.value = '';          // fechar limpa — busca é estado efêmero
   $search.hidden = !open;
   if ($searchBtn) $searchBtn.classList.toggle('is-on', open);
+  // Modo busca: o header inteiro vira input. Num overlay estreito o espaço do
+  // spacer entre counts e botões é mínimo — com a classe, o ruído do header
+  // (divider, counts e os botões do meio) recolhe via CSS e o input expande.
+  const bar = $search.closest('.bar');
+  if (bar) bar.classList.toggle('bar--searching', open);
   if (open) $search.focus();
   else render();                          // filtro saiu → lista volta inteira
 }
