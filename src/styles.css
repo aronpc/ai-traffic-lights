@@ -102,6 +102,25 @@ html, body {
   text-overflow: ellipsis;
 }
 .spacer { flex: 1; }
+/* Busca (#55): input compacto que ocupa o espaço do spacer quando aberto.
+   O header é drag-region — sem no-drag o mousedown iniciaria o arrasto da
+   janela em vez de posicionar o cursor do texto. */
+.search {
+  -webkit-app-region: no-drag;
+  flex: 1;
+  min-width: 60px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+}
+.search:focus { border-color: var(--border-bright); }
+.search::placeholder { color: var(--ink-dim); opacity: 0.7; }
+.search[hidden] { display: none; }
 .btn {
   -webkit-app-region: no-drag;
   background: transparent;

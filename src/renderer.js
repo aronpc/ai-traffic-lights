@@ -48,6 +48,8 @@ const $summaryLed = document.getElementById('summaryLed');
 const $expand = document.getElementById('expandBtn');
 const $quit = document.getElementById('quitBtn');
 const $groupBtn = document.getElementById('groupBtn');
+const $search = document.getElementById('searchInput');
+const $searchBtn = document.getElementById('searchBtn');
 
 function basename(p) {
   if (!p) return '';
@@ -176,6 +178,7 @@ function alertAwaiting(s) {
 function applyStaticI18n() {
   for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
   for (const el of document.querySelectorAll('[data-i18n-tip]')) el.setAttribute('data-tip', T(el.dataset.i18nTip));
+  for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.setAttribute('placeholder', T(el.dataset.i18nPlaceholder));
 }
 
 // ---- rename in-place ----
@@ -312,11 +315,20 @@ function render() {
   const liveOrigins = new Set(sessions.map((s) => s.origin || 'local'));
   for (const o of seenOrigins) if (!liveOrigins.has(o)) seenOrigins.delete(o);
 
-  // 2. ordena por urgência: 🔴 no topo, depois 🟡, depois 🟢 (state-machine.js).
+  // 2. Busca (#55): filtra ANTES de ordenar — a ordem de urgência do que sobra
+  // é preservada (a busca só esconde, nunca reordena; exigência da issue).
+  // tally/worst/tray/alertas ficam com o TOTAL: a busca é um recorte VISUAL —
+  // um vermelho fora do filtro continua contando no tray e disparando alerta.
+  // Os grupos do #54 caem bem sozinhos: groupBreaks roda sobre a lista já
+  // filtrada, então hosts sem nenhum match nem ganham header.
+  const q = searchQuery();
+  const visible = q ? ranked.filter(({ s }) => sessionMatches(q, s, labelFor(s))) : ranked;
+
+  // ordena por urgência: 🔴 no topo, depois 🟡, depois 🟢 (state-machine.js).
   // No modo agrupado (#54) a ORIGEM vira chave primária (blocos contíguos) e a
   // urgência ordena DENTRO do bloco — com urgência primária um peer 🔴entraria
   // no meio das linhas locais e fragmentaria o bloco do host.
-  const ordered = sortByUrgency(ranked, { originFirst: groupByHostOn() });
+  const ordered = sortByUrgency(visible, { originFirst: groupByHostOn() });
 
   // Agrupamento por host (#54): com o toggle ligado E >1 bloco de origem, um
   // li.group-header abre cada bloco (a ordenação acima já deixa os hosts
@@ -491,7 +503,10 @@ function render() {
   if (tally.processing) parts.push(`🟡${tally.processing}`);
   if (tally.done) parts.push(`🟢${tally.done}`);
   if (tally.awaiting) parts.push(`🔴${tally.awaiting}`);
-  $counts.textContent = sessions.length === 0 ? '—' : parts.join(' ');
+  // Com busca ativa o contador vira "visíveis/total" — sem isso "🟢3" com uma
+  // linha na tela parece bug; com o par fica claro que é filtro.
+  $counts.textContent = sessions.length === 0 ? '—'
+    : (q ? `${visible.length}/${sessions.length}` : parts.join(' '));
 
   // Tray dinâmico: o ícone pinta com a pior cor e o tooltip leva a contagem.
   window.trafficLight.setTrayLevel({ level: worst, awaiting: tally.awaiting, processing: tally.processing, done: tally.done });
@@ -499,7 +514,10 @@ function render() {
   // Onboarding: só enquanto NUNCA apareceu uma sessão (sinal de hooks não instalados).
   // Assim que a 1ª sessão surge, o banner some pra sempre nesta execução.
   everHadSessions = everHadSessions || sessions.length > 0;
-  $empty.hidden = sessions.length > 0;
+  // Com busca: o empty aparece quando o FILTRO zera (sessões existem, nada
+  // casa) — e o texto é de busca, não o onboarding (hooks já estão instalados
+  // se chegou aqui). Sem busca, comportamento de sempre.
+  $empty.hidden = q ? visible.length > 0 : sessions.length > 0;
   if (!everHadSessions) {
     const kids = [
       Object.assign(document.createElement('strong'), { textContent: T('onboard_title') }),
@@ -511,11 +529,13 @@ function render() {
       }),
     ];
     $empty.replaceChildren(...kids);
+  } else if (q && !visible.length) {
+    $empty.textContent = T('search_empty');
   }
   // Rodapé: uso OU launcher (nunca os dois) conforme settings.showUsage.
   renderUsage();
   renderLauncher();
-  $list.hidden = !expanded || sessions.length === 0;
+  $list.hidden = !expanded || visible.length === 0;
   document.title = `ATL · ${sessions.length} ${T('doc_sessions')} · ${parts.join(' ')}`;
   autosize();
 }
@@ -802,6 +822,40 @@ if ($toggleFooter) $toggleFooter.addEventListener('click', () => {
 if ($groupBtn) $groupBtn.addEventListener('click', () => {
   persistUI({ groupByHost: !groupByHostOn() });
   render();
+});
+// ---- busca fuzzy (#55) ----
+// O input vive no HEADER (o render só remonta $list) — o valor e o foco
+// sobrevivem a qualquer re-render de 2s sem flag extra, ao contrário do input
+// de rename que nasce dentro da lista e precisa do guard `renaming`.
+function searchQuery() {
+  if (!$search || $search.hidden) return '';
+  return ($search.value || '').trim();
+}
+function setSearchOpen(open) {
+  if (!$search) return;
+  if (!open) $search.value = '';          // fechar limpa — busca é estado efêmero
+  $search.hidden = !open;
+  if ($searchBtn) $searchBtn.classList.toggle('is-on', open);
+  if (open) $search.focus();
+  else render();                          // filtro saiu → lista volta inteira
+}
+if ($searchBtn) $searchBtn.addEventListener('click', () => setSearchOpen($search.hidden));
+if ($search) {
+  $search.addEventListener('input', () => render());
+  $search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSearchOpen(false); }
+  });
+}
+// `/` ou Ctrl+F abrem a busca de qualquer lugar do overlay. Ignora quando já
+// se está digitando (input de rename / o próprio search: `/` nele é texto).
+window.addEventListener('keydown', (e) => {
+  if (!$search || !$search.hidden) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  if (e.key === '/' || ((e.key === 'f' || e.key === 'F') && (e.ctrlKey || e.metaKey))) {
+    e.preventDefault();                   // senão a barra entraria no input
+    setSearchOpen(true);
+  }
 });
 // Force (⟳): recoleta o uso na hora (fura o cache de conveniência; o cooldown do
 // 429 continua respeitado no main). Gira o ícone ~600ms como feedback — o push

@@ -14,7 +14,11 @@
       <span class="bar-divider"></span>
       <span class="counts" id="counts">—</span>
       <span class="spacer"></span>
+      <input class="search" id="searchInput" type="text" placeholder="" data-i18n-placeholder="search_placeholder" spellcheck="false" autocomplete="off" hidden>
       <button class="btn-ver" id="verBtn" hidden></button>
+      <button class="btn" id="searchBtn" data-tip="buscar sessões (/)" data-i18n-tip="tooltip_search" aria-label="buscar sessões">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
       <button class="btn" id="groupBtn" data-tip="agrupar por máquina" data-i18n-tip="tooltip_group_hosts" aria-label="agrupar por máquina" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M8 12h12M12 18h8"/></svg>
       </button>
@@ -47,6 +51,7 @@
   <script src="tooltip.js"></script>
   <script src="sound.js"></script>
   <script src="identity.js"></script>
+  <script src="fuzzy.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
