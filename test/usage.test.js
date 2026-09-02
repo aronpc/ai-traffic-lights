@@ -90,7 +90,7 @@ test('parseClaudeConfig: sem oauthAccount → plan null (sem conta, some do over
 test('parseClaudeConfig: payload vazio/malformado → tudo null', () => {
   const r = parseClaudeConfig({}, NOW);
   assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
-    accountUuid: null, accountName: null, accountEmail: null });
+    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null });
   assert.deepEqual(parseClaudeConfig(null, NOW).plan, null);
 });
 
@@ -1273,7 +1273,7 @@ test('collectUsage: apelido manual (label do account-labels.json) vence o org na
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('collectUsage: 2 dirs MESMO uuid → 1 barra canônica (dedup por identidade)', async () => {
+test('collectUsage: 2 dirs MESMO uuid sem org → 1 barra canônica (conta pessoal)', async () => {
   _clearClaudeCache();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
   const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
@@ -1283,9 +1283,52 @@ test('collectUsage: 2 dirs MESMO uuid → 1 barra canônica (dedup por identidad
       organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-X' } }));
   }
   const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
-  assert.equal(out.length, 1, 'dois perfis, mesmo login → uma barra');
+  assert.equal(out.length, 1, 'dois perfis, mesmo login pessoal → uma barra');
   assert.equal(out[0].id, 'claude-plan', 'conta única → id canônico, sem sufixo');
   assert.equal(out[0].account, undefined);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// O caso real de duas orgs Team na HG: MESMO login (accountUuid igual), orgs
+// diferentes — billing e rate limit são por organizationRateLimitTier (da
+// ORG), então são DUAS contas com limites independentes. Antes do #60 o dedup
+// por accountUuid colapsava as duas numa barra só, rotulada com a org do
+// primeiro dir que chegasse — a segunda org ficava invisível.
+test('collectUsage: mesmo accountUuid em ORGS diferentes → 2 barras (limite é por org)', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'hg-claude-artemis'), dirB = path.join(tmp, 'hg-claude-orion');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-9',
+    organizationUuid: 'org-artemis', organizationName: 'Newfold Digital Artemis' } }));
+  fs.writeFileSync(path.join(dirB, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-9',
+    organizationUuid: 'org-orion', organizationName: 'Newfold Digital Orion' } }));
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 2, 'mesmo login, orgs diferentes → duas barras');
+  const a = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('org-artemis'));
+  const b = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('org-orion'));
+  assert.ok(a && b, 'ids sufixados pelo organizationUuid (não pelo accountUuid igual)');
+  assert.equal(a.account, 'Newfold Digital Artemis');
+  assert.equal(b.account, 'Newfold Digital Orion');
+  assert.notEqual(a.accountId, b.accountId, 'accountIds distintos (endereços de rename)');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('collectUsage: mesma ORG em 2 dirs (mesmo time) → 1 barra', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  for (const d of [dirA, dirB]) {
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x',
+      organizationUuid: 'org-Z', organizationName: 'Ghost Org' } }));
+  }
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 1, 'dois perfis do mesmo time → uma barra');
+  assert.equal(out[0].id, 'claude-plan', 'conta única → id canônico, sem sufixo');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 

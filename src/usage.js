@@ -48,15 +48,18 @@ const CLAUDE_ORG_LABEL = {
 
 // Extrai reset/plano/passes/identidade de um objeto .claude.json já parseado.
 // `now` em ms. Devolve {usedPct:null, resetAt, resetInMin, plan, passes,
-// accountUuid, accountName, accountEmail}.
+// accountUuid, accountOrgUuid, accountName, accountEmail}.
 // O % do ciclo do Claude Max NÃO fica persistido em disco (só em runtime da
 // API Anthropic) → usedPct é sempre null aqui (honesto: não inventa número).
-// Identidade (multi-conta, #58): accountUuid dedupa contas (dois perfis com o
-// mesmo login = uma barra); organizationName/emailAddress só rotulam — o email
+// Identidade (multi-conta, #58): quem dedupa é a ORG (accountOrgUuid) quando
+// existe — billing e rate limit são por organizationRateLimitTier, e o MESMO
+// login vive em duas orgs Team com limites independentes (accountUuid igual,
+// organizationUuid diferente → duas contas). Conta pessoal (sem org) dedupa
+// por accountUuid. organizationName/emailAddress só rotulam — o email
 // COMPLETO nunca aparece na UI (só o local-part, e só no renderer).
 function parseClaudeConfig(cfg, now) {
   const out = { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
-    accountUuid: null, accountName: null, accountEmail: null };
+    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null };
   if (!cfg || typeof cfg !== 'object') return out;
 
   // reset do plano: cachedGrowthBookFeatures.tengu_saffron_lattice.planLimitsEndDate
@@ -69,6 +72,7 @@ function parseClaudeConfig(cfg, now) {
   // NÃO há conta OAuth alguma — aí o coletor omite o Claude do overlay.
   const acc = cfg.oauthAccount || {};
   if (acc.accountUuid && typeof acc.accountUuid === 'string') out.accountUuid = acc.accountUuid;
+  if (acc.organizationUuid && typeof acc.organizationUuid === 'string') out.accountOrgUuid = acc.organizationUuid;
   if (acc.organizationName && typeof acc.organizationName === 'string') out.accountName = acc.organizationName;
   if (acc.emailAddress && typeof acc.emailAddress === 'string') out.accountEmail = acc.emailAddress;
   if (acc.organizationRateLimitTier && CLAUDE_TIER_LABEL[acc.organizationRateLimitTier]) {
@@ -901,24 +905,27 @@ async function collectUsage(opts = {}) {
 
   // Claude multi-conta (#58): opts.claudeAccounts = [{ dir, label? }] — o
   // main.js coleta os CLAUDE_CONFIG_DIRs dos environ das sessões vivas
-  // (dir null = conta default do symlink ~/.claude). O dedup por accountUuid
+  // (dir null = conta default do symlink ~/.claude). O dedup por identidade
   // acontece AQUI, não no main: só quem lê o .claude.json de cada dir conhece
-  // o uuid (dois perfis com o mesmo login = uma barra). Fallback sem
+  // os uuids. Identidade = organizationUuid || accountUuid: billing/rate
+  // limit são por ORG — mesmo login em duas orgs Team (accountUuid igual,
+  // organizationUuid diferente) são DUAS contas; conta pessoal sem org dedupa
+  // por accountUuid (dois perfis, mesmo login → uma barra). Fallback sem
   // claudeAccounts = 1 conta default — ids canônicos, UI idêntica a hoje.
   const accountsIn = Array.isArray(opts.claudeAccounts) && opts.claudeAccounts.length
     ? opts.claudeAccounts
     : [{ dir: null }];
-  const seenUuid = new Set();
+  const seenKey = new Set();
   const claudeAccounts = [];
   for (const a of accountsIn) {
     if (!a) continue;
     const pc = readClaudeConfig({ home: opts.home, now: opts.now, dir: a.dir });
-    const uuid = pc && pc.accountUuid;
-    if (uuid) {
-      if (seenUuid.has(uuid)) continue;         // mesma conta noutro perfil → 1 barra
-      seenUuid.add(uuid);
+    const key = (pc && (pc.accountOrgUuid || pc.accountUuid)) || null;
+    if (key) {
+      if (seenKey.has(key)) continue;           // mesma org/login noutro perfil → 1 barra
+      seenKey.add(key);
     }
-    claudeAccounts.push({ dir: a.dir, label: a.label, pc, uuid });
+    claudeAccounts.push({ dir: a.dir, label: a.label, pc, key });
   }
   const multiClaude = claudeAccounts.length > 1;
 
@@ -967,7 +974,7 @@ async function collectUsage(opts = {}) {
     if (!Array.isArray(entries)) return;
     const acc = claudeAccounts[i];
     if (!multiClaude) { out.push(...entries); return; }
-    const sfx = claudeAccountSfx(acc.uuid || acc.dir || 'default');
+    const sfx = claudeAccountSfx(acc.key || acc.dir || 'default');
     const label = claudeAccountLabel(acc);
     for (const e of entries) {
       // Cópia obrigatória: `entries` pode ser O array vivo do cache por token

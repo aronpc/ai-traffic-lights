@@ -154,8 +154,13 @@ function annotateClaudeAccounts(sessions) {
       if (labels === undefined) {
         try { labels = JSON.parse(fs.readFileSync(ACCOUNT_LABELS_FILE, 'utf8')) || {}; } catch { labels = {}; }
       }
-      const key = (pc && pc.accountUuid) || dir || 'default';
-      label = usage.accountLabel(pc, dir, labels[key]);
+      // Chave de identidade: ORG primeiro (#60 — mesmo login em duas orgs
+      // Team são contas com limite/billing independentes), accountUuid só p/
+      // contas pessoais. Fallback labels[accountUuid]: apelido gravado antes
+      // da chave de org continuar funcionando.
+      const key = (pc && (pc.accountOrgUuid || pc.accountUuid)) || dir || 'default';
+      const manual = labels[key] || (pc && pc.accountUuid && labels[pc.accountUuid]) || null;
+      label = usage.accountLabel(pc, dir, manual);
     } catch {}
     _pidAccount.set(s.pid, label);
     if (label) s.account = label;
@@ -1814,10 +1819,14 @@ function claudeAccountsFromSessions() {
     // home injetado = conta do symlink ~/.claude, não a var ambiente do ATL
     const pc = usage.readClaudeConfig({ home: app.getPath('home'), dir: a.dir });
     if (!pc) continue;
-    const key = pc.accountUuid || a.dir || 'default';
+    // Chave de identidade: ORG primeiro (limite/billing por org — #60),
+    // accountUuid só p/ contas pessoais. Fallback labels[accountUuid]:
+    // apelido gravado antes da chave de org continuar funcionando.
+    const key = (pc.accountOrgUuid || pc.accountUuid) || a.dir || 'default';
     const sfx = usage.claudeAccountSfx(key);
     lastAccountIds[sfx] = key;
-    if (labels[key]) a.label = labels[key];
+    const manual = labels[key] || (pc.accountUuid && labels[pc.accountUuid]);
+    if (manual) a.label = manual;
   }
   return accounts;
 }
