@@ -75,6 +75,14 @@ async function GET(port, path, token) {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, token ? { headers: { Authorization: 'Bearer ' + token } } : {});
   return { status: r.status, json: await r.json() };
 }
+async function POST(port, path, token, body) {
+  const r = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  return { status: r.status, json: await r.json() };
+}
 
 test('server: /sessions sem token → 401', async () => {
   const { server, port } = await up({});
@@ -113,6 +121,78 @@ test('server: rota desconhecida → 404', async () => {
   const { server, port } = await up({});
   try { assert.equal((await GET(port, '/nope', 'tok')).status, 404); }
   finally { server.close(); }
+});
+
+// ---- POST /read (#56): escrita da marca de lido NA ORIGEM ----
+test('POST /read: sem/errado token → 401; certo → 200 com applied e marks saneadas', async () => {
+  const received = [];
+  const { server, port } = await up({ onReadMarks: (m) => { received.push(...m); return m.length; } });
+  try {
+    assert.equal((await POST(port, '/read', undefined, { marks: [] })).status, 401, 'sem token');
+    assert.equal((await POST(port, '/read', 'wrong', { marks: [] })).status, 401, 'token errado');
+    const { status, json } = await POST(port, '/read', 'tok', {
+      marks: [
+        { key: 'local:1234', readAt: 1730000000 },
+        { key: '', readAt: 5 },            // chave vazia → descartada na saneação
+        { key: 'local:x', readAt: 'não' }, // readAt inválido → descartada
+        null,                              // item não-objeto → descartado
+      ],
+    });
+    assert.equal(status, 200);
+    assert.equal(json.ok, true);
+    assert.equal(json.applied, 1, 'callback viu só o item válido');
+    assert.deepEqual(received, [{ key: 'local:1234', readAt: 1730000000 }]);
+  } finally { server.close(); }
+});
+
+test('POST /read: payload inválido (não-JSON / sem marks) → 400', async () => {
+  const { server, port } = await up({ onReadMarks: () => 0 });
+  try {
+    assert.equal((await POST(port, '/read', 'tok', '{isso não é json')).status, 400);
+    assert.equal((await POST(port, '/read', 'tok', { nope: 1 })).status, 400, 'sem array marks');
+    assert.equal((await POST(port, '/read', 'tok', '""')).status, 400, 'body não-objeto');
+  } finally { server.close(); }
+});
+
+test('POST /read: sem callback onReadMarks → 200 com applied=0 (degrada, não quebra o peer)', async () => {
+  const { server, port } = await up({});
+  try {
+    const { status, json } = await POST(port, '/read', 'tok', { marks: [{ key: 'local:1', readAt: 10 }] });
+    assert.equal(status, 200);
+    assert.deepEqual(json, { ok: true, applied: 0 });
+  } finally { server.close(); }
+});
+
+test('POST /read: callback que lança → 200 applied=0 (marca nunca derruba o servidor)', async () => {
+  const { server, port } = await up({ onReadMarks: () => { throw new Error('boom'); } });
+  try {
+    const { status, json } = await POST(port, '/read', 'tok', { marks: [{ key: 'local:1', readAt: 10 }] });
+    assert.equal(status, 200);
+    assert.equal(json.applied, 0);
+  } finally { server.close(); }
+});
+
+test('POST em outra rota → 405 (gate method intacto p/ tudo que não é /read)', async () => {
+  const { server, port } = await up({});
+  try {
+    assert.equal((await POST(port, '/sessions', 'tok', { marks: [] })).status, 405);
+    assert.equal((await POST(port, '/nope', 'tok', {})).status, 405);
+    // e o gate de antes segue valendo p/ métodos não-GET/não-POST
+    const r = await fetch(`http://127.0.0.1:${port}/sessions`, { method: 'DELETE', headers: { Authorization: 'Bearer tok' } });
+    assert.equal(r.status, 405);
+  } finally { server.close(); }
+});
+
+test('POST /read: body acima do teto (64 KiB) → 413', async () => {
+  const { server, port } = await up({ onReadMarks: () => 0 });
+  try {
+    // marks de 100 chaves de 256 chars ≈ 26 KB → 3x isso estoura o teto.
+    const big = { marks: [] };
+    for (let i = 0; i < 900; i++) big.marks.push({ key: 'k'.repeat(256), readAt: 1 });
+    assert.equal(big.marks.length, 900, 'sanidade do fixture (~230 KB)');
+    const { status } = await POST(port, '/read', 'tok', big);
+    assert.equal(status, 413);
+  } finally { server.close(); }
 });
 
 test('server: EADDRINUSE (porta em uso) → chama onError, não crasha o processo', async () => {

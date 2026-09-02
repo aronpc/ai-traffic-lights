@@ -25,4 +25,17 @@ function sessionKey(s) {
   return originOf(s) + ':' + (s.pid || s.session_id || '');
 }
 
-if (typeof module !== 'undefined') module.exports = { originOf, sessionKey };
+// Reescreve o segmento de ORIGEM de uma chave: 'peer:1234' → 'local:1234'.
+// O cliente que clica numa sessão remota tem sessionKey no namespace DO
+// RECEPTOR ('peer:1234'); antes de postar a marca de lido pra ORIGEM (#56),
+// traduz pra como a origem conhece a própria sessão ('local:1234'). Pura e
+// tolerante: chave que não casa com `from` volta intacta, vazia vira vazia.
+function rewriteKeyOrigin(key, from, to) {
+  if (typeof key !== 'string' || !key) return '';
+  const f = from || 'local';
+  if (key === f) return to || 'local';
+  if (key.startsWith(f + ':')) return (to || 'local') + key.slice(f.length);
+  return key;
+}
+
+if (typeof module !== 'undefined') module.exports = { originOf, sessionKey, rewriteKeyOrigin };

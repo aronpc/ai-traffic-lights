@@ -920,6 +920,20 @@ window.trafficLight.onSessions((s) => {
   // disparados por idioma/settings não podem consumir o guard anti-alerta do boot.
   firstRender = false;
 });
+// Marcas de leitura (#56): boot = estado inteiro do main (sobrevive restart);
+// ao vivo = uma marca por POST /read de peer. LWW em ambos: só sobe, nunca
+// rebaixa um "lido" mais recente que já está no Map.
+if (window.trafficLight.onReadMarks) window.trafficLight.onReadMarks((state) => {
+  let changed = false;
+  for (const [k, at] of Object.entries(state || {})) {
+    if (at > (readMarks.get(k) || 0)) { readMarks.set(k, at); changed = true; }
+  }
+  if (changed) render();
+});
+if (window.trafficLight.onRemoteRead) window.trafficLight.onRemoteRead(({ key, readAt } = {}) => {
+  if (!key || !(readAt > 0)) return;
+  if (readAt > (readMarks.get(key) || 0)) { readMarks.set(key, readAt); render(); }
+});
 window.trafficLight.requestSessions();
 window.trafficLight.onUsage((u) => { usageEntries = Array.isArray(u) ? u : []; applyFooterMode(); });
 window.trafficLight.onUsageMeta((m) => applyUsageMeta(m));

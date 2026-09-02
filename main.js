@@ -22,6 +22,7 @@ const i18n = require('./src/i18n');
 const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const claudePaths = require('./src/claude-config');
+const readMarksLib = require('./src/read-marks');
 const { spawn } = require('child_process');
 const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 
@@ -71,6 +72,7 @@ const USAGE_FILE = path.join(BASE_DIR, 'usage.json'); // último uso conhecido (
 const CLAUDE_COOLDOWN_FILE = path.join(BASE_DIR, 'claude-cooldown.json'); // {until:<ms>} — cooldown do 429 da API de uso (SÓ o timestamp, nunca o token)
 const SETTINGS_BOUNDS_FILE = path.join(BASE_DIR, 'settings-window.json'); // {x, y, width, height}
 const TERM_BOUNDS_FILE = path.join(BASE_DIR, 'term-window.json'); // {x, y, width, height} da janela Terminal
+const READ_MARKS_FILE = path.join(BASE_DIR, 'read-marks.json'); // {sessionKey: readAt} — marca de lido persistente (#56)
 const AUTOSTART_FILE = path.join(process.env.HOME, '.config/autostart/ai-traffic-lights.desktop');
 
 // ---- migração da era claude-traffic-light (pré-rename) ----
@@ -359,6 +361,28 @@ function sendSessions() {
   sendToRenderer('sessions', readSessions());
 }
 
+// ---- marcas de leitura (#56) ----
+// Estado persistente {sessionKey: readAt} no BASE_DIR. Resolve dois problemas:
+// (a) readMarks do renderer eram SÓ memória e morriam no restart; (b) marcas
+// postadas por um PEER via POST /read precisam de um dono no main para serem
+// aplicadas (push ao renderer) e sobreviverem ao restart. LWW por chave no
+// read-marks.js (maior readAt vence — nunca "des-lê").
+let readMarksState = readMarksLib.loadReadMarks(READ_MARKS_FILE);
+function sendReadMarks() {
+  sendToRenderer('read-marks', readMarksState);
+}
+// Callback do servidor de sync (net.startServer onReadMarks): merge LWW,
+// persiste e empurra AO VIVO cada marca aplicada ao renderer. Retorna a qtd
+// aplicada — o peer sabe (applied=0 = nada mudou, ex.: marca mais velha).
+function applyReadMarks(marks) {
+  const { state, applied } = readMarksLib.applyMarks(readMarksState, marks);
+  if (!applied.length) return 0;
+  readMarksState = state;
+  readMarksLib.saveReadMarks(READ_MARKS_FILE, readMarksState);
+  for (const m of applied) sendToRenderer('remote-read', m);
+  return applied.length;
+}
+
 // Limpeza: remove state files cujo PID morreu (sem SessionEnd — ex.: crash/kill
 // do terminal). process.kill(pid,0) só testa existência (não afetado por ptrace).
 // Também varre .tmp órfãos (escrita atômica abortada) com mais de 60s.
@@ -504,7 +528,7 @@ function createWindow() {
   // O IS_LINUX/X11 guarda isso: no Wayland nativo wmctrl é inócuo.
   win.once('ready-to-show', () => { try { win.setSkipTaskbar(true); } catch {} applySkip(); });
   win.loadFile(path.join(__dirname, 'src/index.html'));
-  win.webContents.on('did-finish-load', sendSessions);
+  win.webContents.on('did-finish-load', () => { sendSessions(); sendReadMarks(); });
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
 
@@ -819,6 +843,7 @@ function applySync() {
           try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
           catch { return []; }
         },
+        onReadMarks: applyReadMarks,   // POST /read (#56): marca vinda de peer → merge+persiste+push
       });
       syncServerKey = srvKey;
       try { console.log('[sync] server up ' + (bindHost || '127.0.0.1') + ':' + s.port + ' (' + syncNodeName() + (bindHost ? '' : ' — localhost só, sem tailscale?') + ')'); } catch {}

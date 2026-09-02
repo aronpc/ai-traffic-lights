@@ -57,6 +57,11 @@ contextBridge.exposeInMainWorld('trafficLight', {
   ptyResize: (tabId, cols, rows) => ipcRenderer.send('term-resize', { tabId, cols, rows }),
   onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, p) => cb(p)),            // p = { tabId, data }
   onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, p) => cb(p)),          // p = { tabId }
+  // Marcas de leitura (#56): boot envia o estado inteiro; ao vivo chega cada
+  // marca aplicada vinda de peer (POST /read). LWW no receptor: só aplica se
+  // readAt > marca atual — nunca rebaixa um "lido" mais recente.
+  onReadMarks: (cb) => ipcRenderer.on('read-marks', (_e, state) => cb(state)),
+  onRemoteRead: (cb) => ipcRenderer.on('remote-read', (_e, m) => cb(m)),    // m = { key, readAt }
   onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
   onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
   onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente

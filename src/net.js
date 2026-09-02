@@ -172,18 +172,81 @@ function anchorRemote(s, nowSec) {
   return out;
 }
 
+// Lê o body do POST /read com TETO (default 64 KiB): um peer bugado (ou um
+// atacante com o token) não aloca memória sem limite. cb(code|null, buf) —
+// code preenchido = erro (413 estourou / 400 vazio); flag `done` porque
+// 'data'+'end'+'error' podem concorrer e o cb é de resposta única. No 413 a
+// resposta sai IMEDIATAMENTE (early response — HTTP/1.1 permite responder
+// antes do fim do body) e o resto do stream é DESCARTADO pelo guard `done`:
+// memória O(limit) sem destruir o socket (destroy mataria o flush da própria
+// resposta — o peer veria reset em vez de 413).
+function readBody(req, cb, limit = 65536) {
+  const chunks = [];
+  let size = 0;
+  let done = false;
+  const finish = (code, buf) => { if (done) return; done = true; cb(code, buf); };
+  req.on('data', (c) => {
+    if (done) return;                 // pós-resposta: resto do body flui e é descartado
+    size += c.length;
+    if (size > limit) return finish(413);
+    chunks.push(c);
+  });
+  req.on('end', () => { if (!done) finish(chunks.length ? null : 400, Buffer.concat(chunks)); });
+  req.on('error', () => finish(400));
+}
+
+// Saneia o payload do POST /read: { marks: [{key, readAt}] }. Retorna array
+// saneado ou null se o body não é JSON/payload válido. Tetos: 100 marks por
+// request, key 1-256 chars, readAt inteiro > 0 (epoch s). Itens inválidos são
+// DESCARTADOS individualmente — um item ruim não derruba o lote inteiro.
+function parseReadMarks(buf) {
+  let body = null;
+  try { body = JSON.parse(buf.toString('utf8')); } catch { return null; }
+  if (!body || typeof body !== 'object' || !Array.isArray(body.marks)) return null;
+  const out = [];
+  for (const m of body.marks.slice(0, 100)) {
+    if (!m || typeof m !== 'object') continue;
+    if (typeof m.key !== 'string' || m.key.length < 1 || m.key.length > 256) continue;
+    const at = Math.floor(Number(m.readAt));
+    if (!Number.isFinite(at) || at <= 0) continue;
+    out.push({ key: m.key, readAt: at });
+  }
+  return out;
+}
+
 // Sobe o servidor. Retorna o http.Server. Binda em bindHost (default: IP da
 // tailnet via detectTailnetIP — peers alcançam direto; fallback 127.0.0.1).
 //   getSessions()  → array local de sessões (de collect.readSessions)
 //   getTranscript(key, n) → [{role,text,ts}] (stub em []; parser real é fase 3)
-function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, bindHost, onError }) {
+//   onReadMarks(marks) → aplica marcas de leitura vindas de peer (#56) e
+//     devolve qtd aplicada (0 = nada mudou). Opcional: sem callback a rota
+//     POST /read responde 200 com applied=0 (degrada, não quebra o peer).
+function startServer({ port, token, nodeName, shareTranscripts, allowAttach, ptySpawn, getSessions, getTranscript, onReadMarks, bindHost, onError }) {
   const server = http.createServer((req, res) => {
     const respond = (code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
     res.setHeader('Content-Type', 'application/json');
     if (!tokenOk(bearerOf(req), token)) return respond(401, { error: 'unauthorized' });
-    if (req.method !== 'GET') return respond(405, { error: 'method' });
 
     const url = new URL(req.url, 'http://127.0.0.1');
+    // POST /read (#56): escrita da marca de lido NA ORIGEM da sessão. Única
+    // rota de escrita — entra antes do gate GET abaixo. Mesma auth Bearer:
+    // quem tem o token já pode attachar shell via /pty; marcar leitura é
+    // escrita muito menor.
+    if (req.method === 'POST') {
+      if (url.pathname !== '/read') return respond(405, { error: 'method' });
+      return readBody(req, (code, buf) => {
+        if (code) return respond(code, { error: 'payload' });
+        const marks = parseReadMarks(buf);
+        if (!marks) return respond(400, { error: 'payload' });
+        let applied = 0;
+        if (typeof onReadMarks === 'function') {
+          try { applied = onReadMarks(marks) || 0; } catch {}
+        }
+        return respond(200, { ok: true, applied });
+      });
+    }
+    if (req.method !== 'GET') return respond(405, { error: 'method' });
+
     if (url.pathname === '/sessions') {
       let sessions = [];
       try { sessions = getSessions() || []; } catch {}
