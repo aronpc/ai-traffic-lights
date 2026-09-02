@@ -106,9 +106,22 @@ function migrateOldBase() {
 const DEFAULT_W = 360;
 const HEADER_H = 58; // tem que casar com --header-h do CSS
 const MIN_W = 348, MAX_W = 720; // 348: header com 5 botões (lista+footer+prefs+expand+fechar) sem cortar o ×
-const MIN_H = HEADER_H + 40, MAX_H = 640;
+const MIN_H = HEADER_H + 40;
 
 let win;
+
+// Teto de altura do overlay = 90% da work area da TELA onde a janela está
+// (não um fixo): rolar a lista é último caso, só quando a sessões não cabem
+// nem em quase a tela inteira. Recalculado a cada auto-height — arrastar o
+// overlay pra um monitor menor corrige o teto no próximo render (2s).
+// Era MAX_H = 640 fixo: em 1080p a lista rolava com ~16 linhas usando só 60%
+// da tela. O 90% (e não 100%) deixa respiro pro overlay nunca encostar no
+// rodapé da tela nem cobrir o dock/notificações.
+function maxOverlayH() {
+  if (!win || win.isDestroyed()) return 640;
+  const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+  return Math.max(MIN_H, Math.round(wa.height * 0.9));
+}
 
 // Coleta de sessões: locais (collect) + remotas (peers, já com `origin` setada
 // pelo pollPeers). Wrapper preserva os call sites (sendSessions, timers, ipc).
@@ -819,10 +832,10 @@ ipcMain.on('set-expanded', (_e, { expanded, h } = {}) => {
 
 // Altura automática pelo conteúdo (n linhas). Largura e posição preservadas.
 // O MÍNIMO da janela acompanha o conteúdo: não dá pra arrastar pra menos e
-// cortar sessões — o overlay sempre cabe tudo (até o teto MAX_H, onde rola).
+// cortar sessões — o overlay sempre cabe tudo (até o teto da tela, onde rola).
 ipcMain.on('auto-height', (_e, h) => {
   if (!win || win.isDestroyed()) return;
-  const clamped = Math.max(MIN_H, Math.min(Math.round(h), MAX_H));
+  const clamped = Math.max(MIN_H, Math.min(Math.round(h), maxOverlayH()));
   const [w] = win.getSize();
   // mínimo ANTES do setSize: ao encolher, o WM respeita o mínimo anterior e
   // rejeitaria o setSize abaixo dele (janela não reduzia).
