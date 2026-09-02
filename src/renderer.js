@@ -319,6 +319,11 @@ function openDetails(s) {
   const alias = aliases[aliasKey(s)];
   if (alias) body.append(dtRow(T('dt_alias'), alias));
   if (s.model) body.append(dtRow(T('dt_model'), s.model));
+  // Conta Claude da sessão (#58): rótulo anotado no main a partir do
+  // CLAUDE_CONFIG_DIR do environ do pid — distingue perfis dd-claude com
+  // autenticações diferentes rodando ao mesmo tempo. Remota traz o rótulo
+  // da conta DA ORIGEM. Sem rótulo resolvido = linha ausente.
+  if (s.account) body.append(dtRow(T('dt_account'), s.account));
   if (s.pid) body.append(dtRow(T('dt_pid'), String(s.pid)));
 
   // — Contexto — (windowid é LOCAL_ONLY: na remota o campo nem existe)

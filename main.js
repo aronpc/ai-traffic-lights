@@ -116,8 +116,52 @@ let win;
 // em identity.js) as separa das locais, sem colisão de pid entre máquinas.
 function readSessions() {
   const local = collect.readSessions();
-  if (!remoteSessions.size) return local;
-  return local.concat(Array.from(remoteSessions.values()).flat());
+  const all = remoteSessions.size ? local.concat(Array.from(remoteSessions.values()).flat()) : local;
+  return annotateClaudeAccounts(all);
+}
+
+// Conta Claude de cada sessão (modal de detalhes): resolve o rótulo a partir
+// do CLAUDE_CONFIG_DIR do environ do pid — mesma descoberta do
+// claudeAccountsFromSessions (#58), mas por sessão. O environ de um processo
+// não muda na vida dele → cache por pid = uma leitura de /proc por sessão
+// NOVA (o sendSessions roda a cada 2s). Remota (com origin) já chega anotada
+// pelo peer: o rótulo é inofensivo (apelido/org/local-part — nunca email
+// completo/uuid) e NÃO é LOCAL_ONLY, viaja no payload de /sessions.
+// Anotação em memória: nada disso é gravado no state file.
+let _pidAccount = new Map(); // pid → label|null (null = default sem rótulo)
+function annotateClaudeAccounts(sessions) {
+  if (!Array.isArray(sessions)) return sessions;
+  const alive = new Set();
+  let labels; // lazy: account-labels.json lido 1x por ciclo, só se há pid novo
+  for (const s of sessions) {
+    // origin 'local' É truthy: o state file grava origin:'local' nas sessões
+    // locais (o startRename do renderer usa o mesmo predicado).
+    if (!s || (s.origin && s.origin !== 'local') || agentOf(s) !== 'claude' || !s.pid) continue;
+    alive.add(s.pid);
+    if (_pidAccount.has(s.pid)) {
+      const lbl = _pidAccount.get(s.pid);
+      if (lbl) s.account = lbl;
+      continue;
+    }
+    let dir = null;
+    try {
+      const env = usage.parseEnviron(getProcessEnviron(s.pid), ['CLAUDE_CONFIG_DIR']);
+      dir = env.CLAUDE_CONFIG_DIR || null;   // null = conta default do symlink
+    } catch { continue; }                    // pid morreu: não cachear, tenta no próximo ciclo
+    let label = null;
+    try {
+      const pc = usage.readClaudeConfig({ home: app.getPath('home'), dir }); // cache mtime
+      if (labels === undefined) {
+        try { labels = JSON.parse(fs.readFileSync(ACCOUNT_LABELS_FILE, 'utf8')) || {}; } catch { labels = {}; }
+      }
+      const key = (pc && pc.accountUuid) || dir || 'default';
+      label = usage.accountLabel(pc, dir, labels[key]);
+    } catch {}
+    _pidAccount.set(s.pid, label);
+    if (label) s.account = label;
+  }
+  for (const pid of _pidAccount.keys()) if (!alive.has(pid)) _pidAccount.delete(pid);
+  return sessions;
 }
 
 // ---- click-to-focus: ativa a janela (e a ABA, quando possível) da sessão ----
@@ -876,7 +920,11 @@ function applySync() {
     try {
       syncServer = net.startServer({
         port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts, allowAttach: !!s.allowAttach, ptySpawn: createPty, bindHost,
-        getSessions: () => collect.readSessions(),
+        // Locais ANOTADAS com a conta Claude (modal de detalhes no peer) —
+        // annotate é idempotente (cache por pid) e pula remota. NÃO usar o
+        // wrapper readSessions() aqui: ele mergeia sessões de outros peers, e
+        // o exportSession sobrescreveria `origin` com o NOSSO nome.
+        getSessions: () => annotateClaudeAccounts(collect.readSessions()),
         getTranscript: (key, n) => {
           try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
           catch { return []; }

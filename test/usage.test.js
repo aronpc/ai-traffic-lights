@@ -9,7 +9,7 @@ const {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits,
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
-  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx,
+  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, accountLabel,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
@@ -1186,6 +1186,17 @@ test('claudeAccountSfx: sha256-6 estável e distinto por fonte', () => {
   assert.match(claudeAccountSfx('uuid-A'), /^[0-9a-f]{6}$/);
   assert.equal(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-A'));
   assert.notEqual(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-B'));
+});
+
+// accountLabel: precedência do rótulo da conta (#58, modal de detalhes):
+// apelido manual > org > local-part do email (completo NUNCA) > basename dir.
+test('accountLabel: precedência manual > org > local-part > basename', () => {
+  const pc = { accountName: 'Ghost Org', accountEmail: 'ghost@ex.com' };
+  assert.equal(accountLabel(pc, '/home/x/.ghost', 'apelido'), 'apelido', 'manual vence');
+  assert.equal(accountLabel(pc, '/home/x/.ghost'), 'Ghost Org', 'org');
+  assert.equal(accountLabel({ accountEmail: 'ghost@ex.com' }, '/home/x/.ghost'), 'ghost', 'local-part, nunca o email completo');
+  assert.equal(accountLabel(null, '/home/x/.ghost'), 'ghost', 'basename do dir sem o ponto');
+  assert.equal(accountLabel(null, null), null, 'nada resolvido → null (linha ausente no modal)');
 });
 
 test('parseClaudeConfig: extrai identidade da conta (uuid/org/email) p/ multi-conta', () => {

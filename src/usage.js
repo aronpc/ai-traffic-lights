@@ -866,6 +866,19 @@ function claudeAccountSfx(src) {
   catch { return String(src).slice(0, 6); }
 }
 
+// Rótulo de uma conta Claude (#58): apelido manual > nome da org >
+// local-part do email (email COMPLETO nunca aparece; o corte é aqui) >
+// basename do dir do perfil (sem o ponto: ~/.gh-claude → 'gh-claude').
+// Pura e exportada — usada pela barra de uso (collectUsage) e pelo main p/
+// rotular a conta de cada sessão (modal de detalhes). Uma fonte só de precedência.
+function accountLabel(pc, dir, manual) {
+  if (manual) return manual;
+  if (pc && pc.accountName) return pc.accountName;
+  if (pc && pc.accountEmail) return String(pc.accountEmail).split('@')[0];
+  if (dir) { const b = String(dir).replace(/\/+$/, '').split('/').pop().replace(/^\.+/, ''); if (b) return b; }
+  return null;
+}
+
 // =========================== ORQUESTRADOR ===========================
 
 // Junta todas as fontes. Ordem estável: Claude (local) primeiro, GLM depois.
@@ -913,14 +926,9 @@ async function collectUsage(opts = {}) {
   // local-part do email (email completo nunca aparece; o corte é aqui) >
   // basename do dir. Cair no plano não distingue nada (2 barras, mesmo plano) —
   // o nome do perfil é local, da própria máquina do usuário, e distingue.
-  function claudeAccountLabel(acc) {
-    if (acc.label) return acc.label;
-    const pc = acc.pc;
-    if (pc && pc.accountName) return pc.accountName;
-    if (pc && pc.accountEmail) return pc.accountEmail.split('@')[0];
-    if (acc.dir) { const b = String(acc.dir).replace(/\/+$/, '').split('/').pop(); if (b) return b; }
-    return null;
-  }
+  // A precedência vive em accountLabel (exportada) — o main reusa p/ rotular
+  // a conta de CADA SESSÃO no modal de detalhes; uma fonte só.
+  const claudeAccountLabel = (acc) => accountLabel(acc.pc, acc.dir, acc.label);
 
   // Contas Claude + OpenCode Go + todas as contas GLM em paralelo — I/O de rede
   // independente. Claude usa opts.claudeFetcher (separado do de GLM/OpenCode:
@@ -1219,5 +1227,5 @@ if (typeof module !== 'undefined') module.exports = {
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
-  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx,
+  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, accountLabel,
 };

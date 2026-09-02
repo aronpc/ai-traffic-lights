@@ -124,11 +124,13 @@ test('sessão local: campos de identidade + contexto + botão copiar session_id'
   const { pushSessions, panel, kv, openViaMenu, calls } = await setup();
   pushSessions([mkSess('api', null, {
     model: 'glm-5.2', term_program: 'tilix', tmux_session: 'atl-api', windowid: '1234567',
+    account: 'ghost',   // rótulo anotado no main (CLAUDE_CONFIG_DIR do environ)
   })]);
   openViaMenu(0);
   const m = kv();
   assert.equal(m.get('Session ID'), 'api');
   assert.equal(m.get('Modelo'), 'glm-5.2');
+  assert.equal(m.get('Conta'), 'ghost', 'conta Claude da sessão (perfil dd-claude)');
   assert.equal(m.get('Pasta'), '/home/dev/api');
   assert.equal(m.get('Terminal'), 'tilix');
   assert.equal(m.get('sessão tmux'), 'atl-api');
@@ -151,6 +153,7 @@ test('sessão remota: Origem = peer, SEM campos LOCAL_ONLY (windowid)', async ()
   const m = kv();
   assert.equal(m.get('Origem'), 'alienware');
   assert.equal(m.has('Janela (X11)'), false, 'remota não tem windowid');
+  assert.equal(m.has('Conta'), false, 'sem rótulo resolvido → linha ausente');
 });
 
 test('timeline: colapsada por padrão; clique no header expande em ordem recente primeiro', async () => {
