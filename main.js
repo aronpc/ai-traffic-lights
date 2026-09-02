@@ -217,7 +217,7 @@ function applyShortcut() {
 // Detecção por PATH scan (fork-free: só fs.access nos dirs do PATH). O Electron
 // roda fora do shell interativo, então não vê aliases — acha o binário real.
 // CLIs só-alias (sem bin no PATH) entram via override settings.launchers[id].
-// launcher (detectLaunchers/availableTerminals/launchAgent/openInWarp/openCmdInTerminal/escapeAppleScriptString): extraído para src/ipc/launcher.js (REF passo 5)
+// launcher (detectLaunchers/availableTerminals/launchAgent): extraído para src/ipc/launcher.js (REF passo 5)
 function scanPathBin(bin) {
   const path = process.env.PATH || '';
   for (const dir of path.split(':')) {
@@ -726,7 +726,10 @@ ipcMain.on('set-sync', (_e, syncCfg) => {
 });
 // Ver prompt de uma sessão: local lê direto do disco; remoto busca /transcript no peer.
 ipcMain.handle('fetch-transcript', async (_e, { origin, key, n }) => {
-  const N = Math.max(1, Math.min(50, parseInt(n || 20, 10)));
+  // NaN (n não-numérico vindo do renderer) atravessaria Math.min/max e burlaria
+  // o teto de 50 — mesmo clamp defensivo do handler /transcript no net.js.
+  const p = parseInt(n || 20, 10);
+  const N = Math.max(1, Math.min(50, Number.isFinite(p) ? p : 20));
   if (!origin || origin === 'local') {
     try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, N) : []; }
     catch { return []; }
@@ -797,11 +800,15 @@ function applySync() {
   // token + WireGuard E2E (sem tailscale serve). Reinicia só se a config mudou.
   // O desligamento passa por closeSyncServer, que derruba TAMBÉM os shells /pty
   // já conectados (PR-32 #07).
-  const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${s.allowAttach ? 1 : 0}|${syncNodeName()}` : '';
+  // O bindHost FAZ PARTE da chave: enquanto a detecção falha (tailscale ainda
+  // subindo no boot), binda no 127.0.0.1; o re-check de 30s (abaixo) re-resolve
+  // e, quando o 100.x aparece, a chave muda e o servidor rebinda — o "próximo
+  // ciclo" que o net.js promete (detectTailnetIP não cacheia null p/ isso).
+  const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
+  const srvKey = (s.enabled && s.share && tok) ? `${s.port}|${tok}|${s.shareTranscripts ? 1 : 0}|${s.allowAttach ? 1 : 0}|${syncNodeName()}|${bindHost || ''}` : '';
   if (!srvKey && syncServer) { closeSyncServer(); }
   if (srvKey && srvKey !== syncServerKey) {
     if (syncServer) { closeSyncServer(); }
-    const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
     try {
       syncServer = net.startServer({
         port: s.port, token: tok, nodeName: syncNodeName(), shareTranscripts: !!s.shareTranscripts, allowAttach: !!s.allowAttach, ptySpawn: createPty, bindHost,
@@ -820,6 +827,12 @@ function applySync() {
   if (!pKey && stopPoll) { stopPoll(); stopPoll = null; pollKey = null; clearInterval(onlineTimer); onlineTimer = null; remoteSessions.clear(); livePeers.clear(); sendSessions(); }
   if (pKey && pKey !== pollKey) {
     if (stopPoll) { stopPoll(); }
+    // A LISTA de peers mudou (alguém entrou ou SAIU). Sem esta limpeza, as
+    // sessões de um peer removido ficavam em remoteSessions para sempre: o
+    // last_event_ts nunca avança, a sessão escala para vermelho e apita alerta
+    // falso — o fantasma pela via da REMOÇÃO (mesmo sintoma do PR-32 #10, cujo
+    // fix cobria queda do peer e desligamento do sync, mas não a edição da lista).
+    remoteSessions.clear(); originToHost.clear(); livePeers.clear(); sendSessions();
     // Gate Tailscale: só tenta rede em peers que o Tailscale diz online. Set
     // refresh a cada 10s (barato, local); null => sem tailscale => sem gate (cai p/ backoff).
     onlineSet = net.tailscaleOnlineSet();
@@ -850,6 +863,14 @@ function applySync() {
     pollKey = pKey;
   }
 }
+
+// Re-check do sync a cada 30s (idempotente: cada peça só mexe no estado quando
+// a chave muda). É o ciclo que torna o rebind da tailnet real: no boot com
+// Tailscale ainda subindo, o servidor fica no 127.0.0.1; aqui ele re-resolve o
+// IP e o srvKey — que inclui o bindHost — muda, rebindando no 100.x.
+setInterval(() => {
+  try { if (settingsCfg && settingsCfg.sync && settingsCfg.sync.enabled) applySync(); } catch {}
+}, 30000);
 
 // ---- Janela Terminal (abas) — separada do overlay, maximizável ----
 // O overlay NÃO hospeda mais o terminal: o estado dos pty/ws vive aqui (Map

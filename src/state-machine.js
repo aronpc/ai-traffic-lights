@@ -97,9 +97,10 @@ function iconFor(st) {
 
 // ---- ordenação por urgência (vermelhos no topo) ----
 // Rank: awaiting (🔴) < processing (🟡) < done (🟢) < read (cinza, resolvido).
-// Mesmo nível:
-//  · awaiting  → mais antiga primeiro (quem espera há mais tempo é mais urgente)
-//  · demais    → mais recente primeiro (atividade nova visível)
+// Dentro do mesmo nível NÃO há ordenação por tempo (mais antiga/espera há mais
+// tempo): a chave é ESTÁVEL — local antes de peers, peers em ordem alfabética,
+// depois id da sessão. Ordenar por last_event_ts faria a lista reordenar a cada
+// tool call (~2s), confundindo local/remoto e causando mis-click no topo.
 const URGENCY_RANK = { awaiting: 0, processing: 1, done: 2, read: 3 };
 function sortByUrgency(ranked) {
   // Chave ESTÁVEL por id (não por last_event_ts, que muda a cada tool call e

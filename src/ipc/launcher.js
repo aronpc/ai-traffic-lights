@@ -15,7 +15,6 @@ function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, ha
   const { spawn } = require('child_process');
   const { AGENTS } = require('../agents');
   const launcher = require('../launcher');
-  const { shellQuote } = require('../validate');
 
   function escapeAppleScriptString(str) {
     if (typeof str !== 'string') return '';
@@ -149,35 +148,9 @@ function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, ha
     spawnPtyLocal(tabId, hasTmux ? launcher.tmuxWrap([entry.path], sessionName) : [entry.path], dir);
   }
 
-  function openInWarp(cmdArray, dir) {
-    const warpDir = path.join(process.env.HOME || '/', '.warp', 'launch_configurations');
-    try {
-      fs.mkdirSync(warpDir, { recursive: true });
-      const yamlPath = path.join(warpDir, 'atl-attach.yaml');
-      const cmdStr = cmdArray.map(shellQuote).join(' ');   // cada arg shell-quoted → cmd shell seguro
-      const yaml = [
-        'name: ATL Attach', 'windows:', '  - tabs:', '      - panes:',
-        `          - cwd: ${JSON.stringify(dir)}`,
-        '            commands:',
-        `              - ${JSON.stringify(cmdStr)}`,
-      ].join('\n') + '\n';
-      fs.writeFileSync(yamlPath, yaml, 'utf8');
-      const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
-      spawn(opener, ['warp://launch/atl-attach'], { detached: true, stdio: 'ignore' }).unref();
-      return true;
-    } catch { return false; }
-  }
-
-  function openCmdInTerminal(cmdArray, cwd) {
-    const dir = (cwd && typeof cwd === 'string') ? cwd : (process.env.HOME || '/');
-    if (getSettings().terminal === 'warp') { if (openInWarp(cmdArray, dir)) return; }   // pref Warp
-    const avail = availableTerminals();
-    const term = launcher.pickTerminal(getSettings().terminal, avail);
-    const useTerm = term || (avail.includes('gnome-terminal') ? 'gnome-terminal' : 'x-terminal-emulator');
-    const args = launcher.terminalArgs(useTerm, dir, cmdArray) || ['-e', ...cmdArray];
-    try { spawn(useTerm, args, { detached: true, stdio: 'ignore', cwd: dir }).unref(); }
-    catch (e) { notifyUser('Attach failed: ' + e.message); }
-  }
+  // (openInWarp/openCmdInTerminal removidos: eram os últimos callers de
+  // pickTerminal/terminalArgs no IPC e não tinham NENHUM caller — dead code
+  // desde o REF passo 5. A lógica pura segue em src/launcher.js, com testes.)
 
   ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
   ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));

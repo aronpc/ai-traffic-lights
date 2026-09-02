@@ -45,7 +45,9 @@ async function waitForUp(port, ms = 4000) {
 
 test('agent headless: sobe /sessions e atende com token (sem Electron)', async () => {
   const port = 47500 + Math.floor(Math.random() * 500);
-  const child = startAgent({ ATL_SYNC_NODE: 'test-srv' }, port);
+  // ATL_APP_VERSION: o gate beta do agent recusa build estável — o package.json
+  // do repo fica em versão estável entre betas, então o teste se declara beta.
+  const child = startAgent({ ATL_SYNC_NODE: 'test-srv', ATL_APP_VERSION: '999.0.0-beta.9' }, port);
   try {
     assert.ok(await waitForUp(port), 'servidor respondeu em /sessions');
     const r = await fetch(`http://127.0.0.1:${port}/sessions`, { headers: { Authorization: 'Bearer tok' } });

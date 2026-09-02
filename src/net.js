@@ -192,7 +192,10 @@ function startServer({ port, token, nodeName, shareTranscripts, allowAttach, pty
     if (url.pathname === '/transcript') {
       if (!shareTranscripts) return respond(403, { error: 'transcripts not shared' });
       const key = url.searchParams.get('key');
-      const n = Math.max(1, Math.min(50, parseInt(url.searchParams.get('n') || '20', 10)));
+      // parseInt inválido ('?n=abc') dá NaN — e NaN atravessa Math.min/max,
+      // burlando o teto de 50 (slice(-NaN) devolve TUDO). Fallback explícito.
+      const p = parseInt(url.searchParams.get('n') || '20', 10);
+      const n = Math.max(1, Math.min(50, Number.isFinite(p) ? p : 20));
       let msgs = [];
       if (key) { try { msgs = (getTranscript && getTranscript(key, n)) || []; } catch {} }
       return respond(200, { messages: msgs });

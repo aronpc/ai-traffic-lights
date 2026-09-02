@@ -28,6 +28,15 @@ const settingsLib = require('./src/settings');
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share');
 const SETTINGS_FILE = path.join(DATA_HOME, 'ai-traffic-lights', 'settings.json');
 
+// Mesmo gate beta da GUI (main.js: SYNC_AVAILABLE = isPrerelease(APP_VERSION)).
+// O sync é feature pre-release: um agent headless instalado de uma build
+// ESTÁVEL não deve servir /sessions, /transcript e /pty quando nenhuma GUI
+// estável pode atuar como cliente — a política é uma só nos dois lados.
+// ATL_APP_VERSION sobrescreve p/ testes e checkouts dev (o package do repo
+// pode estar numa versão estável enquanto se desenvolve a beta seguinte).
+const APP_VERSION = process.env.ATL_APP_VERSION || require('./package.json').version;
+const SYNC_AVAILABLE = settingsLib.isPrerelease(APP_VERSION);
+
 function loadSettings() {
   try { return settingsLib.mergeWithDefaults(JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))); }
   catch { return settingsLib.mergeWithDefaults(null); }   // sem arquivo → defaults (sync OFF)
@@ -72,9 +81,13 @@ const nodeName = sync.node || os.hostname() || 'local';
 
 let server = null;
 function start() {
+  // Ordem dos checks: config PRIMEIRO (o motivo de "não subir" mais específico
+  // vence), gate beta depois — um agent desabilitado está desabilitado em
+  // qualquer canal de release.
   if (!sync.enabled) { log('sync desabilitado (settings/ATL_SYNC_ENABLED). Nada a fazer.'); return; }
   if (!sync.token) { log('sync habilitado MAS sem token — recusando (fail-safe).'); return; }
   if (!sync.share) { log('sync habilitado com token, mas share=0 — nada a servir.'); return; }
+  if (!SYNC_AVAILABLE) { log('sync é feature beta: requer build pre-release (esta é v%s estável). Nada a fazer.', APP_VERSION); return; }
   const bindHost = process.env.ATL_SYNC_BIND || net.detectTailnetIP();
   try {
     server = net.startServer({
@@ -91,7 +104,15 @@ function start() {
   } catch (e) { log('servidor falhou: %s', e.message); }
 }
 
-function stop() { try { if (server) server.close(); } catch {} log('encerrado.'); process.exit(0); }
+// SIGTERM/SIGINT: derruba TAMBÉM os shells /pty em curso (mesma ordem do
+// closeSyncServer da GUI, PR-32 #07) — close() sozinho só para de aceitar
+// conexões novas e deixaria attachs remotos vivos até o timeout do socket.
+function stop() {
+  try { if (server && server.closeAllPty) server.closeAllPty(); } catch {}
+  try { if (server) server.close(); } catch {}
+  log('encerrado.');
+  process.exit(0);
+}
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
 start();

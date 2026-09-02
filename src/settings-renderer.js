@@ -40,6 +40,13 @@ const $syncPeers = document.getElementById('syncPeers');
 
 let captured = null;        // accelerator capturado (string) ou null
 let capturing = false;
+// Quick Launcher: fora do macOS o agente sempre abre na janela Terminal embutida
+// do ATL (spawn via node-pty + wrap tmux) — o seletor de terminal externo não
+// tem efeito nenhum no Linux. Esconder evita uma preferência que não faz nada.
+if (!/^Mac/.test(navigator.platform || '')) {
+  const sec = $terminal && $terminal.closest('.section');
+  if (sec) sec.hidden = true;
+}
 let ready = false;          // trava o push durante a carga inicial (getSettings)
 let T = makeT('en');        // i18n — troca pro idioma do sistema via get-lang
 let soundFile = '';         // caminho do arquivo de som custom (setado no load / ao escolher)

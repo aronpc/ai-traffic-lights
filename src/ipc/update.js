@@ -166,11 +166,20 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     if (_updateCache && now - _updateCache.checkedAt < 30 * 60 * 1000) return _updateCache.info;
     const info = { current: APP_VERSION, method: updateState.method, latest: null, hasUpdate: false, url: null, error: null };
     try {
+      // /releases/latest EXCLUI pre-releases por definição da API — quem marcou
+      // "Receber versões beta" nunca veria uma beta por este caminho (o canal
+      // ficava inalcançável no macOS/deb, que não têm electron-updater). No canal
+      // beta buscamos a LISTA e escolhemos a maior versão por semverCmp (que já
+      // entende pre-release: 0.9.0-beta.1 < 0.9.0).
+      const f = settingsLib.updaterFlags((getSettings() || {}).updateChannel, APP_VERSION);
+      const wantBeta = !!(f && f.allowPrerelease);
       const https = require('https');
       const body = await new Promise((resolve, reject) => {
         const req = https.request({
           hostname: 'api.github.com',
-          path: '/repos/aronpc/ai-traffic-lights/releases/latest',
+          path: wantBeta
+            ? '/repos/aronpc/ai-traffic-lights/releases?per_page=20'
+            : '/repos/aronpc/ai-traffic-lights/releases/latest',
           method: 'GET',
           headers: { 'User-Agent': 'ai-traffic-lights', Accept: 'application/vnd.github+json' },
           timeout: 5000,
@@ -179,7 +188,16 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
         req.on('timeout', () => req.destroy(new Error('timeout')));
         req.end();
       });
-      const j = JSON.parse(body);
+      let j = JSON.parse(body);
+      if (Array.isArray(j)) {   // canal beta: lista → maior versão por semverCmp
+        let best = null;
+        for (const r of j) {
+          const v = (r && r.tag_name || '').replace(/^v/, '');
+          if (!v) continue;
+          if (!best || semverCmp(v, (best.tag_name || '').replace(/^v/, '')) > 0) best = r;
+        }
+        j = best || {};
+      }
       info.latest = (j.tag_name || '').replace(/^v/, '');
       info.url = j.html_url || (REPO_URL + '/releases/latest');
       info.hasUpdate = info.latest ? semverCmp(info.latest, APP_VERSION) > 0 : false;
@@ -325,7 +343,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
 # Gerado pelo AI Traffic Lights para trocar o próprio bundle. Roda destacado,
 # depois que o app sai. Passos idênticos aos do install_macos.sh.
 set -u
-PID="$1"; DMG="$2"; DEST="$3"
+PID="$1"; DMG="$2"; DEST="$3"; RELAUNCH="\${4:-0}"
 # espera o app sair (máx. 30 s) — não dá pra substituir um bundle em uso
 for _ in $(seq 1 150); do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done
 MNT="$(mktemp -d)"
@@ -345,7 +363,11 @@ hdiutil detach -force "$MNT" >/dev/null 2>&1
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 codesign --force --deep --sign - "$DEST" 2>/dev/null || true
 rm -rf "$DEST.old" "$DMG"
-open "$DEST"
+# Só reabre quando o pedido veio do botão "instalar" (RELAUNCH=1). O quit
+# normal (tray "Sair", Cmd+Q) troca silenciosamente e NÃO relança — mesmo
+# modelo do autoInstallOnAppQuit do electron-updater, que também não reabre.
+[ "$RELAUNCH" = "1" ] && open "$DEST"
+exit 0
 `;
 
   // Mesma POLÍTICA do AppImage no Linux, onde o electron-updater roda com
@@ -355,6 +377,7 @@ open "$DEST"
   // normal. A diferença é só quem executa a troca: lá o Squirrel, aqui o script.
   let _macStaged = null;      // { dmg, sh, dest } pronto para trocar no quit
   let _macBaixando = false;
+  let _macRelaunch = false;   // true quando o quit veio do botão "instalar" → reabre
 
   async function baixarUpdateMac() {
     if (_macStaged || _macBaixando) return;      // já pronto, ou em andamento
@@ -416,14 +439,15 @@ open "$DEST"
   }
 
   // Equivalente ao autoInstallOnAppQuit: a troca dispara no encerramento, seja
-  // ele pelo "↻", pelo menu ou pelo fechamento normal. O script espera este pid
+  // ele pelo "↻", pelo menu ou pelo fechamento normal — mas só REABRE quando o
+  // quit veio do botão "instalar" (_macRelaunch). O script espera este pid
   // morrer antes de tocar no bundle, então registrar aqui é seguro.
   function trocarNoQuit() {
     if (!_macStaged) return;
     const { dmg, sh, dest } = _macStaged;
     _macStaged = null;                           // não dispara duas vezes
     try {
-      spawn('/bin/bash', [sh, String(process.pid), dmg, dest], { detached: true, stdio: 'ignore' }).unref();
+      spawn('/bin/bash', [sh, String(process.pid), dmg, dest, _macRelaunch ? '1' : '0'], { detached: true, stdio: 'ignore' }).unref();
     } catch {}
   }
 
@@ -437,7 +461,9 @@ open "$DEST"
   ipcMain.on('install-update', () => {
     if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch {} return; }
     // macOS: só encerra — o hook de quit faz a troca, como o autoInstallOnAppQuit.
-    if (updateState.method === 'dmg' && _macStaged) { try { app.quit(); } catch {} }
+    // Aqui, diferente do quit normal, o app REABRE depois da troca (é o que quem
+    // clicou "instalar e reiniciar" espera ver).
+    if (updateState.method === 'dmg' && _macStaged) { _macRelaunch = true; try { app.quit(); } catch {} }
   });
 
   setupAutoUpdater();   // configura eventos + 1ª checagem + scheduler 1h (igual ao boot antigo)
