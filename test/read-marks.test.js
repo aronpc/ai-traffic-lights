@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loadReadMarks, saveReadMarks, applyMarks } = require('../src/read-marks.js');
+const { loadReadMarks, saveReadMarks, applyMarks, reseedMarks } = require('../src/read-marks.js');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'atl-rm-'));
 
@@ -89,4 +89,38 @@ test('load: arquivo ausente ou corrompido → {} (degradável, marca de leitura 
 
 test('save: falha de escrita → false, sem throw (dir inexistente)', () => {
   assert.equal(saveReadMarks('/dir/que/não/existe/rm.json', { a: 1 }), false);
+});
+
+// ---- reseedMarks: re-semeadura das chaves vivas na reconexão do peer ----
+
+test('reseedMarks: devolve o estado VIGENTE só das chaves pedidas', () => {
+  const state = { 'peer:1': 100, 'peer:2': 200, 'local:9': 300 };
+  assert.deepEqual(reseedMarks(state, ['peer:1', 'peer:2']), { 'peer:1': 100, 'peer:2': 200 });
+  // chave sem marca (sessão viva nunca lida) não entra
+  assert.deepEqual(reseedMarks(state, ['peer:3']), {});
+  // estado vazio / ausente
+  assert.deepEqual(reseedMarks({}, ['peer:1']), {});
+  assert.deepEqual(reseedMarks(null, ['peer:1']), {});
+});
+
+test('reseedMarks: keys com lixo não explodem (null/vazio/não-string/sobras)', () => {
+  assert.deepEqual(reseedMarks({ 'peer:1': 10 }, [null, '', 42, 'peer:1']), { 'peer:1': 10 });
+  assert.deepEqual(reseedMarks({ 'peer:1': 10 }, 'peer:1'), {}, 'keys não-array → vazio');
+});
+
+test('reseedMarks: marca fracionária vira floor (mesma higiene do load)', () => {
+  assert.deepEqual(reseedMarks({ 'peer:1': 100.9 }, ['peer:1']), { 'peer:1': 100 });
+});
+
+test('regressão review #56: ciclo LWW-pula + reseed fecha a reconexão do peer', () => {
+  // Cenário medido: peer conectado, sessão lida → marca persistida.
+  let state = applyMarks({}, [{ key: 'peer:1234', readAt: 1000 }]).state;
+  // Peer CAIU: o renderer poda a chave (liveKeys sem ela) — o estado do MAIN
+  // continua com a marca, mas o renderer perdeu. Peer VOLTOU: o poll re-ancora
+  // o readIdleSec e a marca recomputada chega IGUAL à persistida...
+  const r = applyMarks(state, [{ key: 'peer:1234', readAt: 1000 }]);
+  assert.deepEqual(r.applied, [], 'LWW pula a marca igual — nada é empurrado ao vivo');
+  // ...e é AQUI que a sessão voltava vermelha: sem push, o renderer não
+  // re-hidrata. O reseed devolve a marca vigente da chave viva:
+  assert.deepEqual(reseedMarks(r.state, ['peer:1234']), { 'peer:1234': 1000 });
 });

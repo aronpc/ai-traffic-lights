@@ -41,10 +41,12 @@ async function setup() {
   for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay', 'ctxMenu']) els[id] = mkEl();
   const calls = { setAlias: [], notify: [], transcriptResolvers: [] };
   let sessionsCb = null;
+  let marksCb = null;                        // onReadMarks (#56 re-semeadura)
   const window = {
     addEventListener() {}, removeEventListener() {},
     trafficLight: {
       onSessions: (cb) => { sessionsCb = cb; },
+      onReadMarks: (cb) => { marksCb = cb; },
       requestSessions() {}, setExpanded() {}, autoHeight() {},
       onUsage() {}, requestUsage() {}, onUsageMeta() {}, forceUsage() {},
       resizeStart() {}, resizeMove() {}, focus() {},
@@ -73,7 +75,8 @@ async function setup() {
   const labelEl = () => els.list.children[0].children[3].children[0]; // li → main(4º: led,reason,llm,main) → labelEl
   const openRename = () => { labelEl().dispatch('dblclick', noev); return labelEl().children[0]; };
   const key = (input, k) => input.dispatch('keydown', { key: k, ...noev });
-  return { ctx, els, calls, noev, openRename, key, sessionsCb: (list) => sessionsCb(list) };
+  const marks = (state) => marksCb(state);
+  return { ctx, els, calls, noev, openRename, key, marks, sessionsCb: (list) => sessionsCb(list) };
 }
 
 test('#2 guard: render() durante a edição não destrói o input', async () => {
@@ -214,4 +217,33 @@ test('menu aberto + sessão morre: rename aborta limpo sem travar o render', asy
   assert.equal(els.list.children.length, 1, 'render segue vivo (não congelou)');
   const input = els.list.children[0].children[3].children[0].children[0];
   assert.ok(!input || input.className !== 'row-input', 'nenhum input fantasma montado');
+});
+
+test('#56 reconexão: marca do peer re-hidratada com o MESMO valor após a poda', async () => {
+  // Ciclo medido no review: peer cai → sessões somem → render poda readMarks
+  // (liveKeys sem a chave); peer volta → a marca re-ancorada chega IGUAL à
+  // persistida → LWW do main pula → nada era empurrado → sessão vermelha
+  // apesar de lida. O main agora re-envia o estado vigente das chaves vivas
+  // após o push de sessões — este teste documenta o contrato do canal: o
+  // handler aceita valor IGUAL e re-hidrata a chave podada.
+  const { els, sessionsCb, marks } = await setup();
+  const now = Math.floor(Date.now() / 1000);
+  const peerSess = {
+    session_id: 'rp1', pid: 1234, cwd: '/home/peer/proj', agent: 'claude',
+    origin: 'peerhost', last_event: 'PermissionRequest', last_event_ts: now - 60,
+  };
+  const ledOf = () => els.list.children[0].children[0].className;   // li → led
+
+  sessionsCb([peerSess]);                       // peer conectado: vermelha
+  assert.equal(ledOf(), 'led led--awaiting');
+
+  marks({ 'peerhost:1234': now });              // marca chega (boot/poll) → cinza
+  assert.equal(ledOf(), 'led led--read');
+
+  sessionsCb([]);                               // peer CAIU: render poda a marca
+  sessionsCb([peerSess]);                       // peer VOLTOU: vermelha de novo
+  assert.equal(ledOf(), 'led led--awaiting', 'sem a re-semeadura a sessão reacende');
+
+  marks({ 'peerhost:1234': now });              // reseed com o MESMO valor
+  assert.equal(ledOf(), 'led led--read', 'valor igual re-hidrata a chave podada');
 });

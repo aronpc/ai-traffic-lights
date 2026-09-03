@@ -56,4 +56,23 @@ function applyMarks(state, marks) {
   return { state: out, applied };
 }
 
-module.exports = { loadReadMarks, saveReadMarks, applyMarks };
+// Subconjunto do estado para as chaves VIVAS — re-semeadura pós-reconexão.
+// O renderer poda as marks das sessões que saíram da lista (peer caiu →
+// sessões sumiram → liveKeys sem a chave → delete). Na reconexão, a marca
+// re-ancorada do readIdleSec chega IGUAL/mais velha que a persistida — o LWW
+// do applyMarks pula e `applied` fica vazio, então NADA era empurrado e a
+// sessão voltava vermelha apesar de lida. O poll do main re-envia este
+// subconjunto DEPOIS do push de sessões: o handler do renderer é LWW também,
+// então chave já em dia não re-renderiza e chave podada volta a pintar cinza.
+function reseedMarks(state, keys) {
+  const out = {};
+  if (!Array.isArray(keys)) return out;
+  for (const k of keys) {
+    if (typeof k !== 'string' || !k) continue;
+    const at = (state || {})[k];
+    if (Number.isFinite(at) && at > 0) out[k] = Math.floor(at);
+  }
+  return out;
+}
+
+module.exports = { loadReadMarks, saveReadMarks, applyMarks, reseedMarks };

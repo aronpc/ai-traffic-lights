@@ -1081,6 +1081,21 @@ function applySync() {
         }
         if (marks.length) applyReadMarks(marks);
         sendSessions();
+        // Re-semeadura das marcas do peer (achado do review do #56): o renderer
+        // PODA as marks das sessões que saíram da lista (peer caiu →
+        // remoteSessions.delete → render → liveKeys sem a chave). Na reconexão
+        // a marca re-ancorada chega IGUAL à persistida — LWW pula, `applied`
+        // fica vazio e nada era empurrado: a sessão voltava vermelha apesar de
+        // lida (o estado completo só re-chegava no did-finish-load). Re-envia o
+        // estado VIGENTE das chaves vivas DEPOIS do push de sessões — o render
+        // que recebe as sessões rodaria o prune antes se a mark chegasse
+        // primeiro. Handler do renderer é LWW-idempotente: chave já em dia não
+        // re-renderiza, chave podada volta a pintar cinza.
+        const reseed = readMarksLib.reseedMarks(
+          readMarksState,
+          sessions.map((s) => (s ? sessionKey(s) : '')).filter(Boolean),
+        );
+        if (Object.keys(reseed).length) sendToRenderer('read-marks', reseed);
       },
       // Peer caiu → DESCARTA as sessões dele. Antes só saía de livePeers (menu
       // da termWin) e remoteSessions ficava intacto: as sessões do peer morto
