@@ -135,59 +135,24 @@ function readSessions() {
 
 // Conta Claude de cada sessão (modal de detalhes): resolve o rótulo a partir
 // do CLAUDE_CONFIG_DIR do environ do pid — mesma descoberta do
-// claudeAccountsFromSessions (#58), mas por sessão. O environ de um processo
-// não muda na vida dele → cache por pid = uma leitura de /proc por sessão
-// NOVA (o sendSessions roda a cada 2s). Remota (com origin) já chega anotada
-// pelo peer: o rótulo é inofensivo (apelido/org/local-part — nunca email
-// completo/uuid) e NÃO é LOCAL_ONLY, viaja no payload de /sessions.
+// claudeAccountsFromSessions (#58), mas por sessão. A lógica vive em
+// src/annotate.js (testável): cache só do dir por pid (environ não muda na
+// vida do processo → uma leitura de /proc por sessão NOVA), rótulo recomputado
+// a cada ciclo (rename no tile propaga) e hit guardado por session_id (pid
+// reusado por outro processo re-lê o environ). Remota (com origin) já chega
+// anotada pelo peer: o rótulo é inofensivo (apelido/org/local-part — nunca
+// email completo/uuid) e NÃO é LOCAL_ONLY, viaja no payload de /sessions.
 // Anotação em memória: nada disso é gravado no state file.
-let _pidAccount = new Map(); // pid → label|null (null = default sem rótulo)
-function annotateClaudeAccounts(sessions) {
-  if (!Array.isArray(sessions)) return sessions;
-  const alive = new Set();
-  let labels; // lazy: account-labels.json lido 1x por ciclo, só se há pid novo
-  for (const s of sessions) {
-    // origin 'local' É truthy: o state file grava origin:'local' nas sessões
-    // locais (o startRename do renderer usa o mesmo predicado).
-    if (!s || (s.origin && s.origin !== 'local') || agentOf(s) !== 'claude' || !s.pid) continue;
-    alive.add(s.pid);
-    if (_pidAccount.has(s.pid)) {
-      const lbl = _pidAccount.get(s.pid);
-      if (lbl) s.account = lbl;
-      continue;
-    }
-    let dir = null;
-    try {
-      const env = usage.parseEnviron(getProcessEnviron(s.pid), ['CLAUDE_CONFIG_DIR']);
-      dir = env.CLAUDE_CONFIG_DIR || null;   // null = conta default do symlink
-    } catch { continue; }                    // pid morreu: não cachear, tenta no próximo ciclo
-    let label = null;
-    try {
-      const pc = usage.readClaudeConfig({ home: app.getPath('home'), dir }); // cache mtime
-      if (labels === undefined) {
-        try { labels = JSON.parse(fs.readFileSync(ACCOUNT_LABELS_FILE, 'utf8')) || {}; } catch { labels = {}; }
-      }
-      // Chave de identidade: ORG primeiro (#60 — mesmo login em duas orgs
-      // Team são contas com limite/billing independentes), accountUuid só p/
-      // contas pessoais. Fallback labels[accountUuid]: apelido gravado antes
-      // da chave de org continuar funcionando.
-      const key = (pc && (pc.accountOrgUuid || pc.accountUuid)) || dir || 'default';
-      const manual = labels[key] || (pc && pc.accountUuid && labels[pc.accountUuid]) || null;
-      label = usage.accountLabel(pc, dir, manual);
-    } catch {}
-    // API alternativa do perfil (settings.json env.ANTHROPIC_BASE_URL):
-    // sessão de perfil técnico (ex. gh-claude → proxy vm-contabo/GLM) mostra
-    // "gh-claude · vm-contabo:20128" em vez do nome seco do dir — o host diz
-    // QUAL API a sessão realmente usa. Perfis de org não têm base_url →
-    // rótulo intacto. dir null (conta default do symlink) → sem provedor.
-    const api = dir && usage.apiProviderFromSettings(dir);
-    if (label && api) label += ' · ' + api;
-    _pidAccount.set(s.pid, label);
-    if (label) s.account = label;
-  }
-  for (const pid of _pidAccount.keys()) if (!alive.has(pid)) _pidAccount.delete(pid);
-  return sessions;
-}
+const annotateClaudeAccounts = require('./src/annotate').makeAnnotator({
+  getEnviron: getProcessEnviron,
+  parseEnviron: usage.parseEnviron,
+  readClaudeConfig: (dir) => usage.readClaudeConfig({ home: app.getPath('home'), dir }), // cache mtime
+  accountLabel: usage.accountLabel,
+  apiProviderFromSettings: usage.apiProviderFromSettings,
+  agentOf,
+  labelsFile: ACCOUNT_LABELS_FILE,
+  fs,
+});
 
 // ---- click-to-focus: ativa a janela (e a ABA, quando possível) da sessão ----
 // Duas responsabilidades separadas (a decisão pura vive em src/focus.js):
