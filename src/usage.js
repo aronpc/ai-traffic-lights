@@ -359,6 +359,34 @@ function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
 // na API: devolvemos o último valor bom conhecido, ou o plano-só. Assim o tile
 // não some nem pisca ⚠ e a janela de rate limit expira sozinha.
 const _claudeCacheByToken = new Map(); // token → { at, entries, cooldownUntil }
+
+// Tile plano-só (sem a API OAuth): mostra só o plano + passes, SEM reset. O
+// planLimitsEndDate do .claude.json é o fim do ciclo do PLANO (ex.: Jul 13),
+// NÃO o reset da janela de uso (5h/7d, que reseta várias vezes até lá) — pô-lo
+// aqui enganava ("3d" logo após a janela ter resetado). O reset REAL das
+// janelas só existe no runtime da API (resets_at) → sem API, honestamente sem
+// reset. `passes` (free passes do plano) é info local legítima, fica.
+//
+// Conta SEM oauth e SEM plano = perfil técnico de PROXY (ex. gh-claude →
+// vm-contabo, que roteia GLM): sem isto a conta não gerava barra NENHUMA —
+// invisível na lista de uso. Ganha um tile plano-só "API <host>" (o proxy
+// não expõe quota Anthropic → sem %, honesto). Só conta NAMED (dir
+// explícito): a default é o symlink de org, settings.json dela não diz
+// nada de API alternativa. Perfis sem base_url seguem sem barra.
+//
+// Devolve null quando não há plano nem API para mostrar. Usada pelo
+// readClaudeUsage (sem token / rede falhou) E pelo catch do collectUsage
+// (exceção inesperada do leitor — o tile vira sinal de família viva, ver lá).
+function claudePlanOnlyTile(plan, pc, dir) {
+  const api = !plan && dir ? apiProviderFromSettings(dir) : null;
+  const planLabel = plan || (api ? 'API ' + api : null);
+  if (!planLabel) return null;
+  return [{ id: 'claude-plan', agent: 'claude', plan: planLabel, title: null, usedPct: null,
+    resetAt: null, resetInMin: null,
+    extra: (!api && pc && pc.passes != null ? pc.passes + ' passes' : null),
+    source: api ? 'settings.json' : 'claude.json', error: null }];
+}
+
 async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldownFails, setCooldown, allowFetch = true } = {}) {
   const pc = readClaudeConfig({ home, now, dir });
   const creds = readClaudeCreds({ home, dir });
@@ -367,27 +395,7 @@ async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldow
   // resolve mas há conta, cai no genérico do .claude.json (ou null = sem conta).
   const plan = claudePlanFromCreds(creds) || (pc ? pc.plan : null);
   const token = creds.accessToken;
-  // Tile plano-só (sem a API OAuth): mostra só o plano + passes, SEM reset. O
-  // planLimitsEndDate do .claude.json é o fim do ciclo do PLANO (ex.: Jul 13),
-  // NÃO o reset da janela de uso (5h/7d, que reseta várias vezes até lá) — pô-lo
-  // aqui enganava ("3d" logo após a janela ter resetado). O reset REAL das
-  // janelas só existe no runtime da API (resets_at) → sem API, honestamente sem
-  // reset. `passes` (free passes do plano) é info local legítima, fica.
-  //
-  // Conta SEM oauth e SEM plano = perfil técnico de PROXY (ex. gh-claude →
-  // vm-contabo, que roteia GLM): sem isto a conta não gerava barra NENHUMA —
-  // invisível na lista de uso. Ganha um tile plano-só "API <host>" (o proxy
-  // não expõe quota Anthropic → sem %, honesto). Só conta NAMED (dir
-  // explícito): a default é o symlink de org, settings.json dela não diz
-  // nada de API alternativa. Perfis sem base_url seguem sem barra.
-  const api = !plan && dir ? apiProviderFromSettings(dir) : null;
-  const planLabel = plan || (api ? 'API ' + api : null);
-  const planOnly = planLabel
-    ? [{ id: 'claude-plan', agent: 'claude', plan: planLabel, title: null, usedPct: null,
-        resetAt: null, resetInMin: null,
-        extra: (!api && pc && pc.passes != null ? pc.passes + ' passes' : null),
-        source: api ? 'settings.json' : 'claude.json', error: null }]
-    : null;
+  const planOnly = claudePlanOnlyTile(plan, pc, dir);
   if (!token) return planOnly;
 
   const nowMs = now || Date.now();
@@ -989,7 +997,16 @@ async function collectUsage(opts = {}) {
         // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
         // omite → false. Default true preserva o contrato dos testes/uso direto.
         allowFetch: opts.claudeAllowFetch !== false,
-      }).catch(() => null);
+      }).catch(() =>
+        // Exceção inesperada do leitor (rede/429/offline ele mesmo engole e
+        // devolve planOnly/último bom — o catch só vê o imprevisto). A conta
+        // está VIVA (só sessões vivas a descobriram): devolver null a faria
+        // sumir do fresh e o prune do mergeUsage leria "conta fechou",
+        // matando o último valor bom NA HORA (review, fix do prune). Em vez
+        // disso, o tile plano-só dela (acc.pc já foi lido no dedup) marca a
+        // família como viva — o prune respeita e o merge segura o prev por
+        // DROP_MS (stale) como qualquer linha que não veio nesta coleta.
+        claudePlanOnlyTile(acc.pc && acc.pc.plan || null, acc.pc, acc.dir));
     }),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
     readOpencodeUsage({
@@ -1103,6 +1120,7 @@ function mergeUsage(prev, fresh, now) {
   // do momento: a família que ele não traz morre na hora.
   const freshSfxByBase = new Map(); // 'claude-5h' → Set dos sufixos vindos
   const freshCanonical = new Set(); // 'claude-5h' vindo exato (sem sufixo)
+  const freshSfxAll = new Set();    // TODO sufixo vivo do fresh, em qualquer base
   for (const f of freshList) {
     if (!f || !f.id) continue;
     const i = f.id.indexOf(':');
@@ -1110,6 +1128,7 @@ function mergeUsage(prev, fresh, now) {
       const base = f.id.slice(0, i);
       if (!freshSfxByBase.has(base)) freshSfxByBase.set(base, new Set());
       freshSfxByBase.get(base).add(f.id.slice(i + 1));
+      freshSfxAll.add(f.id.slice(i + 1));
     } else freshCanonical.add(f.id);
   }
   for (const id of [...prevById.keys()]) {
@@ -1120,9 +1139,16 @@ function mergeUsage(prev, fresh, now) {
       // identidade da conta; prev com sufixo fora do fresh é a key VELHA da
       // mesma conta (migração de chave, ex. #58 accountUuid → #60 orgUuid:
       // claude-5h:ffdc8e + claude-5h:39e493 duplicavam a barra Artemis) ou
-      // conta que fechou — nos dois casos o fresh é a verdade.
+      // conta que fechou — nos dois casos o sufixo SOME do fresh inteiro.
+      // Exceção (review): sufixo vivo em OUTRA base é conta VIVA cuja coleta
+      // degradou — só o plano-só dela veio (claude-plan:<sfx> de 401/offline/
+      // exceção; glm:<sha> idem). Não é "fechou": o prev concreto dela segue
+      // o regime normal de linha ausente — stale até DROP_MS, não morte na
+      // hora (a barra boa não pode piscar fora por um blip de rede).
+      const sfx = id.slice(i + 1);
       const sfxs = freshSfxByBase.get(id.slice(0, i));
-      if (freshCanonical.has(id.slice(0, i)) || (sfxs && !sfxs.has(id.slice(i + 1)))) prevById.delete(id);
+      if (freshCanonical.has(id.slice(0, i))
+        || (sfxs && !sfxs.has(sfx) && !freshSfxAll.has(sfx))) prevById.delete(id);
     } else if (freshSfxByBase.has(id)) prevById.delete(id); // single→multi
   }
 

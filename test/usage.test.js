@@ -1467,6 +1467,56 @@ test('mergeUsage: multi→multi com o MESMO sfx segue o fluxo anti-zeragem', () 
   assert.equal(t2[0].usedPct, CLAUDE_5H.usedPct, 'valor do prev preservado');
 });
 
+// ================= review: falha transitória da coleta × prune =================
+// Bug medido: conta B viva cuja coleta degrada (401/offline/exceção → só o
+// tile plano-só dela vem no fresh, base claude-plan) tinha a barra concreta
+// (claude-5h:<sfx>) morta NA HORA pelo prune multi→multi. "Sufixo fora da
+// base" não distingue conta FECHADA (sufixo some do fresh inteiro) de conta
+// VIVA com coleta falha (sufixo vivo em outra base) — e a barra boa deve
+// seguir o regime de linha ausente: stale até DROP_MS, não morte instantânea.
+
+test('mergeUsage: coleta degradada da conta B (plano-só) segura a barra dela — stale, não morte', () => {
+  const A = { ...CLAUDE_5H, id: 'claude-5h:aaaaaa', accountId: 'aaaaaa', account: 'Alpha' };
+  const B = { ...CLAUDE_5H, id: 'claude-5h:bbbbbb', accountId: 'bbbbbb', account: 'Beta' };
+  const t1 = mergeUsage([], [A, B], NOW);
+  // Próximo tick: A ok; B degradou — do dela só veio o plano-só (outra base).
+  const degradedB = { ...CPLAN_B, id: 'claude-plan:bbbbbb', accountId: 'bbbbbb', account: 'Beta' };
+  const t2 = mergeUsage(t1, [A, degradedB], NOW + 30_000);
+  const beta = t2.find((e) => e.account === 'Beta');
+  assert.ok(beta, 'barra da Beta sobreviveu: conta viva, coleta falhou');
+  assert.equal(beta.id, 'claude-5h:bbbbbb', 'valor bom do prev segurado');
+  assert.equal(beta.usedPct, B.usedPct);
+  assert.equal(beta.stale, false, 'recém-coletada (< STALE_MS) → ainda viva');
+  assert.ok(!t2.some((e) => e.id === 'claude-plan:bbbbbb'), 'tile plano-só suprimido: concreto da própria conta presente');
+  // Sem recuperação por DROP_MS → morre no regime normal (não na hora do blip).
+  const t3 = mergeUsage(t2, [A, degradedB], NOW + 25 * 60_000);
+  assert.ok(!t3.some((e) => e.id === 'claude-5h:bbbbbb'), '20 min sem valor bom → barra CONCRETA some (regime normal)');
+  assert.ok(t3.some((e) => e.id === 'claude-plan:bbbbbb'), 'tile plano-só dela segue: conta viva, sem dado novo');
+});
+
+test('mergeUsage: conta que FECHOU (sufixo some do fresh inteiro) morre na hora', () => {
+  const A = { ...CLAUDE_5H, id: 'claude-5h:aaaaaa', accountId: 'aaaaaa' };
+  const B = { ...CLAUDE_5H, id: 'claude-5h:bbbbbb', accountId: 'bbbbbb' };
+  const t1 = mergeUsage([], [A, B], NOW);
+  const t2 = mergeUsage(t1, [A], NOW + 30_000);   // B não veio em NENHUMA base
+  assert.ok(!t2.some((e) => String(e.id).endsWith(':bbbbbb')), 'sem fantasma da conta fechada');
+});
+
+// Mesma mecânica no GLM: glm:<sha> é o plano-só (base distinta do concreto
+// glm-tokens:<sha>) — conta degradada não perde a barra concreta dela.
+test('mergeUsage: GLM degradada (só glm:<sha> no fresh) segura glm-tokens:<sha> do prev', () => {
+  // resetAt ISO distinto nos dois: a chave do dedup de conteúdo usa resetAt
+  // (resetInMin NÃO entra na chave) — sem isso as duas linhas colapsam numa.
+  const a = { ...GOOD('glm-tokens:abc123', 30), resetAt: new Date(NOW + 90 * 60000).toISOString() };
+  const d = { ...GOOD('glm-tokens:def456', 50), resetAt: new Date(NOW + 40 * 60000).toISOString() };
+  const t1 = mergeUsage([], [a, d], NOW);
+  const t2 = mergeUsage(t1, [
+    d,
+    { id: 'glm:abc123', agent: 'glm', plan: 'GLM Pro (z.ai)', title: 'GLM', usedPct: null, source: 'glm.api', error: null },
+  ], NOW + 30_000);
+  assert.ok(t2.some((e) => e.id === 'glm-tokens:abc123'), 'concreto da conta degradada segurado');
+});
+
 test('mergeUsage: sufixo acumulado do legado (a:sfx:sfx) colapsa e funde com o fresh', () => {
   const legacy = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e:ffdc8e', accountId: 'ffdc8e' }];
   const fresh = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e' }];
