@@ -1,69 +1,72 @@
-// settings.js — configurações do usuário (threshold de idle + atalho global).
-// Lógica PURA: defaults, merge e validação. main.js faz o I/O (ler/gravar
-// settings.json) e a UI de Preferências chama estas funções.
+// settings.js — user settings (idle threshold + global shortcut).
+// PURE logic: defaults, merge and validation. main.js does the I/O (read/write
+// settings.json) and the Preferences UI calls these functions.
 
-const { SOUND_TYPES } = require('./sound'); // tipos válidos de som do alerta
+const { SOUND_TYPES } = require('./sound'); // valid alert sound types
 
 const DEFAULTS = Object.freeze({
-  idleThresholdSec: 300,        // verde→vermelho após N parado (5 min)
-  escalateIdle: true,           // false = nunca escalar idle (sempre verde no Stop)
-  shortcut: 'Control+Alt+H',    // atalho global de mostrar/ocultar
-  lang: 'auto',                 // idioma da UI: 'auto' (locale do sistema) | 'en' | 'pt'
-  terminal: 'auto',             // Quick Launcher: 'auto' (1º presente) | 'tilix' | 'gnome-terminal' | 'ghostty' | 'custom'
-  terminalCmd: '',              // comando customizado p/ 'custom' (ex.: 'kitty --directory {cwd} -e {cmd}')
-  launchers: {},                // override de path por agente: { claude: '/usr/local/bin/claude' }
-  showUsage: true,              // footer: true = barras de uso | false = ícones do launcher
-  groupByHost: true,            // lista: headers por máquina quando há sessões de >1 host (#54)
-  collapsed: false,             // estado da janela: recolhido (só header+rodapé) | expandido
-  opacity: 0.97,               // transparência do painel (0.6–1.0; alpha do fundo do overlay)
-  markReadOnClick: true,       // clicar num terminal vermelho marca como lido (cinza) até a próxima notificação
-  notifyOnReset: true,         // notifica quando um limite ESGOTADO reseta a cota (voltou a liberar)
-  resetNotifyThresholdPct: 90, // % de uso que "arma" o aviso de reset — só avisa se passou disto antes de resetar
-  soundEnabled: true,          // tocar som no alerta vermelho
-  soundVolume: 0.18,           // volume do alerta (0–1; 0.18 = volume do beep original)
-  soundType: 'beep',           // preset sintético (beep/double/chime/low) ou 'custom' (arquivo)
-  soundFile: '',               // caminho do arquivo de áudio quando soundType === 'custom'
-  revealOnRed: false,          // trazer o overlay à frente (se oculto) quando um agente fica vermelho
-  revealOnReset: false,        // trazer à frente quando a cota reseta
-  revealOnUpdate: false,       // trazer à frente quando há uma nova versão disponível
-  updateChannel: 'stable',     // canal de atualização: 'stable' (default) | 'beta' (builds de teste)
-  // ---- sync multi-máquina (P2P via Tailscale) — OPT-IN TOTAL, tudo OFF ----
+  idleThresholdSec: 300,        // green→red after N seconds idle (5 min)
+  escalateIdle: true,           // false = never escalate idle (always green on Stop)
+  shortcut: 'Control+Alt+H',    // global show/hide shortcut
+  lang: 'auto',                 // UI language: 'auto' (system locale) | 'en' | 'pt'
+  terminal: 'auto',             // Quick Launcher: 'auto' (first found) | 'tilix' | 'gnome-terminal' | 'ghostty' | 'custom'
+  terminalCmd: '',              // custom command for 'custom' (e.g. 'kitty --directory {cwd} -e {cmd}')
+  launchers: {},                // path override per agent: { claude: '/usr/local/bin/claude' }
+  showUsage: true,              // footer: true = usage bars | false = launcher icons
+  groupByHost: true,            // list: per-machine headers when there are sessions from >1 host (#54)
+  collapsed: false,             // window state: collapsed (header+footer only) | expanded
+  opacity: 0.97,               // panel transparency (0.6–1.0; alpha of the overlay background)
+  markReadOnClick: true,       // clicking a red terminal marks it as read (gray) until the next notification
+  notifyOnReset: true,         // notifies when an EXHAUSTED limit resets the quota (available again)
+  resetNotifyThresholdPct: 90, // usage % that "arms" the reset notice — only notifies if it went past this before resetting
+  soundEnabled: true,          // play a sound on the red alert
+  soundVolume: 0.18,           // alert volume (0–1; 0.18 = original beep volume)
+  soundType: 'beep',           // synthetic preset (beep/double/chime/low) or 'custom' (file)
+  soundFile: '',               // audio file path when soundType === 'custom'
+  revealOnRed: false,          // bring the overlay to front (if hidden) when an agent turns red
+  revealOnReset: false,        // bring to front when the quota resets
+  revealOnUpdate: false,       // bring to front when a new version is available
+  updateChannel: 'stable',     // update channel: 'stable' (default) | 'beta' (test builds)
+  // ---- multi-machine sync (P2P via Tailscale) — FULLY OPT-IN, everything OFF ----
   sync: Object.freeze({
-    enabled: false,            // chave-mestra: liga/desliga servidor E cliente
-    share: false,              // subir o servidor /sessions (expõe meu estado)
-    shareTranscripts: false,   // habilitar /transcript (expõe meus prompts) — exige share
-    allowAttach: false,        // habilitar /pty (attach remoto ao meu terminal) — exige share; = exec remoto
-    port: 47474,               // porta comum a todos os nós (convenção p/ os peers)
-    token: '',                 // segredo compartilhado (obrigatório se enabled; compare constante)
-    node: '',                  // nome deste nó no overlay (default = hostname; vazio → hostname)
-    peers: [],                 // [{name, host}] nós que EU observo (cliente). host = IP/name Tailscale
+    enabled: false,            // master switch: turns server AND client on/off
+    share: false,              // start the /sessions server (exposes my state)
+    shareTranscripts: false,   // enable /transcript (exposes my prompts) — requires share
+    allowAttach: false,        // enable /pty (remote attach to my terminal) — requires share; = remote exec
+    port: 47474,               // port common to all nodes (convention for peers)
+    token: '',                 // shared secret (required if enabled; constant-time compare)
+    node: '',                  // this node's name in the overlay (default = hostname; empty → hostname)
+    peers: [],                 // [{name, host}] nodes that I watch (client). host = Tailscale IP/name
   }),
 });
 
 const UPDATE_CHANNELS = Object.freeze(['stable', 'beta']);
 
-// Traduz a preferência de canal + a versão em execução nas DUAS flags que o
-// electron-updater entende. Pura de propósito: a decisão é testável sem Electron.
+// Translates the channel preference + the running version into the TWO flags
+// electron-updater understands. Pure on purpose: the decision is testable
+// without Electron.
 //
-//   stable → allowPrerelease=false. O GitHubProvider resolve a tag por
-//            /releases/latest, que o GitHub monta ignorando pre-releases — os
-//            builds do canal beta ficam invisíveis.
-//   beta   → allowPrerelease=true. O provider passa a varrer o feed atom e
-//            aceita a entrada mais nova, pre-release inclusive.
+//   stable → allowPrerelease=false. The GitHubProvider resolves the tag via
+//            /releases/latest, which GitHub builds ignoring pre-releases —
+//            beta channel builds stay invisible.
+//   beta   → allowPrerelease=true. The provider then scans the atom feed and
+//            accepts the newest entry, pre-release included.
 //
-// O nome 'beta' NÃO é decorativo: o GitHubProvider trata `alpha` e `beta` como
-// canais nativos (lista fixa no código) e qualquer outro sufixo como
-// `isCustomChannel`, que ele DESCARTA ao varrer o feed. Consequência prática:
-// quem roda `0.7.4-beta.N` também recebe uma estável mais nova que apareça;
-// quem rodasse `0.7.4-dev.N` só veria outras `-dev.*` e ficaria para trás.
+// The 'beta' name is NOT decorative: GitHubProvider treats `alpha` and `beta`
+// as native channels (fixed list in the code) and any other suffix as
+// `isCustomChannel`, which it DISCARDS when scanning the feed. Practical
+// consequence: whoever runs `0.7.4-beta.N` also receives a newer stable that
+// shows up; whoever ran `0.7.4-dev.N` would only see other `-dev.*` and fall
+// behind.
 //
-// allowDowngrade é o que permite SAIR do canal beta por vontade própria. Voltar
-// de `0.7.4-beta.3` para o estável `0.7.3` é uma descida em semver, e sem esta
-// flag o app ficaria preso na beta. Fica ligada só nesse caso (rodando
-// pre-release e pedindo estável) — nunca num app estável, onde só faria mal.
-// True se a versão em execução é uma pre-release do canal beta (tem sufixo
-// após X.Y.Z, ex.: 0.7.4-beta.1). Reusada pelo updater (allowDowngrade) e pelo
-// gate da feature de sync — a aba Sincronização só existe em build beta.
+// allowDowngrade is what allows LEAVING the beta channel at will. Going back
+// from `0.7.4-beta.3` to stable `0.7.3` is a semver downgrade, and without
+// this flag the app would be stuck on beta. It stays on only in that case
+// (running a pre-release and requesting stable) — never on a stable app,
+// where it would only cause harm.
+// True if the running version is a beta-channel pre-release (has a suffix
+// after X.Y.Z, e.g. 0.7.4-beta.1). Reused by the updater (allowDowngrade) and
+// by the sync feature gate — the Synchronization tab only exists in beta builds.
 function isPrerelease(appVersion) {
   return /^\d+\.\d+\.\d+-/.test(String(appVersion || ''));
 }
@@ -73,12 +76,12 @@ function updaterFlags(channel, appVersion) {
   return { allowPrerelease: wantBeta, allowDowngrade: !wantBeta && onPrerelease };
 }
 
-// Teclas válidas p/ um accelerator do Electron (subset seguro).
+// Valid keys for an Electron accelerator (safe subset).
 const KEY = /^[A-Z0-9]$|^(F1[0-2]?|F[2-9])$|^(Space|Up|Down|Left|Right)$/;
 const MODS = new Set(['Command', 'CommandOrControl', 'Control', 'Alt', 'Shift', 'Super', 'Option', 'Meta']);
 
-// Um accelerator é válido se tem ≥1 modificador + ≥1 tecla não-modificadora,
-// e todos os tokens são reconhecidos. Evita registrar combinação inútil/inválida.
+// An accelerator is valid if it has ≥1 modifier + ≥1 non-modifier key,
+// and all tokens are recognized. Avoids registering a useless/invalid combo.
 function isValidShortcut(acc) {
   if (typeof acc !== 'string') return false;
   const parts = acc.split('+').map((s) => s.trim()).filter(Boolean);
@@ -87,13 +90,13 @@ function isValidShortcut(acc) {
   for (const p of parts) {
     if (MODS.has(p)) hasMod = true;
     else if (KEY.test(p)) hasKey = true;
-    else return false;            // token desconhecido
+    else return false;            // unknown token
   }
   return hasMod && hasKey;
 }
 
-// Merge recursivo raso com defaults: só aceita chaves/valida. Resultado é
-// sempre completo e válido, mesmo que o arquivo no disco esteja podre.
+// Shallow recursive merge with defaults: only accepts/validates keys. The
+// result is always complete and valid, even if the file on disk is rotten.
 function mergeWithDefaults(raw) {
   const out = { ...DEFAULTS };
   if (raw && typeof raw === 'object') {
@@ -104,8 +107,8 @@ function mergeWithDefaults(raw) {
     if (typeof raw.showUsage === 'boolean') out.showUsage = raw.showUsage;
     if (typeof raw.groupByHost === 'boolean') out.groupByHost = raw.groupByHost;
     if (typeof raw.collapsed === 'boolean') out.collapsed = raw.collapsed;
-    // opacity: número em [0.6, 1.0] (abaixo de 0.6 fica ilegível). Fora da faixa
-    // ou não-número → clampa/ignora, nunca vira undefined.
+    // opacity: number in [0.6, 1.0] (below 0.6 becomes unreadable). Out of
+    // range or non-number → clamps/ignores, never becomes undefined.
     if (typeof raw.opacity === 'number' && Number.isFinite(raw.opacity)) {
       out.opacity = Math.max(0.6, Math.min(1.0, raw.opacity));
     }
@@ -115,12 +118,12 @@ function mergeWithDefaults(raw) {
     if (typeof raw.revealOnReset === 'boolean') out.revealOnReset = raw.revealOnReset;
     if (typeof raw.revealOnUpdate === 'boolean') out.revealOnUpdate = raw.revealOnUpdate;
     if (UPDATE_CHANNELS.includes(raw.updateChannel)) out.updateChannel = raw.updateChannel;
-    // resetNotifyThresholdPct: inteiro em [1, 100]; fora da faixa/não-número → default (90).
+    // resetNotifyThresholdPct: integer in [1, 100]; out of range/non-number → default (90).
     if (typeof raw.resetNotifyThresholdPct === 'number' && Number.isFinite(raw.resetNotifyThresholdPct)) {
       out.resetNotifyThresholdPct = Math.max(1, Math.min(100, Math.round(raw.resetNotifyThresholdPct)));
     }
     if (typeof raw.soundEnabled === 'boolean') out.soundEnabled = raw.soundEnabled;
-    // soundVolume: número em [0, 1]; fora da faixa/não-número → default (0.18).
+    // soundVolume: number in [0, 1]; out of range/non-number → default (0.18).
     if (typeof raw.soundVolume === 'number' && Number.isFinite(raw.soundVolume)) {
       out.soundVolume = Math.max(0, Math.min(1, raw.soundVolume));
     }
@@ -131,7 +134,7 @@ function mergeWithDefaults(raw) {
     const TERMINAL_OK = new Set(['auto', 'tilix', 'gnome-terminal', 'ghostty', 'iterm2', 'terminal', 'warp', 'custom']);
     if (TERMINAL_OK.has(raw.terminal)) out.terminal = raw.terminal;
     if (typeof raw.terminalCmd === 'string' && raw.terminalCmd.length <= 1000) out.terminalCmd = raw.terminalCmd;
-    // launchers: só strings (paths), chaves curtas — ignorado se malformado.
+    // launchers: only strings (paths), short keys — ignored if malformed.
     if (raw.launchers && typeof raw.launchers === 'object' && !Array.isArray(raw.launchers)) {
       const clean = {};
       let n = 0;
@@ -143,8 +146,8 @@ function mergeWithDefaults(raw) {
       }
       out.launchers = clean;
     }
-    // sync (P2P): sub-objeto OPT-IN. Tudo OFF/seguro por default; valida cada
-    // campo e saneia peers (host vem de config — anti-abuso de tamanho/formato).
+    // sync (P2P): OPT-IN sub-object. Everything OFF/safe by default; validates
+    // each field and sanitizes peers (host comes from config — size/format anti-abuse).
     if (raw.sync && typeof raw.sync === 'object' && !Array.isArray(raw.sync)) {
       const s = { ...DEFAULTS.sync };
       if (typeof raw.sync.enabled === 'boolean') s.enabled = raw.sync.enabled;
@@ -163,7 +166,7 @@ function mergeWithDefaults(raw) {
           const name = typeof p.name === 'string' ? p.name.slice(0, 64) : '';
           const host = typeof p.host === 'string' ? p.host.slice(0, 256) : '';
           if (host) cleanPeers.push({ name: name || host, host });
-          if (cleanPeers.length >= 32) break;     // teto anti-abuso
+          if (cleanPeers.length >= 32) break;     // anti-abuse cap
         }
         s.peers = cleanPeers;
       }

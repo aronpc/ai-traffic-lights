@@ -1,5 +1,5 @@
-// Testes do matcher fuzzy (#55): subsequência case-insensitive com score por
-// contiguidade e boundary de palavra, e o filtro de sessão que o usa.
+// Tests for the fuzzy matcher (#55): case-insensitive subsequence with score
+// by contiguity and word boundary, plus the session filter that uses it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { fuzzyScore, sessionMatches } = require('../src/fuzzy.js');
@@ -18,11 +18,11 @@ test('fuzzyScore: case-insensitive e acento não é magicamente casado', () => {
 });
 
 test('fuzzyScore: contiguidade e boundary pontuam mais que casamento espalhado', () => {
-  // "lig" no INÍCIO de "lights" (boundary + contíguo) > "lig" espalhado em "beligerante"
+  // "lig" at the START of "lights" (boundary + contiguous) > "lig" scattered in "beligerante"
   const bom = fuzzyScore('lig', 'lights');
   const ruim = fuzzyScore('lig', 'beligerante');
   assert.ok(bom > ruim, `boundary+contíguo (${bom}) deve superar meio de palavra (${ruim})`);
-  // contíguo puro: "tra" seguido em "traffic" > "tra" espalhado em "t..r..a"
+  // pure contiguity: "tra" consecutive in "traffic" > "tra" scattered in "t..r..a"
   assert.ok(fuzzyScore('tra', 'traffic') > fuzzyScore('tra', 'tortoise-rabbit-anteater'),
     'chars seguidos pontuam mais que espalhados');
 });

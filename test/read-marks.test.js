@@ -1,6 +1,6 @@
-// Testes do estado persistente das marcas de leitura (#56): merge LWW por
-// chave (maior readAt vence — uma marca velha NUNCA "des-lê"), carga tolerante
-// e gravação roundtrip no padrão tmpdir dos outros módulos.
+// Tests for the persistent state of read marks (#56): per-key LWW merge
+// (highest readAt wins — an old mark NEVER "un-reads"), tolerant loading
+// and tmpdir round-trip persistence in the pattern of the other modules.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,13 +13,13 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'atl-rm-'));
 test('applyMarks: LWW — maior readAt vence, menor não regride', () => {
   let { state } = applyMarks({}, [{ key: 'local:1', readAt: 100 }]);
   assert.equal(state['local:1'], 100);
-  // marca mais NOVA aplicada
+  // NEWER mark applied
   ({ state } = applyMarks(state, [{ key: 'local:1', readAt: 200 }]));
   assert.equal(state['local:1'], 200, 'readAt maior substitui');
-  // marca mais VELHA ignorada (não des-lê)
+  // OLDER mark ignored (does not un-read)
   ({ state } = applyMarks(state, [{ key: 'local:1', readAt: 50 }]));
   assert.equal(state['local:1'], 200, 'readAt menor NUNCA regride');
-  // IGUAL também não conta como aplicada (idempotente)
+  // EQUAL also doesn't count as applied (idempotent)
   const r = applyMarks(state, [{ key: 'local:1', readAt: 200 }]);
   assert.deepEqual(r.applied, [], 'mesma marca = nada aplicado');
 });
@@ -28,9 +28,9 @@ test('applyMarks: applied traz SÓ o que mudou (o caller empurra isso ao rendere
   const { state, applied } = applyMarks(
     { 'local:1': 100 },
     [
-      { key: 'local:1', readAt: 300 },   // muda
-      { key: 'local:2', readAt: 150 },   // nova
-      { key: 'local:1', readAt: 50 },    // velha, ignorada
+      { key: 'local:1', readAt: 300 },   // changes
+      { key: 'local:2', readAt: 150 },   // new
+      { key: 'local:1', readAt: 50 },    // old, ignored
     ],
   );
   assert.equal(state['local:1'], 300);
@@ -45,12 +45,12 @@ test('applyMarks: itens inválidos são pulados, lote não explode', () => {
   const { state, applied } = applyMarks({}, [
     null,
     {},
-    { key: '', readAt: 10 },            // chave vazia
-    { key: 'k', readAt: 0 },            // epoch 0 inválido
-    { key: 'k', readAt: -5 },           // negativo
-    { key: 'k', readAt: 'abc' },        // não-numérico
-    { key: 'k', readAt: 1.9 },          // fracionário → floor
-    { key: 'ok', readAt: '123' },       // string numérica ok
+    { key: '', readAt: 10 },            // empty key
+    { key: 'k', readAt: 0 },            // epoch 0 invalid
+    { key: 'k', readAt: -5 },           // negative
+    { key: 'k', readAt: 'abc' },        // non-numeric
+    { key: 'k', readAt: 1.9 },          // fractional → floor
+    { key: 'ok', readAt: '123' },       // numeric string ok
   ]);
   assert.equal(state.k, 1, '1.9 floored para 1');
   assert.equal(state.ok, 123, 'string numérica aceita');
@@ -80,7 +80,7 @@ test('load: arquivo ausente ou corrompido → {} (degradável, marca de leitura 
   const bad = path.join(dir, 'bad.json');
   fs.writeFileSync(bad, '{não é json');
   assert.deepEqual(loadReadMarks(bad), {}, 'corrompido');
-  // tipos errados dentro de JSON válido também caem fora
+  // wrong types inside valid JSON also drop out
   const weird = path.join(dir, 'weird.json');
   fs.writeFileSync(weird, JSON.stringify({ 'local:1': 10, bad: 'x', neg: -1, arr: [1, 2] }));
   assert.deepEqual(loadReadMarks(weird), { 'local:1': 10 }, 'só entradas válidas sobrevivem');
@@ -91,14 +91,14 @@ test('save: falha de escrita → false, sem throw (dir inexistente)', () => {
   assert.equal(saveReadMarks('/dir/que/não/existe/rm.json', { a: 1 }), false);
 });
 
-// ---- reseedMarks: re-semeadura das chaves vivas na reconexão do peer ----
+// ---- reseedMarks: re-seeding the live keys on peer reconnection ----
 
 test('reseedMarks: devolve o estado VIGENTE só das chaves pedidas', () => {
   const state = { 'peer:1': 100, 'peer:2': 200, 'local:9': 300 };
   assert.deepEqual(reseedMarks(state, ['peer:1', 'peer:2']), { 'peer:1': 100, 'peer:2': 200 });
-  // chave sem marca (sessão viva nunca lida) não entra
+  // key without a mark (live session never read) doesn't get in
   assert.deepEqual(reseedMarks(state, ['peer:3']), {});
-  // estado vazio / ausente
+  // empty / missing state
   assert.deepEqual(reseedMarks({}, ['peer:1']), {});
   assert.deepEqual(reseedMarks(null, ['peer:1']), {});
 });
@@ -113,14 +113,14 @@ test('reseedMarks: marca fracionária vira floor (mesma higiene do load)', () =>
 });
 
 test('regressão review #56: ciclo LWW-pula + reseed fecha a reconexão do peer', () => {
-  // Cenário medido: peer conectado, sessão lida → marca persistida.
+  // Measured scenario: peer connected, session read → mark persisted.
   let state = applyMarks({}, [{ key: 'peer:1234', readAt: 1000 }]).state;
-  // Peer CAIU: o renderer poda a chave (liveKeys sem ela) — o estado do MAIN
-  // continua com a marca, mas o renderer perdeu. Peer VOLTOU: o poll re-ancora
-  // o readIdleSec e a marca recomputada chega IGUAL à persistida...
+  // Peer WENT DOWN: the renderer prunes the key (liveKeys without it) — MAIN's
+  // state still has the mark, but the renderer lost it. Peer CAME BACK: the
+  // poll re-anchors readIdleSec and the recomputed mark arrives EQUAL to the persisted one...
   const r = applyMarks(state, [{ key: 'peer:1234', readAt: 1000 }]);
   assert.deepEqual(r.applied, [], 'LWW pula a marca igual — nada é empurrado ao vivo');
-  // ...e é AQUI que a sessão voltava vermelha: sem push, o renderer não
-  // re-hidrata. O reseed devolve a marca vigente da chave viva:
+  // ...and THIS is where the session went back to red: with no push, the
+  // renderer doesn't re-hydrate. reseed returns the standing mark of the live key:
   assert.deepEqual(reseedMarks(r.state, ['peer:1234']), { 'peer:1234': 1000 });
 });

@@ -1,21 +1,21 @@
-// read-marks.js — estado persistente das marcas de leitura (#56).
+// read-marks.js — persistent state of read marks (#56).
 //
-// Antes do sync, `readMarks` vivia só no renderer (Map em memória) e morria no
-// restart; e marcas vindas de OUTRA máquina não existiam. Este módulo é o lado
-// MAIN da coisa: carga/gravação de `read-marks.json` no BASE_DIR (padrão de
-// aliases.json/window.json) + merge LWW.
+// Before sync, `readMarks` lived only in the renderer (in-memory Map) and died on
+// restart; and marks coming from ANOTHER machine didn't exist. This module is the MAIN
+// side of it: load/save of `read-marks.json` in BASE_DIR (same pattern as
+// aliases.json/window.json) + LWW merge.
 //
-//   { 'local:1234': 1730000000, ... }   // chave → readAt (epoch segundos)
+//   { 'local:1234': 1730000000, ... }   // key → readAt (epoch seconds)
 //
-// LWW (last-write-wins): para cada chave, o MAIOR readAt vence — explícito,
-// porque é a única regra que fecha com clocks independentes: regravar uma marca
-// mais velha NUNCA pode "des-ler" uma sessão. Módulo puro (sem Electron) —
-// main.js só orquestra; a lógica é testável direto no node:test.
+// LWW (last-write-wins): for each key, the LARGEST readAt wins — explicit,
+// because it's the only rule that holds up with independent clocks: re-writing an
+// older mark can NEVER "un-read" a session. Pure module (no Electron) —
+// main.js only orchestrates; the logic is directly testable with node:test.
 
 const fs = require('fs');
 
-// Carrega o estado do disco. Arquivo ausente/corrompido → {} (uma marca de
-// leitura perdida é degradável: a sessão só volta a ficar "não lida").
+// Loads the state from disk. Missing/corrupted file → {} (a lost read
+// mark is degradable: the session just goes back to "unread").
 function loadReadMarks(file) {
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -30,16 +30,16 @@ function loadReadMarks(file) {
   }
 }
 
-// Grava o estado. Marcas são eventos RAROS (clique/PPOST de peer), então write
-// direto sem debounce — diferente de usage.json (ciclo de 60s), não há churn.
+// Saves the state. Marks are RARE events (a click or a peer's POST), so a direct
+// write without debounce — unlike usage.json (60s cycle), there's no churn.
 function saveReadMarks(file, state) {
   try { fs.writeFileSync(file, JSON.stringify(state || {})); return true; } catch { return false; }
 }
 
-// Merge LWW de marks: [{key, readAt}] (já saneadas pela rede — net.js
-// valida tipos; aqui confiamos mas NÃO rebaixamos: readAt <= 0 é pulado).
-// Retorna { state, applied } — `applied` SÓ as marcas que mudaram algo (o
-// caller empurra essas ao renderer; as demais nem re-renderizam).
+// LWW merge of marks: [{key, readAt}] (already sanitized by the network — net.js
+// validates types; here we trust but do NOT downgrade: readAt <= 0 is skipped).
+// Returns { state, applied } — `applied` contains ONLY the marks that changed something (the
+// caller pushes those to the renderer; the others don't even re-render).
 function applyMarks(state, marks) {
   const out = { ...(state || {}) };
   const applied = [];
@@ -48,7 +48,7 @@ function applyMarks(state, marks) {
     if (!m || typeof m.key !== 'string' || !m.key) continue;
     const at = Math.floor(Number(m.readAt));
     if (!Number.isFinite(at) || at <= 0) continue;
-    // LWW: marca mais VELHA nunca regride uma mais nova já aplicada.
+    // LWW: an OLDER mark never regresses an already-applied newer one.
     if ((out[m.key] || 0) >= at) continue;
     out[m.key] = at;
     applied.push({ key: m.key, readAt: at });
@@ -56,14 +56,14 @@ function applyMarks(state, marks) {
   return { state: out, applied };
 }
 
-// Subconjunto do estado para as chaves VIVAS — re-semeadura pós-reconexão.
-// O renderer poda as marks das sessões que saíram da lista (peer caiu →
-// sessões sumiram → liveKeys sem a chave → delete). Na reconexão, a marca
-// re-ancorada do readIdleSec chega IGUAL/mais velha que a persistida — o LWW
-// do applyMarks pula e `applied` fica vazio, então NADA era empurrado e a
-// sessão voltava vermelha apesar de lida. O poll do main re-envia este
-// subconjunto DEPOIS do push de sessões: o handler do renderer é LWW também,
-// então chave já em dia não re-renderiza e chave podada volta a pintar cinza.
+// Subset of the state for the LIVE keys — re-seeding after reconnection.
+// The renderer prunes the marks of sessions that left the list (peer went down →
+// sessions disappeared → liveKeys without the key → delete). On reconnection, the
+// re-anchored mark from readIdleSec arrives EQUAL/older than the persisted one — applyMarks's
+// LWW skips it and `applied` comes out empty, so NOTHING was pushed and the
+// session went back to red despite being read. The main's poll re-sends this
+// subset AFTER the session push: the renderer's handler is LWW too,
+// so an up-to-date key doesn't re-render and a pruned key goes back to painting gray.
 function reseedMarks(state, keys) {
   const out = {};
   if (!Array.isArray(keys)) return out;

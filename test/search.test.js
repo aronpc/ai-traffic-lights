@@ -1,8 +1,9 @@
-// Regressão #55 (busca fuzzy): digitar no input do header filtra a lista sem
-// reordenar (urgência preservada), o contador vira visíveis/total, zero match
-// mostra o empty de busca, os grupos do #54 somem quando o host inteiro cai
-// fora do filtro, `/` abre e Esc limpa. Mesma técnica do group-header.test.js:
-// scripts REAIS do renderer num contexto vm com DOM mock.
+// Regression #55 (fuzzy search): typing in the header input filters the list
+// without reordering (urgency preserved), the counter becomes visible/total,
+// zero match shows the search empty state, the #54 groups disappear when the
+// whole host falls outside the filter, `/` opens and Esc clears. Same
+// technique as group-header.test.js: the renderer's REAL scripts in a vm
+// context with a mock DOM.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -40,13 +41,14 @@ async function setup() {
   const els = {};
   for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'groupBtn',
     'searchInput', 'searchBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
-  // Estado inicial igual ao HTML real: busca fechada (hidden) e focável.
+  // Initial state like the real HTML: search closed (hidden) and focusable.
   els.searchInput.hidden = true;
   els.searchInput.focused = false;
   els.searchInput.focus = function () { this.focused = true; };
-  // Header (.bar): o modo busca (#55) recolhe o header e expande o input —
-  // setSearchOpen alterna a classe bar--searching nele via closest('.bar').
-  // O mock genérico não tem closest/classList com estado; este tem.
+  // Header (.bar): search mode (#55) collapses the header and expands the
+  // input — setSearchOpen toggles the bar--searching class on it via
+  // closest('.bar'). The generic mock has no stateful closest/classList;
+  // this one does.
   els.bar = mkEl();
   els.bar.classes = new Set();
   els.bar.classList = {
@@ -84,7 +86,7 @@ async function setup() {
   const ctx = { document, window, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date, Math, console };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
-  await Promise.resolve();                  // drena getSettings().then
+  await Promise.resolve();                  // drains getSettings().then
   const keydown = (ev) => (winListeners.keydown || []).forEach((f) => f(ev));
   return { els, keydown, pushSessions: (list) => sessionsCb(list) };
 }
@@ -99,13 +101,13 @@ const rows = (els) => els.list.children.filter((k) => k.className === 'row');
 test('#55 digitar filtra a lista e o contador vise "visíveis/total"', async () => {
   const { els, pushSessions } = await setup();
   pushSessions([mkSess('api'), mkSess('webapp'), mkSess('api-remota', 'notebook-hg')]);
-  els.searchInput.hidden = false;             // abre a busca
+  els.searchInput.hidden = false;             // opens the search
   els.searchInput.value = 'web';
   els.searchInput.dispatch('input', {});
   const r = rows(els);
   assert.equal(r.length, 1, 'só a sessão webapp casa');
   assert.equal(els.counts.textContent, '1/3', 'contador mostra visíveis/total');
-  // urgência preservada: sem reordenação, só ocultação
+  // urgency preserved: no reordering, only hiding
   assert.equal(els.list.children.some((k) => k.className === 'group-header'), false,
     '1 origem visível → sem header (host remoto caiu todo fora do filtro)');
 });
@@ -136,7 +138,7 @@ test('#55 zero match → empty de busca, lista oculta; sem buscar volta o total'
   assert.equal(els.list.hidden, true, 'lista oculta (flex-grow não disputa o empty)');
   assert.equal(els.empty.hidden, false, 'empty visível');
   assert.equal(els.empty.textContent, 'Nenhuma sessão corresponde à busca.');
-  // limpar restaura
+  // clearing restores
   els.searchInput.value = '';
   els.searchInput.dispatch('input', {});
   assert.equal(rows(els).length, 2, 'sem query → todas as sessões voltam');
@@ -150,7 +152,7 @@ test('#55 "/" abre a busca focada; Esc limpa, fecha e restaura a lista', async (
   assert.equal(els.searchInput.hidden, false, 'input aberto');
   assert.equal(els.searchInput.focused, true, 'e focado');
   assert.ok(els.bar.classes.has('bar--searching'), 'header em modo busca (input expande)');
-  // digita e dá Esc
+  // types and hits Esc
   els.searchInput.value = 'web';
   els.searchInput.dispatch('input', {});
   assert.equal(rows(els).length, 1);
@@ -166,7 +168,7 @@ test('#55 Ctrl+F também abre; "/" digitado DENTRO de um input não reabre a bus
   pushSessions([mkSess('api')]);
   keydown({ key: 'f', ctrlKey: true, preventDefault() {}, target: {} });
   assert.equal(els.searchInput.hidden, false, 'Ctrl+F abre');
-  // fecha e tenta "/" com target = input (ex.: rename): handler ignora
+  // closes and tries "/" with target = input (e.g. rename): handler ignores
   els.searchInput.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
   keydown({ key: '/', preventDefault() {}, target: { tagName: 'INPUT' } });
   assert.equal(els.searchInput.hidden, true, 'target input → "/" é texto, não atalho');

@@ -1,27 +1,28 @@
-// claude-config.js — resolução dos paths do Claude Code na máquina.
+// claude-config.js — resolves Claude Code paths on the machine.
 //
-// O Claude Code guarda tudo dentro de um CONFIG DIR (não mais no HOME):
-//   <dir>/.claude.json        estado vivo (conta OAuth, plano, passes)
-//   <dir>/.credentials.json   token OAuth (claudeAiOauth.accessToken)
-//   <dir>/projects/           transcripts .jsonl por projeto
-// O dir é $CLAUDE_CONFIG_DIR quando setado (perfis nomeados: zclaude, nclaude…)
-// e ~/.claude no default — que pode ser um SYMLINK para o perfil ativo
-// (troca pelo dd-claude). Ler pelo caminho ~/.claude/... atravessa o symlink
-// naturalmente; nenhum realpath é preciso para LER (só para deduplicar dirs
-// iguais sob nomes diferentes, feito no coletor multi-conta).
+// Claude Code keeps everything inside a CONFIG DIR (no longer in HOME):
+//   <dir>/.claude.json        live state (OAuth account, plan, passes)
+//   <dir>/.credentials.json   OAuth token (claudeAiOauth.accessToken)
+//   <dir>/projects/           per-project .jsonl transcripts
+// The dir is $CLAUDE_CONFIG_DIR when set (named profiles: zclaude, nclaude…)
+// and ~/.claude by default — which may be a SYMLINK to the active profile
+// (switched by dd-claude). Reading via the ~/.claude/... path traverses the
+// symlink naturally; no realpath is needed to READ (only to deduplicate equal
+// dirs under different names, done in the multi-account collector).
 //
-// O .claude.json ainda tem fallback legado em ~/.claude.json (layout pré-migração,
-// que o próprio Claude Code parou de atualizar — ler só ele é o bug do "arquivo
-// congelado"). Ordem: dir novo primeiro, legado por último.
+// .claude.json also has a legacy fallback at ~/.claude.json (pre-migration
+// layout, which Claude Code itself stopped updating — reading only it is the
+// "frozen file" bug). Order: new dir first, legacy last.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// O config dir efetivo: $CLAUDE_CONFIG_DIR (se aponta para dir existente) ou
-// ~/.claude. Injetar `home` é ser SANDBOX de teste: ignora o CLAUDE_CONFIG_DIR
-// ambiente — na máquina do dev a var vive setada (perfis dd-claude) e vazaria
-// dentro de qualquer fixture. O caminho de produção (sem `home`) a honra.
+// The effective config dir: $CLAUDE_CONFIG_DIR (if it points to an existing
+// dir) or ~/.claude. Injecting `home` means being a test SANDBOX: ignores the
+// ambient CLAUDE_CONFIG_DIR — on the dev's machine the var is always set
+// (dd-claude profiles) and would leak into any fixture. The production path
+// (without `home`) honors it.
 function configDir({ home } = {}) {
   if (home) return path.join(home, '.claude');
   const env = process.env.CLAUDE_CONFIG_DIR;
@@ -31,33 +32,34 @@ function configDir({ home } = {}) {
   return path.join(os.homedir(), '.claude');
 }
 
-// Candidatos do .claude.json em ordem de preferência: o do config dir (vivo),
-// depois o legado no HOME (congelado desde a migração — melhor que nada).
-// `dir` explícito = conta nomeada (multi-conta): um candidato SÓ, sem fallback
-// legado — o ~/.claude.json do HOME pertence a OUTRA conta, cair nele mostraria
-// o plano errado na barra da conta certa.
+// .claude.json candidates in preference order: the config dir's (live),
+// then the legacy one in HOME (frozen since the migration — better than nothing).
+// Explicit `dir` = named account (multi-account): a SINGLE candidate, no
+// legacy fallback — HOME's ~/.claude.json belongs to ANOTHER account, falling
+// into it would show the wrong plan on the right account's bar.
 function configCandidates({ home, dir } = {}) {
   if (dir) return [path.join(dir, '.claude.json')];
   const h = home || os.homedir();
   return [path.join(configDir({ home }), '.claude.json'), path.join(h, '.claude.json')];
 }
 
-// .credentials.json só existiu dentro do dir — um caminho só.
+// .credentials.json only ever existed inside the dir — a single path.
 function credsFile({ home, dir } = {}) {
   return path.join(dir || configDir({ home }), '.credentials.json');
 }
 
-// settings.json do config dir (model default, hooks, e o bloco `env` que pode
-// trocar a API por um proxy próprio via ANTHROPIC_BASE_URL — perfis técnicos).
-// VIVE no dir (não há fallback legado no HOME) e `dir` explícito = conta nomeada.
+// settings.json from the config dir (default model, hooks, and the `env`
+// block that can swap the API for a custom proxy via ANTHROPIC_BASE_URL —
+// technical profiles). Lives in the dir (no legacy fallback in HOME) and
+// explicit `dir` = named account.
 function settingsFile({ home, dir } = {}) {
   return path.join(dir || configDir({ home }), 'settings.json');
 }
 
-// Roots de transcripts em ordem de preferência: o do config dir, depois os
-// dois históricos hardcoded (~/.claude/projects cobre default+symlink;
-// ~/.zclaude/projects cobre o perfil zclaude pré-descoberta-dinâmica).
-// Deduplicado: CLAUDE_CONFIG_DIR apontando para o próprio default não varre 2×.
+// Transcript roots in preference order: the config dir's, then the two
+// hardcoded historical ones (~/.claude/projects covers default+symlink;
+// ~/.zclaude/projects covers the zclaude profile from before dynamic discovery).
+// Deduplicated: CLAUDE_CONFIG_DIR pointing at the default itself does not scan 2×.
 function projectsRoots({ home } = {}) {
   const h = home || os.homedir();
   return [...new Set([

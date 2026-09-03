@@ -1,14 +1,16 @@
-// src/ipc/account-labels.js — apelido manual por CONTA Claude (multi-conta, #58).
-// Extraído no padrão do aliases.js (REF passo 7): o renderer manda o accountId
-// (sfx estável da barra — sha256-6 do uuid) e o label; o main resolve a chave
-// de persistência (accountUuid, fallback dir) via lastAccountIds — preenchido a
-// cada coleta por claudeAccountsFromSessions — grava em account-labels.json e
-// re-coleta para a barra refletir o rótulo novo na hora. O renderer NUNCA vê o
-// uuid nem o email; a chave opaca é resolvida só aqui.
+// src/ipc/account-labels.js — manual label per Claude ACCOUNT (multi-account,
+// #58).
+// Extracted following the aliases.js pattern (REF step 7): the renderer sends
+// the accountId (the bar's stable sfx — sha256-6 of the uuid) and the label;
+// main resolves the persistence key (accountUuid, dir fallback) via
+// lastAccountIds — filled on every collect by claudeAccountsFromSessions —
+// writes to account-labels.json and re-collects so the bar reflects the new
+// label immediately. The renderer NEVER sees the uuid or the email; the
+// opaque key is resolved only here.
 //
-// A chave por uuid (não por dir) faz o apelido sobreviver à troca de nome do
-// perfil no disco (dd-claude renomeia dirs); o fallback dir cobre contas cujo
-// .claude.json não tem accountUuid (legado).
+// The per-uuid key (not per-dir) lets the label survive a profile rename on
+// disk (dd-claude renames dirs); the dir fallback covers accounts whose
+// .claude.json has no accountUuid (legacy).
 
 function setupAccountLabelsIpc({ ipcMain, ACCOUNT_LABELS_FILE, getLastAccountIds, recollect }) {
   const fs = require('fs');
@@ -23,18 +25,19 @@ function setupAccountLabelsIpc({ ipcMain, ACCOUNT_LABELS_FILE, getLastAccountIds
     try { fs.writeFileSync(ACCOUNT_LABELS_FILE, JSON.stringify(all)); } catch {}
   }
 
-  // Apelido da CONTA (multi-conta #58 — dblclick no nome da barra).
-  // `payload || {}`: default de desestructuring não cobre null (só undefined)
-  // — payload nulo do renderer malformado é ignorado, não exceção.
+  // Label of the ACCOUNT (multi-account #58 — dblclick on the bar's name).
+  // `payload || {}`: a destructuring default doesn't cover null (only
+  // undefined) — a null payload from a malformed renderer is ignored, not an
+  // exception.
   ipcMain.on('set-account-label', (_e, payload) => {
     const { accountId, label } = payload || {};
-    // Valida no limite IPC: accountId é o sfx da barra (hex-6), label é string
-    // curta. Payload malformado é ignorado, não gravado.
+    // Validates at the IPC boundary: accountId is the bar's sfx (hex-6),
+    // label is a short string. A malformed payload is ignored, not saved.
     if (typeof accountId !== 'string' || !/^[0-9a-f]{1,64}$/.test(accountId)) return;
     if (label != null && (typeof label !== 'string' || label.length > 64)) return;
     const ids = getLastAccountIds() || {};
     const key = ids[accountId];
-    if (!key) return;   // sfx desconhecido: conta sumiu/fechou desde o último render — ignora
+    if (!key) return;   // unknown sfx: account vanished/closed since the last render — ignore
     saveLabel(key, label);
     if (recollect) recollect();
   });

@@ -1,30 +1,31 @@
-// src/ipc/update.js — auto-update IPC (extraído do main.js, REF passo 1).
-// Electron-bound (ipcMain/app/Notification/shell). O estado interno vive aqui;
-// o main injeta o estado dinâmico (janela, settings, i18n, reveal) e as
-// constantes por DI, mantendo este módulo como glue puro (sem refs a globals).
+// src/ipc/update.js — auto-update IPC (extracted from main.js, REF step 1).
+// Electron-bound (ipcMain/app/Notification/shell). Internal state lives here;
+// main injects the dynamic state (window, settings, i18n, reveal) and the
+// constants via DI, keeping this module as pure glue (no refs to globals).
 //
-// Retorna { checkUpdatesManual } para o tray (verificação manual c/ notificação).
+// Returns { checkUpdatesManual } for the tray (manual check w/ notification).
 
 function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_URL, APP_VERSION, AUTOSTART_FILE }) {
   const path = require('path');
   const fs = require('fs');
   const { app, ipcMain, Notification, shell } = require('electron');
   const settingsLib = require('../settings');
-  const { spawn } = require('child_process');   // updaterFlags (canal → flags), lógica pura
+  const { spawn } = require('child_process');   // updaterFlags (channel → flags), pure logic
 
-  // ---- update checker (versão + release mais nova do GitHub) ----
-  // Detecta COMO o app foi instalado pra oferecer o caminho de atualização certo.
-  //   appimage → AppImage type 2 (execPath em /tmp/.mount_<nome>, ou *.AppImage)
-  //   deb      → instalado em /opt (electronic-builder deb vira /opt/AI Traffic Lights)
-  //   npm      → rodando de node_modules (npm install / dev)
-  //   source   → clone do repo (dev direto)
+  // ---- update checker (version + latest release from GitHub) ----
+  // Detects HOW the app was installed to offer the right update path.
+  //   appimage → AppImage type 2 (execPath in /tmp/.mount_<name>, or *.AppImage)
+  //   deb      → installed in /opt (electronic-builder deb becomes /opt/AI Traffic Lights)
+  //   npm      → running from node_modules (npm install / dev)
+  //   source   → repo clone (direct dev)
   //
-  // A detecção de AppImage NÃO depende só da env APPIMAGE: o Electron 43 às vezes
-  // a perde no re-exec do sandbox, então conferimos também o execPath (mount point
-  // /tmp/.mount_<nome>). Quando detectamos AppImage sem a env, recuperamos o caminho
-  // do .AppImage e re-exportamos em process.env.APPIMAGE — o electron-updater
-  // depende dela pra (a) saber que é AppImage e (b) qual arquivo substituir na
-  // instalação. Sem isto, o auto-update nunca aparecia (sempre caía em "abrir release").
+  // AppImage detection does NOT depend only on the APPIMAGE env: Electron 43
+  // sometimes loses it on sandbox re-exec, so we also check execPath (mount
+  // point /tmp/.mount_<name>). When we detect an AppImage without the env, we
+  // recover the .AppImage path and re-export it in process.env.APPIMAGE —
+  // electron-updater depends on it to (a) know it is an AppImage and (b) which
+  // file to replace on install. Without this, auto-update never showed up
+  // (it always fell to "open release").
   function detectInstallMethod() {
     if (process.env.APPIMAGE) return 'appimage';
     const exe = process.execPath || '';
@@ -36,16 +37,17 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     const appPath = app.getAppPath();
     if (/\/opt\/AI Traffic Lights/.test(exe) || appPath.includes('/opt/')) return 'deb';
     if (appPath.includes('node_modules')) return 'npm';
-    // macOS empacotado: o executável vive em <algo>.app/Contents/MacOS/. Antes isto
-    // caía em 'source' e o app ficava sem NENHUM caminho de atualização.
+    // Packaged macOS: the executable lives in <something>.app/Contents/MacOS/.
+    // Before, this fell into 'source' and the app was left with NO update path.
     if (process.platform === 'darwin' && app.isPackaged && /\.app\/Contents\//.test(exe)) return 'dmg';
     return 'source';
   }
 
-  // Recupera o caminho absoluto do .AppImage em execução quando o runtime perdeu a
-  // env APPIMAGE. Cascata: env → execPath (*.AppImage) → Exec= do .desktop do app
-  // (fonte confiável mantida pelo próprio app) → busca por basename do mount em
-  // locais canônicos (~/Applications, ~/.local/bin, ~/Downloads, /opt).
+  // Recovers the absolute path of the running .AppImage when the runtime lost
+  // the APPIMAGE env. Cascade: env → execPath (*.AppImage) → Exec= from the
+  // app's .desktop (reliable source maintained by the app itself) → search by
+  // mount basename in canonical locations (~/Applications, ~/.local/bin,
+  // ~/Downloads, /opt).
   function resolveAppImagePath() {
     if (process.env.APPIMAGE) return process.env.APPIMAGE;
     const exe = process.execPath || '';
@@ -73,7 +75,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     } catch {}
     return null;
   }
-  // Compara versões semver ('0.3.2' vs '0.4.0'); >0 se a>b, 0 se iguais, <0 se a<b.
+  // Compares semver versions ('0.3.2' vs '0.4.0'); >0 if a>b, 0 if equal, <0 if a<b.
   function semverCmp(a, b) {
     const parse = (v) => {
       const s = String(v || '').replace(/^v/, '');
@@ -82,17 +84,18 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     };
     const pa = parse(a), pb = parse(b);
     for (let i = 0; i < 3; i++) if ((pa.n[i] || 0) !== (pb.n[i] || 0)) return (pa.n[i] || 0) - (pb.n[i] || 0);
-    // Mesmo core: quem NÃO tem pre-release é maior (0.9.0 > 0.9.0-beta.1).
+    // Same core: the one WITHOUT a pre-release is greater (0.9.0 > 0.9.0-beta.1).
     if (!pa.pre && pb.pre) return 1;
     if (pa.pre && !pb.pre) return -1;
     return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
   }
 
-  // ---- auto-updater (AppImage) + estado de update ----
-  // electron-updater só auto-atualiza AppImage no Linux; deb/npm/source caem no
-  // fallback GitHub-API (só informativo → abre a release no navegador).
+  // ---- auto-updater (AppImage) + update state ----
+  // electron-updater only auto-updates AppImage on Linux; deb/npm/source fall
+  // to the GitHub-API fallback (informational only → opens the release in the
+  // browser).
   let autoUpdater = null;
-  let _manualCheck = false;   // verificação manual pelo tray → notifica o resultado
+  let _manualCheck = false;   // manual check from the tray → notifies the result
   let updateState = {
     hasUpdate: false, latest: null, method: null,
     status: 'idle', progress: 0, url: null,
@@ -104,12 +107,12 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
   }
   function setUpdateState(patch) { updateState = { ...updateState, ...patch }; emitUpdateState(); }
 
-  // Um AppImage recém-buildado roda direto do `dist/` do projeto — e ali ele é,
-  // legitimamente, um "appimage". Só que o electron-updater atualiza no Linux
-  // SUBSTITUINDO o arquivo apontado por $APPIMAGE: com uma release mais nova
-  // publicada, ele reescreve o próprio artefato de build no quit e o build que
-  // você acabou de gerar some. Detectamos pela vizinhança — o electron-builder
-  // deixa estes arquivos ao lado do .AppImage que produziu.
+  // A freshly built AppImage runs straight from the project's `dist/` — and
+  // there it legitimately IS an "appimage". But electron-updater updates on
+  // Linux by REPLACING the file pointed to by $APPIMAGE: with a newer release
+  // published, it rewrites the build artifact itself on quit and the build you
+  // just generated is gone. We detect it by neighborhood — electron-builder
+  // leaves these files next to the .AppImage it produced.
   const BUILD_DIR_MARKERS = ['builder-effective-config.yaml', 'builder-debug.yml', 'linux-unpacked'];
   function isBuildArtifact(appImagePath) {
     if (!appImagePath) return false;
@@ -119,20 +122,21 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     });
   }
 
-  // Configura o autoUpdater (eventos) e dispara a 1ª checagem + scheduler 1h.
+  // Sets up the autoUpdater (events) and triggers the 1st check + 1h scheduler.
   function setupAutoUpdater() {
     const method = detectInstallMethod();
     updateState.method = method;
-    // app.isPackaged: guarda recomendada pela doc oficial do Electron — em dev o
-    // updater não deve existir. isBuildArtifact: não auto-instalar por cima de um
-    // build local. Nos dois casos a checagem informativa (GitHub API) continua e a
-    // UI cai sozinha no "abrir a release", que já é o caminho de canAutoInstall=false.
-    // Só AppImage recebe auto-update pelo electron-updater — inclusive no macOS
-    // (decisão do PR #46). O .dmg e o .zip não são assinados/notarizados (sem
-    // Apple Developer ID): o acquireSquirrelMac baixaria o zip, mas o code-sign
-    // check falharia e a instalação quebraria. DMG/deb/source ficam no fallback
-    // GitHub-API (checa a release e abre o link) — atualizar lá é baixar o novo
-    // arquivo e trocar.
+    // app.isPackaged: guard recommended by the official Electron docs — in dev
+    // the updater must not exist. isBuildArtifact: don't auto-install on top of
+    // a local build. In both cases the informational check (GitHub API)
+    // continues and the UI falls on its own to "open the release", which is
+    // already the canAutoInstall=false path.
+    // Only AppImage gets auto-update via electron-updater — including on macOS
+    // (decision from PR #46). The .dmg and .zip are not signed/notarized (no
+    // Apple Developer ID): acquireSquirrelMac would download the zip, but the
+    // code-sign check would fail and the install would break. DMG/deb/source
+    // stay in the GitHub-API fallback (checks the release and opens the link) —
+    // updating there means downloading the new file and swapping it.
     if (method === 'appimage' && app.isPackaged && !isBuildArtifact(process.env.APPIMAGE)) {
       try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { console.error('[auto-update] require electron-updater falhou:', e && e.message); autoUpdater = null; }
     } else if (method === 'appimage') {
@@ -140,37 +144,38 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     }
     updateState.canAutoInstall = !!autoUpdater || method === 'dmg';
     if (autoUpdater) {
-      autoUpdater.autoDownload = true;           // baixa sozinho ao detectar (instala no clique "↻" ou no quit)
+      autoUpdater.autoDownload = true;           // downloads by itself when detected (installs on "↻" click or on quit)
       autoUpdater.autoInstallOnAppQuit = true;
-      applyUpdateChannel();                      // stable (default) ou beta, conforme as Preferências
+      applyUpdateChannel();                      // stable (default) or beta, per Preferences
       autoUpdater.on('update-available', (info) => {
         const v = ((info && info.version) || '').replace(/^v/, '');
         setUpdateState({ hasUpdate: true, latest: v, url: REPO_URL + '/releases/tag/v' + v, status: 'available', error: null });
         if (_manualCheck) _notifyManualResult(true, v, null);
         const s = getSettings();
-        if (s && s.revealOnUpdate) revealIfHidden(); // traz à frente se oculto
+        if (s && s.revealOnUpdate) revealIfHidden(); // brings to front if hidden
       });
       autoUpdater.on('update-not-available', () => { setUpdateState({ hasUpdate: false, status: 'idle' }); if (_manualCheck) _notifyManualResult(false, null, null); });
       autoUpdater.on('download-progress', (p) => setUpdateState({ status: 'downloading', progress: Math.round((p && p.percent) || 0) }));
       autoUpdater.on('update-downloaded', () => setUpdateState({ status: 'ready', progress: 100 }));
       autoUpdater.on('error', (e) => { const msg = String((e && e.message) || e); setUpdateState({ status: 'error', error: msg }); if (_manualCheck) _notifyManualResult(false, null, msg); });
     }
-    checkForUpdates();                            // 1ª checagem no boot
-    setInterval(checkForUpdates, 60 * 60 * 1000); // re-checa a cada 1h
+    checkForUpdates();                            // 1st check on boot
+    setInterval(checkForUpdates, 60 * 60 * 1000); // re-checks every 1h
   }
 
-  // Cache da checagem GitHub-API (fallback não-appimage): 30min pra não spammar.
+  // GitHub-API check cache (non-appimage fallback): 30min to avoid spamming.
   let _updateCache = null;
   async function checkUpdateGithub() {
     const now = Date.now();
     if (_updateCache && now - _updateCache.checkedAt < 30 * 60 * 1000) return _updateCache.info;
     const info = { current: APP_VERSION, method: updateState.method, latest: null, hasUpdate: false, url: null, error: null };
     try {
-      // /releases/latest EXCLUI pre-releases por definição da API — quem marcou
-      // "Receber versões beta" nunca veria uma beta por este caminho (o canal
-      // ficava inalcançável no macOS/deb, que não têm electron-updater). No canal
-      // beta buscamos a LISTA e escolhemos a maior versão por semverCmp (que já
-      // entende pre-release: 0.9.0-beta.1 < 0.9.0).
+      // /releases/latest EXCLUDES pre-releases by API definition — anyone who
+      // checked "Receive beta versions" would never see a beta through this
+      // path (the channel was unreachable on macOS/deb, which lack
+      // electron-updater). On the beta channel we fetch the LIST and pick the
+      // highest version via semverCmp (which already understands pre-releases:
+      // 0.9.0-beta.1 < 0.9.0).
       const f = settingsLib.updaterFlags((getSettings() || {}).updateChannel, APP_VERSION);
       const wantBeta = !!(f && f.allowPrerelease);
       const https = require('https');
@@ -189,7 +194,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
         req.end();
       });
       let j = JSON.parse(body);
-      if (Array.isArray(j)) {   // canal beta: lista → maior versão por semverCmp
+      if (Array.isArray(j)) {   // beta channel: list → highest version via semverCmp
         let best = null;
         for (const r of j) {
           const v = (r && r.tag_name || '').replace(/^v/, '');
@@ -201,48 +206,48 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
       info.latest = (j.tag_name || '').replace(/^v/, '');
       info.url = j.html_url || (REPO_URL + '/releases/latest');
       info.hasUpdate = info.latest ? semverCmp(info.latest, APP_VERSION) > 0 : false;
-      // .dmg da arquitetura em uso — é o que o updater do macOS instala. Um nome
-      // sem marca de arquitetura serve às duas (build universal).
+      // .dmg for the arch in use — it's what the macOS updater installs. A name
+      // without an arch marker serves both (universal build).
       if (process.platform === 'darwin') {
         const alvo = pickMacDmg(j.assets, process.arch);
         if (alvo) { info.dmgUrl = alvo.browser_download_url; info.dmgName = alvo.name; }
       }
     } catch (e) {
-      info.error = String(e.message || e); // offline/timeout → sem update, sem quebrar
+      info.error = String(e.message || e); // offline/timeout → no update, no crash
     }
     _updateCache = { checkedAt: now, info };
     return info;
   }
 
-  // Dispara a verificação (AppImage → autoUpdater; demais → GitHub-API). Nunca lança.
+  // Triggers the check (AppImage → autoUpdater; others → GitHub-API). Never throws.
   async function checkForUpdates() {
     try {
       if (autoUpdater) { await autoUpdater.checkForUpdates(); return; }
       const info = await checkUpdateGithub();
       setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, dmgUrl: info.dmgUrl || null, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
-      if (info.hasUpdate && updateState.method === 'dmg') baixarUpdateMac();   // autoDownload, como no Linux
+      if (info.hasUpdate && updateState.method === 'dmg') baixarUpdateMac();   // autoDownload, as on Linux
     } catch (e) {
       setUpdateState({ status: 'error', error: String((e && e.message) || e) });
     }
   }
 
-  // Verificação MANUAL pelo tray: ignora o cache e notifica o resultado.
+  // MANUAL check from the tray: ignores the cache and notifies the result.
   async function checkUpdatesManual() {
     _manualCheck = true;
     _updateCache = null;
     try {
-      if (autoUpdater) { await autoUpdater.checkForUpdates(); return; } // resultado → eventos + _notifyManualResult
+      if (autoUpdater) { await autoUpdater.checkForUpdates(); return; } // result → events + _notifyManualResult
       const info = await checkUpdateGithub();
       setUpdateState({ hasUpdate: info.hasUpdate, latest: info.latest, url: info.url, dmgUrl: info.dmgUrl || null, status: info.hasUpdate ? 'available' : 'idle', error: info.error });
       _notifyManualResult(info.hasUpdate, info.latest, info.error);
-      if (info.hasUpdate && updateState.method === 'dmg') baixarUpdateMac();   // autoDownload, como no Linux
+      if (info.hasUpdate && updateState.method === 'dmg') baixarUpdateMac();   // autoDownload, as on Linux
     } catch (e) {
       _notifyManualResult(false, null, String((e && e.message) || e));
     } finally {
-      if (!autoUpdater) _manualCheck = false; // AppImage: é o evento quem limpa a flag
+      if (!autoUpdater) _manualCheck = false; // AppImage: it's the event that clears the flag
     }
   }
-  // Notificação de fim da verificação manual (achou / em dia / erro).
+  // End-of-manual-check notification (found / up to date / error).
   function _notifyManualResult(hasUpdate, latest, error) {
     _manualCheck = false;
     try {
@@ -258,17 +263,18 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
 
   ipcMain.handle('get-update', () => { if (updateState.status === 'idle' && !updateState.latest) checkForUpdates(); return updateState; });
 
-  // ---- atualização no macOS SEM Developer ID (PR #46, achado 03) ----
-  // O electron-updater delega ao Squirrel.Mac, que EXIGE assinatura válida: o app
-  // instalado é assinado ad-hoc pelo install_macos.sh (sem Team ID) e o artefato
-  // do CI não é assinado, então a verificação nunca casa. Não há gancho para
-  // desligá-la (só o NsisUpdater expõe verifyUpdateCodeSignature; o macOS
-  // resolve no nativo). Em vez de assinatura, reproduzimos os passos do
-  // install_macos.sh — que já instala de verdade — a partir do .dmg da release.
+  // ---- macOS update WITHOUT Developer ID (PR #46, finding 03) ----
+  // electron-updater delegates to Squirrel.Mac, which REQUIRES a valid
+  // signature: the installed app is signed ad-hoc by install_macos.sh (no Team
+  // ID) and the CI artifact is unsigned, so the verification never matches.
+  // There is no hook to turn it off (only NsisUpdater exposes
+  // verifyUpdateCodeSignature; macOS resolves it in native code). Instead of a
+  // signature, we replay the install_macos.sh steps — which already installs
+  // for real — starting from the release .dmg.
   //
-  // O script roda DESTACADO porque o app precisa sair antes de ser substituído.
-  // Ele espera o pid morrer, monta o dmg, troca o bundle com rollback, tira a
-  // quarentena, re-assina ad-hoc e relança.
+  // The script runs DETACHED because the app must exit before being replaced.
+  // It waits for the pid to die, mounts the dmg, swaps the bundle with
+  // rollback, strips the quarantine, re-signs ad-hoc and relaunches.
   function baixarArquivo(url, dest, saltos = 0) {
     return new Promise((resolve, reject) => {
       if (saltos > 5) return reject(new Error('redirecionamentos demais'));
@@ -295,13 +301,14 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     });
   }
 
-  // Busca um recurso pequeno (o sidecar de checksum). Devolve:
-  //   string → corpo (pode ser vazio)
-  //   ''     → o recurso NÃO EXISTE (404): release antiga, sem sidecar
-  //   null   → não deu pra saber (timeout, TLS, rede, redirect demais)
-  // A distinção importa: aqui o sidecar é o ÚNICO controle de integridade antes
-  // de um script substituir o .app inteiro, sem ninguém olhando. Tratar uma
-  // falha de rede como "não existe" instalaria sem verificação nenhuma.
+  // Fetches a small resource (the checksum sidecar). Returns:
+  //   string → body (may be empty)
+  //   ''     → the resource DOES NOT EXIST (404): old release, no sidecar
+  //   null   → couldn't tell (timeout, TLS, network, too many redirects)
+  // The distinction matters: here the sidecar is the ONLY integrity control
+  // before a script replaces the entire .app, with nobody watching. Treating a
+  // network failure as "doesn't exist" would install with no verification at
+  // all.
   function buscarSidecar(url, saltos = 0) {
     return new Promise((resolve) => {
       if (saltos > 5) return resolve({ estado: 'falha', corpo: '' });
@@ -313,10 +320,10 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
         if (res.statusCode === 404) { res.resume(); return resolve({ estado: 'ausente', corpo: '' }); }
         if (res.statusCode !== 200) { res.resume(); return resolve({ estado: 'falha', corpo: '' }); }
         let d = ''; res.on('data', (c) => { d += c; });
-        // 200 com corpo VAZIO não é ausência: um proxy transparente ou uma borda
-        // de CDN respondendo 200 sem conteúdo desligaria o único controle que
-        // guarda a troca do .app. Volta como 'ok' e o corpo vazio reprova no
-        // formato — que é o desfecho certo.
+        // 200 with an EMPTY body is not absence: a transparent proxy or CDN
+        // edge answering 200 with no content would disable the only control
+        // that guards the .app swap. It comes back as 'ok' and the empty body
+        // fails the format check — which is the right outcome.
         res.on('end', () => resolve({ estado: 'ok', corpo: d.trim() }));
       }).on('error', () => resolve({ estado: 'falha', corpo: '' }))
         .on('timeout', function () { this.destroy(); resolve({ estado: 'falha', corpo: '' }); });
@@ -333,7 +340,7 @@ function setupUpdateIpc({ getMainWindow, getSettings, T, revealIfHidden, REPO_UR
     });
   }
 
-  // O bundle .app em execução, a partir do execPath (…/X.app/Contents/MacOS/bin).
+  // The running .app bundle, derived from execPath (…/X.app/Contents/MacOS/bin).
   function bundleEmUso() {
     const m = (process.execPath || '').match(/^(.*\.app)\/Contents\//);
     return m ? m[1] : null;
@@ -370,29 +377,31 @@ rm -rf "$DEST.old" "$DMG"
 exit 0
 `;
 
-  // Mesma POLÍTICA do AppImage no Linux, onde o electron-updater roda com
-  // autoDownload=true e autoInstallOnAppQuit=true: o update baixa sozinho assim
-  // que aparece, a UI mostra o progresso pelos mesmos campos de estado, e a
-  // troca acontece ao sair do app — pelo botão "↻" (que só encerra) ou no quit
-  // normal. A diferença é só quem executa a troca: lá o Squirrel, aqui o script.
-  let _macStaged = null;      // { dmg, sh, dest } pronto para trocar no quit
+  // Same POLICY as AppImage on Linux, where electron-updater runs with
+  // autoDownload=true and autoInstallOnAppQuit=true: the update downloads by
+  // itself as soon as it appears, the UI shows progress through the same state
+  // fields, and the swap happens when the app exits — via the "↻" button (which
+  // only quits) or on normal quit. The only difference is who performs the
+  // swap: there Squirrel, here the script.
+  let _macStaged = null;      // { dmg, sh, dest } ready to swap on quit
   let _macBaixando = false;
-  let _macRelaunch = false;   // true quando o quit veio do botão "instalar" → reabre
+  let _macRelaunch = false;   // true when quit came from the "install" button → reopens
 
   async function baixarUpdateMac() {
-    if (_macStaged || _macBaixando) return;      // já pronto, ou em andamento
+    if (_macStaged || _macBaixando) return;      // already staged, or in progress
     const dest = bundleEmUso();
     const url = updateState.dmgUrl;
-    if (!dest || !url) return;                   // sem alvo/asset: fica no manual
+    if (!dest || !url) return;                   // no target/asset: stays manual
     _macBaixando = true;
-    let dmgTmp = null;                 // p/ o catch externo poder limpar
+    let dmgTmp = null;                 // for the outer catch to clean up
     try {
-      // Integridade: o mesmo sidecar <artefato>.sha512 que os instaladores de
-      // shell consomem. Este é o download que MAIS precisa dele — ninguém está
-      // olhando, e o resultado substitui o app inteiro.
+      // Integrity: the same <artifact>.sha512 sidecar the shell installers
+      // consume. This is the download that needs it MOST — nobody is
+      // watching, and the result replaces the entire app.
       //
-      // Buscado ANTES do .dmg: uma release cujo sidecar nunca confere faria o
-      // ciclo de 1h rebaixar ~100 MB indefinidamente se a checagem viesse depois.
+      // Fetched BEFORE the .dmg: a release whose sidecar never matches would
+      // make the 1h cycle re-download ~100 MB indefinitely if the check came
+      // after.
       const busca = await buscarSidecar(`${url}.sha512`);
       const releaseLegada = releaseSemSidecar(updateState.latest);
       const RECUSAS = {
@@ -414,7 +423,7 @@ exit 0
           obterHash: () => sha512Base64(dmg),
         });
       } catch (e) {
-        try { fs.unlinkSync(dmg); } catch {}       // não deixa 100 MB no temp
+        try { fs.unlinkSync(dmg); } catch {}       // doesn't leave 100 MB in temp
         throw e;
       }
       const { veredito } = resultado;
@@ -429,8 +438,8 @@ exit 0
       _macStaged = { dmg, sh, dest };
       setUpdateState({ status: 'ready', progress: 100 });
     } catch (e) {
-      // Qualquer falha depois do download (escrita do script de troca, hash
-      // ilegível) não pode deixar ~100 MB no temp — e o ciclo de 1h repetiria.
+      // Any failure after the download (swap script write, unreadable hash)
+      // must not leave ~100 MB in temp — and the 1h cycle would repeat it.
       try { if (dmgTmp) fs.unlinkSync(dmgTmp); } catch {}
       setUpdateState({ status: 'error', error: String((e && e.message) || e) });
     } finally {
@@ -438,14 +447,14 @@ exit 0
     }
   }
 
-  // Equivalente ao autoInstallOnAppQuit: a troca dispara no encerramento, seja
-  // ele pelo "↻", pelo menu ou pelo fechamento normal — mas só REABRE quando o
-  // quit veio do botão "instalar" (_macRelaunch). O script espera este pid
-  // morrer antes de tocar no bundle, então registrar aqui é seguro.
+  // Equivalent to autoInstallOnAppQuit: the swap fires on exit, whether via
+  // "↻", the menu, or a normal close — but it only REOPENS when the quit came
+  // from the "install" button (_macRelaunch). The script waits for this pid to
+  // die before touching the bundle, so registering here is safe.
   function trocarNoQuit() {
     if (!_macStaged) return;
     const { dmg, sh, dest } = _macStaged;
-    _macStaged = null;                           // não dispara duas vezes
+    _macStaged = null;                           // doesn't fire twice
     try {
       spawn('/bin/bash', [sh, String(process.pid), dmg, dest, _macRelaunch ? '1' : '0'], { detached: true, stdio: 'ignore' }).unref();
     } catch {}
@@ -453,42 +462,44 @@ exit 0
 
   if (process.platform === 'darwin') app.on('will-quit', trocarNoQuit);
 
-  ipcMain.on('check-update', () => { _updateCache = null; checkForUpdates(); });   // "verificar agora" ignora o cache
+  ipcMain.on('check-update', () => { _updateCache = null; checkForUpdates(); });   // "check now" ignores the cache
   ipcMain.on('download-update', () => {
     if (autoUpdater) { try { autoUpdater.downloadUpdate(); } catch {} return; }
     if (updateState.method === 'dmg') baixarUpdateMac();
   });
   ipcMain.on('install-update', () => {
     if (autoUpdater) { try { autoUpdater.quitAndInstall(); } catch {} return; }
-    // macOS: só encerra — o hook de quit faz a troca, como o autoInstallOnAppQuit.
-    // Aqui, diferente do quit normal, o app REABRE depois da troca (é o que quem
-    // clicou "instalar e reiniciar" espera ver).
+    // macOS: just quits — the quit hook does the swap, like autoInstallOnAppQuit.
+    // Here, unlike a normal quit, the app REOPENS after the swap (that's what
+    // whoever clicked "install and restart" expects to see).
     if (updateState.method === 'dmg' && _macStaged) { _macRelaunch = true; try { app.quit(); } catch {} }
   });
 
-  setupAutoUpdater();   // configura eventos + 1ª checagem + scheduler 1h (igual ao boot antigo)
+  setupAutoUpdater();   // sets up events + 1st check + 1h scheduler (same as the old boot)
 
-  // Aplica o canal escolhido nas Preferências ao autoUpdater. Chamado no setup e
-  // de novo a cada troca (as Preferências aplicam ao vivo), porque as flags são
-  // lidas a cada checagem — não só na construção.
-  // A tradução canal→flags é pura e vive em src/settings.js (updaterFlags).
+  // Applies the channel chosen in Preferences to the autoUpdater. Called on
+  // setup and again on every change (Preferences apply live), because the
+  // flags are read on every check — not just at construction.
+  // The channel→flags translation is pure and lives in src/settings.js
+  // (updaterFlags).
   function applyUpdateChannel() {
-    if (!autoUpdater) return;                  // deb/npm/source: fallback GitHub-API, sempre estável
+    if (!autoUpdater) return;                  // deb/npm/source: GitHub-API fallback, always stable
     const s = getSettings();
     const f = settingsLib.updaterFlags(s && s.updateChannel, APP_VERSION);
     autoUpdater.allowPrerelease = f.allowPrerelease;
     autoUpdater.allowDowngrade = f.allowDowngrade;
   }
 
-  // Trocou de canal nas Preferências → reflete e re-checa na hora. A detecção
-  // em si já é a quente (allowPrerelease + checkForUpdates re-busca o feed), mas
-  // sem feedback visível o usuário não via nada acontecer ao marcar beta e achava
-  // que precisava reiniciar o app. O status 'checking' mostra a re-verificação na
-  // hora; o resultado (update disponível / em dia) transiciona sozinho pelos
-  // eventos do autoUpdater.
+  // Channel changed in Preferences → reflects it and re-checks immediately.
+  // The detection itself is already hot (allowPrerelease + checkForUpdates
+  // re-fetches the feed), but without visible feedback the user saw nothing
+  // happen when checking beta and assumed the app needed a restart. The
+  // 'checking' status shows the re-check happening right away; the result
+  // (update available / up to date) transitions on its own through the
+  // autoUpdater events.
   function onChannelChanged() {
     applyUpdateChannel();
-    _updateCache = null;                       // o cache do fallback é por canal
+    _updateCache = null;                       // the fallback cache is per-channel
     setUpdateState({ status: 'checking', error: null, hasUpdate: false, progress: 0 });
     checkForUpdates();
   }
@@ -496,50 +507,53 @@ exit 0
   return { checkUpdatesManual, onChannelChanged };
 }
 
-// Escolhe o .dmg da release para a arquitetura em uso. PURA e exportada porque
-// errar aqui instala o binário da arquitetura errada — e um Mac Intel rodando um
-// bundle arm64 (ou vice-versa) não abre. Preferência: nome com a arquitetura
-// exata; senão um nome sem marca nenhuma (build universal); senão nada.
-// Decide o que fazer com o sidecar antes de encenar a troca do bundle. PURA e
-// exportada porque é o ÚNICO controle de integridade do auto-update do macOS —
-// não há electron-updater neste caminho, e o build não emite mais latest-mac.yml.
-//   busca: { estado: 'ok'|'ausente'|'falha', corpo }  ·  obtido: hash do arquivo
-//   releaseLegada: true só para uma versão anterior à obrigatoriedade do sidecar
-// Devolve: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
-// validarSidecar julga SÓ o sidecar: chegou? tem forma de sha512 base64?
-// Não compara com nada — a comparação exige o arquivo baixado, que nesta
-// altura ainda não existe.
+// Picks the release .dmg for the arch in use. PURE and exported because
+// getting this wrong installs the wrong-arch binary — and an Intel Mac running
+// an arm64 bundle (or vice-versa) won't open. Preference: a name with the
+// exact arch; then a name with no marker at all (universal build); then
+// nothing.
+// Decides what to do with the sidecar before staging the bundle swap. PURE
+// and exported because it is the ONLY integrity control of the macOS
+// auto-update — there is no electron-updater on this path, and the build no
+// longer emits latest-mac.yml.
+//   busca: { estado: 'ok'|'ausente'|'falha', corpo }  ·  obtido: hash of the file
+//   releaseLegada: true only for a version from before the sidecar became mandatory
+// Returns: 'ok' | 'sem-sidecar' | 'indisponivel' | 'malformado' | 'divergente'
+// validarSidecar judges ONLY the sidecar: did it arrive? is it well-formed
+// base64 sha512?
+// It compares against nothing — comparing requires the downloaded file, which
+// at this point does not exist yet.
 //
-// A separação existe porque juntá-las quebrou o auto-update inteiro: a
-// pré-validação chamava decidirIntegridade(busca, null), e o último `return`
-// comparava `b.corpo === null`, dando 'divergente' para TODO sidecar válido.
-// O guard abortava antes do download, e o único veredito que passava era
-// 'sem-sidecar' — ou seja, a checagem de integridade permitia exclusivamente
-// o caminho SEM integridade. Os 314 testes passavam porque exercitavam
-// decidirIntegridade isolada, nunca o fluxo de baixarUpdateMac.
+// The separation exists because merging them broke the entire auto-update:
+// the pre-validation called decidirIntegridade(busca, null), and the last
+// `return` compared `b.corpo === null`, yielding 'divergente' for EVERY valid
+// sidecar. The guard aborted before the download, and the only verdict that
+// passed was 'sem-sidecar' — that is, the integrity check allowed exclusively
+// the path WITHOUT integrity. The 314 tests passed because they exercised
+// decidirIntegridade in isolation, never the baixarUpdateMac flow.
 //
-// 'pendente' nomeia o estado que faltava: sidecar íntegro, veredito ainda
-// impossível. Quem recebe 'pendente' tem obrigação de comparar depois.
+// 'pendente' names the state that was missing: intact sidecar, verdict still
+// impossible. Whoever receives 'pendente' is obligated to compare later.
 function validarSidecar(busca, releaseLegada = false) {
   const b = busca || {};
   if (b.estado === 'ausente') return releaseLegada ? 'sem-sidecar' : 'indisponivel';
-  if (b.estado !== 'ok') return 'indisponivel';       // rede/TLS/5xx: não dá pra saber
+  if (b.estado !== 'ok') return 'indisponivel';       // network/TLS/5xx: can't tell
   if (!/^[A-Za-z0-9+/]{86}==$/.test(b.corpo || '')) return 'malformado';
-  return 'pendente';                                  // íntegro; falta o hash do arquivo
+  return 'pendente';                                  // intact; missing the file hash
 }
 
-// decidirIntegridade e o veredito FINAL: exige o hash do arquivo ja baixado.
-// Chamar com `obtido` nulo e erro de uso — para a etapa anterior ao download
-// existe validarSidecar.
+// decidirIntegridade is the FINAL verdict: requires the hash of the already
+// downloaded file. Calling it with a null `obtido` is a usage error — for the
+// stage before the download there is validarSidecar.
 function decidirIntegridade(busca, obtido, releaseLegada = false) {
   const pre = validarSidecar(busca, releaseLegada);
   if (pre !== 'pendente') return pre;
   return busca.corpo === obtido ? 'ok' : 'divergente';
 }
 
-// O sidecar passou a ser obrigatório a partir de 0.8.0-beta.4. Só versões
-// inequivocamente anteriores recebem o fallback legado; versão ausente ou fora
-// do formato falha fechado.
+// The sidecar became mandatory starting at 0.8.0-beta.4. Only unambiguously
+// earlier versions get the legacy fallback; a missing or off-format version
+// fails closed.
 function releaseSemSidecar(version) {
   const m = String(version || '').replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
   if (!m) return false;
@@ -552,8 +566,9 @@ function releaseSemSidecar(version) {
   return m[4] != null && +m[4] < 4;
 }
 
-// Composição real usada por baixarUpdateMac e pelos testes: valida antes de
-// baixar, calcula o hash depois e nunca deixa 'pendente' escapar para instalação.
+// Real composition used by baixarUpdateMac and by the tests: validates before
+// downloading, computes the hash afterwards, and never lets 'pendente' escape
+// through to installation.
 async function fluxoUpdateMac({ busca, releaseLegada = false, baixar, obterHash }) {
   const pre = validarSidecar(busca, releaseLegada);
   if (pre !== 'pendente' && pre !== 'sem-sidecar') return { baixou: false, veredito: pre };

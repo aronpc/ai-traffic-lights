@@ -1,25 +1,25 @@
-// validate.js — sanitização nos limites de confiança (payload de hook, paths).
-// Os adapters recebem JSON de agentes externos; o state file vira caminho de
-// arquivo. Sem validação, um session_id malicioso ("../foo") vira path traversal.
-// Funções PURAS, testadas.
+// validate.js — sanitization at trust boundaries (hook payload, paths).
+// Adapters receive JSON from external agents; the state file becomes a file
+// path. Without validation, a malicious session_id ("../foo") becomes path traversal.
+// PURE functions, tested.
 
-// IDs seguros p/ nome de arquivo: letras, dígitos, . _ - (estilo xid UUID).
-// Rejeita '/', '..', espaços e qualquer outra coisa — fallback: o adapter
-// ignora o evento (não escreve) em vez de gravar fora do STATE_DIR.
+// IDs safe for file names: letters, digits, . _ - (xid/UUID style).
+// Rejects '/', '..', spaces and anything else — fallback: the adapter
+// ignores the event (does not write) instead of writing outside STATE_DIR.
 function validSessionId(s) {
   return typeof s === 'string' && s.length > 0 && s.length <= 256 && /^[A-Za-z0-9._-]+$/.test(s);
 }
 
-// Shell-quote de um caminho p/ uso em command de hook (settings.json).
-// Envolve em aspas simples e escapa ' internas. Previne quebra/interpretação
-// se XDG_DATA_HOME ou HOME tiverem espaços ou metacaracteres.
+// Shell-quote a path for use in a hook command (settings.json).
+// Wraps in single quotes and escapes inner '. Prevents breakage/interpretation
+// if XDG_DATA_HOME or HOME contain spaces or metacharacters.
 function shellQuote(s) {
   if (typeof s !== 'string') return "''";
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-// Escape de string p/ o campo Exec de um .desktop (Desktop Entry Spec).
-// Reservados que precisam de backslash: espaço e `" ` $ \ ; e outros de shell.
+// String escape for the Exec field of a .desktop (Desktop Entry Spec).
+// Characters that need a backslash: space and `" ` $ \ ; plus other shell ones.
 function desktopEscape(s) {
   if (typeof s !== 'string') return '';
   return s.replace(/[\\$" `'*?();<>|&#~]/g, (c) => '\\' + c);
@@ -27,13 +27,13 @@ function desktopEscape(s) {
 
 if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape, boundsOnScreen };
 
-// A posição salva de uma janela ainda cai DENTRO de alguma tela ativa?
-// Valida contra TODAS as telas (não só a primária): num setup multi-monitor a
-// janela movida pro monitor da esquerda/direita tinha a posição descartada em
-// silêncio a cada reabertura, anulando o persist (PR-32 #19). Também protege o
-// caso do monitor desconectado — aí nenhuma tela contém o ponto e o caller
-// cai no default (centraliza no primário).
-//   bounds:   {x, y}                    (posição salva)
+// Does a window's saved position still fall INSIDE some active display?
+// Validates against ALL displays (not just the primary): on a multi-monitor
+// setup, a window moved to the left/right monitor had its position silently
+// discarded on every reopen, defeating the persist (PR-32 #19). Also covers
+// the disconnected-monitor case — no display contains the point and the
+// caller falls back to the default (center on the primary).
+//   bounds:   {x, y}                    (saved position)
 //   displays: [{workArea:{x,y,width,height}}]   (screen.getAllDisplays())
 function boundsOnScreen(bounds, displays) {
   if (!bounds || typeof bounds.x !== 'number' || typeof bounds.y !== 'number') return false;

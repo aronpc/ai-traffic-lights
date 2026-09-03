@@ -1,13 +1,14 @@
-// src/ipc/launcher.js — launcher IPC (extraído do main.js, REF passo 5).
-// Detecta CLIs de agentes + terminais disponíveis e sobe o agente num terminal
-// (externo no macOS via osascript/open; aba embutida no Linux via node-pty). A
-// LÓGICA PURA (pickTerminal/terminalArgs/tmuxSessionName/tmuxWrap/TERMINAL_ORDER)
-// continua em src/launcher.js; este módulo é o glue IPC + spawn.
+// src/ipc/launcher.js — launcher IPC (extracted from main.js, REF step 5).
+// Detects available agent CLIs + terminals and brings the agent up in a
+// terminal (external on macOS via osascript/open; embedded tab on Linux via
+// node-pty). The PURE LOGIC (pickTerminal/terminalArgs/tmuxSessionName/
+// tmuxWrap/TERMINAL_ORDER) stays in src/launcher.js; this module is the IPC
+// glue + spawn.
 //
-// DI: getSettings, notifyUser, T, scanPathBin (compartilhada c/ hasBin), hasBin,
-// lastSessionCwd, ensureTermWin/addTermSession/spawnPtyLocal (do domínio terminal
-// — passadas pelo main até o REF passo 2 extrair o terminal).
-// Retorna { detectLaunchers, launchAgent } para o tray.
+// DI: getSettings, notifyUser, T, scanPathBin (shared w/ hasBin), hasBin,
+// lastSessionCwd, ensureTermWin/addTermSession/spawnPtyLocal (from the terminal
+// domain — passed by main until REF step 2 extracts the terminal).
+// Returns { detectLaunchers, launchAgent } for the tray.
 
 function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, hasBin, lastSessionCwd, ensureTermWin, addTermSession, spawnPtyLocal }) {
   const fs = require('fs');
@@ -21,13 +22,15 @@ function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, ha
     return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
-  // Quais agentes têm CLI disponível? Override do settings tem precedência sobre PATH.
-  // Cache do scan de PATH — veio junto do main no REF passo 5 (as vars tinham
-  // ficado lá, fora do escopo deste módulo → ReferenceError no 1º get-launchers).
+  // Which agents have a CLI available? The settings override takes precedence
+  // over PATH.
+  // Cache of the PATH scan — came along from main in REF step 5 (the vars had
+  // stayed there, out of this module's scope → ReferenceError on the 1st
+  // get-launchers).
   let _launchers = null, _launchersAt = 0;
 
   function detectLaunchers() {
-    if (_launchers && Date.now() - _launchersAt < 10000) return _launchers; // cache 10s
+    if (_launchers && Date.now() - _launchersAt < 10000) return _launchers; // 10s cache
     const out = [];
     for (const [id, a] of Object.entries(AGENTS)) {
       if (!a.bin) continue;
@@ -138,9 +141,10 @@ function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, ha
       }
     }
 
-    // Linux: lança DIRETO numa aba da janela Terminal, dentro de um tmux próprio.
-    // Não depende de terminal externo (tilix/Warp) — o ATL controla o spawn e
-    // garante o wrap; o hook do agente captura tmux_session (#S) e o overlay mostra.
+    // Linux: launches DIRECTLY into a tab of the Terminal window, inside its
+    // own tmux. Doesn't depend on an external terminal (tilix/Warp) — ATL
+    // controls the spawn and guarantees the wrap; the agent hook captures
+    // tmux_session (#S) and the overlay shows it.
     const hasTmux = hasBin('tmux');
     const sessionName = launcher.tmuxSessionName(agent) + '-' + Date.now().toString(36);
     ensureTermWin();
@@ -148,9 +152,9 @@ function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, ha
     spawnPtyLocal(tabId, hasTmux ? launcher.tmuxWrap([entry.path], sessionName) : [entry.path], dir);
   }
 
-  // (openInWarp/openCmdInTerminal removidos: eram os últimos callers de
-  // pickTerminal/terminalArgs no IPC e não tinham NENHUM caller — dead code
-  // desde o REF passo 5. A lógica pura segue em src/launcher.js, com testes.)
+  // (openInWarp/openCmdInTerminal removed: they were the last callers of
+  // pickTerminal/terminalArgs in IPC and had NO caller at all — dead code
+  // since REF step 5. The pure logic remains in src/launcher.js, with tests.)
 
   ipcMain.handle('get-launchers', () => detectLaunchers().map((l) => ({ id: l.id, label: AGENTS[l.id].label })));
   ipcMain.on('launch-agent', (_e, target) => launchAgent(target || {}));

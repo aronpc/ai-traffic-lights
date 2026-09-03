@@ -1,7 +1,7 @@
-// Regressão #54 (agrupar por host): com sessões de >1 máquina, a lista ganha
-// um li.group-header por bloco de origem e o badge de origem sai da linha; o
-// toggle do header persiste em settings.groupByHost. Mesma técnica do
-// rename.test.js: scripts REAIS do renderer num contexto vm com DOM mock.
+// Regression #54 (group by host): with sessions from >1 machine, the list
+// gains a li.group-header per origin block and the origin badge leaves the
+// row; the header toggle persists in settings.groupByHost. Same technique as
+// rename.test.js: REAL renderer scripts in a vm context with mock DOM.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -35,8 +35,9 @@ function mkEl() {
   };
 }
 
-// Renderer isolado com o canal de sessões capturável, saveSettings gravando as
-// chamadas e settings iniciais configuráveis (groupByHost on/off por teste).
+// Isolated renderer with the sessions channel capturable, saveSettings
+// recording calls, and configurable initial settings (groupByHost on/off per
+// test).
 async function setup(settings) {
   const els = {};
   for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'groupBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
@@ -68,7 +69,7 @@ async function setup(settings) {
   const ctx = { document, window, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date, Math, console };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
-  await Promise.resolve();                  // drena getSettings().then
+  await Promise.resolve();                  // drains getSettings().then
   return { ctx, els, calls, pushSessions: (list) => sessionsCb(list) };
 }
 
@@ -82,18 +83,19 @@ test('#54 2 origens → headers "origem · N dot" por bloco e badge de origem so
   const { els, pushSessions } = await setup();
   pushSessions([mkSess('l1'), mkSess('l2'), mkSess('r1', 'notebook-hg', 'PermissionRequest')]);
   const kids = els.list.children;
-  // modo agrupado: origem é chave primária → bloco LOCAL primeiro (2 rows),
-  // depois o peer — mesmo o peer sendo 🔴 (urgência ordena DENTRO do bloco).
+  // grouped mode: origin is the primary key → LOCAL block first (2 rows),
+  // then the peer — even with the peer being 🔴 (urgency sorts WITHIN the
+  // block).
   assert.equal(kids[0].className, 'group-header');
   assert.equal(kids[0].textContent, 'local · 2 🟢');
   assert.equal(kids[1].className, 'row', 'linha após o header local');
   assert.equal(kids[2].className, 'row', 'segunda linha local');
   assert.equal(kids[3].textContent, 'notebook-hg · 1 🔴', 'worst do bloco = awaiting');
   assert.equal(kids[4].className, 'row');
-  // badge de origem saiu: main.children[0] é o label, não o badge
+  // origin badge is gone: main.children[0] is the label, not the badge
   const main = kids[4].children[3];
   assert.equal(main.children[0].className, 'row__label', 'sem badge — o header já diz a origem');
-  // botão visível (há sessão remota)
+  // button visible (there is a remote session)
   assert.equal(els.groupBtn.hidden, false);
 });
 
@@ -112,7 +114,7 @@ test('#54 toggle desligado → sem headers e badge de origem volta na remota', a
   const kids = els.list.children;
   assert.equal(kids.length, 2);
   assert.ok(kids.every((k) => k.className === 'row'), 'sem header com o toggle off');
-  const main = kids[1].children[3];      // linha remota → main
+  const main = kids[1].children[3];      // remote row → main
   assert.equal(main.children[0].className, 'row__origin', 'badge presente (comportamento pré-#54)');
   assert.equal(main.children[0].textContent, 'notebook-hg');
 });
@@ -123,7 +125,7 @@ test('#54 clique no toggle persiste groupByHost invertido via save-settings', as
   els.groupBtn.dispatch('click', {});
   assert.equal(calls.saveSettings.length, 1, 'gravou 1x');
   assert.equal(calls.saveSettings[0].groupByHost, false, 'ON por default → clique desliga');
-  // e o re-render seguinte (sem header) já reflete o settings local mutado
+  // and the next re-render (no header) already reflects the mutated local settings
   const kids = els.list.children;
   assert.ok(kids.every((k) => k.className === 'row'), 'lista volta ao formato plano');
 });

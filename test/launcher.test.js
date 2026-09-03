@@ -5,9 +5,9 @@ const { TERMINALS, TERMINAL_ORDER, pickTerminal, terminalArgs, tmuxSessionName, 
 test('pickTerminal: auto escolhe o 1º presente na ordem', () => {
   assert.equal(pickTerminal('auto', ['gnome-terminal', 'ghostty']), 'gnome-terminal');
   assert.equal(pickTerminal('auto', ['ghostty']), 'ghostty');
-  assert.equal(pickTerminal('auto', ['tilix', 'gnome-terminal']), 'tilix'); // tilix tem prioridade
-  assert.equal(pickTerminal('auto', []), null); // nenhum presente
-  assert.equal(pickTerminal(undefined, ['tilix']), 'tilix'); // sem pref = auto
+  assert.equal(pickTerminal('auto', ['tilix', 'gnome-terminal']), 'tilix'); // tilix has priority
+  assert.equal(pickTerminal('auto', []), null); // none present
+  assert.equal(pickTerminal(undefined, ['tilix']), 'tilix'); // no pref = auto
 });
 
 test('pickTerminal: pref manual válido vence (mesmo fora da ordem)', () => {
@@ -39,11 +39,11 @@ test('TERMINAL_ORDER: tilix vem antes de gnome-terminal e ghostty', () => {
   assert.equal(TERMINAL_ORDER[0], 'tilix');
 });
 
-// ---- auto-wrap em tmux (attach de sessões lançadas pelo ATL) ----
+// ---- tmux auto-wrap (attach to sessions launched by ATL) ----
 test('tmuxSessionName: prefixa atl- e saneia o agentId', () => {
   assert.equal(tmuxSessionName('claude'), 'atl-claude');
   assert.equal(tmuxSessionName('codex-cli'), 'atl-codex-cli');
-  assert.equal(tmuxSessionName('a b/c'), 'atl-abc');     // remove inválidos
+  assert.equal(tmuxSessionName('a b/c'), 'atl-abc');     // removes invalid chars
   assert.equal(tmuxSessionName(undefined), 'atl-agent');
 });
 

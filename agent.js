@@ -1,20 +1,21 @@
 #!/usr/bin/env node
-// agent.js — modo HEADLESS do sync (fase 4). Node PURO, SEM require('electron').
+// agent.js — HEADLESS mode of the sync (phase 4). PURE Node, NO require('electron').
 //
-// Para um servidor Linux sem display (ex.: loja-mqx) participar do mesh como
-// FONTE: sobe o servidor /sessions (/transcript) bindando DIRETO no IP da
-// tailnet e expõe as sessões locais via o MESMO core da GUI
-// (collect.js/net.js/identity.js/transcript.js) — sem duplicar lógica. Roda
-// como daemon (systemd); logs em stdout (journald).
+// Lets a headless Linux server (e.g. loja-mqx) join the mesh as a SOURCE:
+// starts the /sessions (/transcript) server binding DIRECTLY to the tailnet IP
+// and exposes local sessions via the SAME core as the GUI
+// (collect.js/net.js/identity.js/transcript.js) — no duplicated logic. Runs
+// as a daemon (systemd); logs to stdout (journald).
 //
-// Modelo de rede IGUAL à GUI: bind no IP da tailnet (detectTailnetIP), HTTP puro
-// na porta do app, auth por token + WireGuard E2E — NÃO usa `tailscale serve`
-// (o client fala HTTP na porta do app; o serve expõe HTTPS:443 e quebraria).
-// Config vem do settings.json do ATL; overrides por env (útil num servidor sem
-// GUI pra editar o JSON): ATL_SYNC_TOKEN / ATL_SYNC_ENABLED=1 /
-// ATL_SYNC_SHARE=1 / ATL_SYNC_SHARE_TR=1 / ATL_SYNC_PORT / ATL_SYNC_NODE.
+// Network model EQUAL to the GUI: bind to the tailnet IP (detectTailnetIP),
+// plain HTTP on the app port, token auth + WireGuard E2E — does NOT use
+// `tailscale serve` (the client speaks HTTP on the app port; serve exposes
+// HTTPS:443 and would break). Config comes from ATL's settings.json; env
+// overrides (useful on a server without a GUI to edit the JSON):
+// ATL_SYNC_TOKEN / ATL_SYNC_ENABLED=1 / ATL_SYNC_SHARE=1 /
+// ATL_SYNC_SHARE_TR=1 / ATL_SYNC_PORT / ATL_SYNC_NODE.
 //
-// Deploy (systemd): ver scripts/atl-agent.service. Rápido (manual):
+// Deploy (systemd): see scripts/atl-agent.service. Quick (manual):
 //   ATL_SYNC_TOKEN=xxx ATL_SYNC_ENABLED=1 ATL_SYNC_SHARE=1 node agent.js
 
 const fs = require('fs');
@@ -28,23 +29,23 @@ const settingsLib = require('./src/settings');
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share');
 const SETTINGS_FILE = path.join(DATA_HOME, 'ai-traffic-lights', 'settings.json');
 
-// Mesmo gate beta da GUI (main.js: SYNC_AVAILABLE = isPrerelease(APP_VERSION)).
-// O sync é feature pre-release: um agent headless instalado de uma build
-// ESTÁVEL não deve servir /sessions, /transcript e /pty quando nenhuma GUI
-// estável pode atuar como cliente — a política é uma só nos dois lados.
-// ATL_APP_VERSION sobrescreve p/ testes e checkouts dev (o package do repo
-// pode estar numa versão estável enquanto se desenvolve a beta seguinte).
+// Same beta gate as the GUI (main.js: SYNC_AVAILABLE = isPrerelease(APP_VERSION)).
+// Sync is a pre-release feature: a headless agent installed from a STABLE
+// build must not serve /sessions, /transcript and /pty when no stable GUI can
+// act as a client — one policy on both sides.
+// ATL_APP_VERSION overrides for tests and dev checkouts (the repo package can
+// be at a stable version while the next beta is being developed).
 const APP_VERSION = process.env.ATL_APP_VERSION || require('./package.json').version;
 const SYNC_AVAILABLE = settingsLib.isPrerelease(APP_VERSION);
 
 function loadSettings() {
   try { return settingsLib.mergeWithDefaults(JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))); }
-  catch { return settingsLib.mergeWithDefaults(null); }   // sem arquivo → defaults (sync OFF)
+  catch { return settingsLib.mergeWithDefaults(null); }   // no file → defaults (sync OFF)
 }
 
 const ENV_BOOL = (v) => v === '1' || v === 'true';
-// Overrides por env (servidor sem GUI p/ editar settings.json). Só sobrescreve
-// se a var estiver DEFINIDA — settings.json continua válido no resto.
+// Env overrides (server without a GUI to edit settings.json). Only overrides
+// when the var is DEFINED — settings.json remains valid for everything else.
 function applyEnvOverrides(s) {
   if (process.env.ATL_SYNC_TOKEN != null) s.token = String(process.env.ATL_SYNC_TOKEN);
   if (process.env.ATL_SYNC_ENABLED != null) s.enabled = ENV_BOOL(process.env.ATL_SYNC_ENABLED);
@@ -58,8 +59,8 @@ function applyEnvOverrides(s) {
 
 function log(fmt, ...a) { try { console.log('[agent] ' + fmt, ...a); } catch {} }
 
-// factory node-pty p/ o endpoint /pty (attach remoto). Headless: pode falhar ao
-// carregar (ABI node≠electron) — aí ptySpawn fica undefined e o /pty não sobe.
+// node-pty factory for the /pty endpoint (remote attach). Headless: loading
+// may fail (node≠electron ABI) — then ptySpawn stays undefined and /pty never starts.
 let ptyLib = null;
 try { ptyLib = require('node-pty'); } catch (e) { log('node-pty indisponível: %s', e.message); }
 function createPty(cmd, cols, rows, { onData, onExit }) {
@@ -81,9 +82,8 @@ const nodeName = sync.node || os.hostname() || 'local';
 
 let server = null;
 function start() {
-  // Ordem dos checks: config PRIMEIRO (o motivo de "não subir" mais específico
-  // vence), gate beta depois — um agent desabilitado está desabilitado em
-  // qualquer canal de release.
+  // Check order: config FIRST (the more specific "don't start" reason wins),
+  // beta gate after — a disabled agent is disabled on any release channel.
   if (!sync.enabled) { log('sync desabilitado (settings/ATL_SYNC_ENABLED). Nada a fazer.'); return; }
   if (!sync.token) { log('sync habilitado MAS sem token — recusando (fail-safe).'); return; }
   if (!sync.share) { log('sync habilitado com token, mas share=0 — nada a servir.'); return; }
@@ -99,14 +99,14 @@ function start() {
       },
     });
     log('servidor UP %s:%d (%s) shareTranscripts=%s', bindHost || '127.0.0.1', sync.port, nodeName, !!sync.shareTranscripts);
-    // Mantém o cache de descoberta /proc fresco (igual ao loop de 5s da GUI).
+    // Keeps the /proc discovery cache fresh (same as the GUI's 5s loop).
     setInterval(() => collect.invalidateDiscovery(), 5000);
   } catch (e) { log('servidor falhou: %s', e.message); }
 }
 
-// SIGTERM/SIGINT: derruba TAMBÉM os shells /pty em curso (mesma ordem do
-// closeSyncServer da GUI, PR-32 #07) — close() sozinho só para de aceitar
-// conexões novas e deixaria attachs remotos vivos até o timeout do socket.
+// SIGTERM/SIGINT: also tears down in-flight /pty shells (same order as the
+// GUI's closeSyncServer, PR-32 #07) — close() alone only stops accepting new
+// connections and would leave remote attaches alive until the socket timeout.
 function stop() {
   try { if (server && server.closeAllPty) server.closeAllPty(); } catch {}
   try { if (server) server.close(); } catch {}

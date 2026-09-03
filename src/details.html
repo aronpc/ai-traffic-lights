@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<!-- details.html — JANELA solta de detalhes da sessão (#59). Antes o painel
-     era um modal BLOQUEANTE dentro do overlay (backdrop por cima da lista);
-     agora é uma BrowserWindow própria: a lista continua clicável, a janela
-     pode ficar aberta ao lado monitorando (o main empurra a sessão viva a
-     cada refresh) e Esc/× destroem a janela. Mesmo CSS do overlay (styles.css,
-     bloco .dt-*) com overrides locais: sem backdrop, card ocupa a janela com
-     o mesmo formato da main/Preferências (translúcido, cantos 14px) e o
-     header arrasta a janela (frameless). -->
+<!-- details.html — standalone session details WINDOW (#59). The panel used to
+     be a BLOCKING modal inside the overlay (backdrop over the list); now it is
+     its own BrowserWindow: the list stays clickable, the window can sit open
+     beside it monitoring (the main pushes the live session on every refresh)
+     and Esc/× destroy the window. Same CSS as the overlay (styles.css, .dt-*
+     block) with local overrides: no backdrop, the card fills the window with
+     the same shape as main/Preferences (translucent, 14px corners) and the
+     header drags the window (frameless). -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">

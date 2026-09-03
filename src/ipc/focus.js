@@ -1,20 +1,20 @@
-// src/ipc/focus.js — focus IPC (extraído do main.js, REF passo 4).
-// Electron-bound (ipcMain) + I/O de processo (wmctrl/osascript/tmux/ps/proc).
-// A LÓGICA PURA (pickWindow/tabChannel/tmuxTarget/tmuxClientPid/parseEnviron/
-// focusFailure) continua em src/focus.js (testada); este módulo é o glue IPC +
-// o I/O de foco.
+// src/ipc/focus.js — focus IPC (extracted from main.js, REF step 4).
+// Electron-bound (ipcMain) + process I/O (wmctrl/osascript/tmux/ps/proc).
+// The PURE LOGIC (pickWindow/tabChannel/tmuxTarget/tmuxClientPid/parseEnviron/
+// focusFailure) stays in src/focus.js (tested); this module is the IPC glue +
+// the focus I/O.
 //
-// PLATAFORMA — cada primitiva responde por si e degrada em silêncio quando não
-// sabe responder (nunca lança):
-//   ler environ  linux /proc/<pid>/environ · macOS `ps -E` · Windows: NÃO HÁ
-//                (exige código nativo) → sem hints, sem âncora, sem prova
-//   ancestrais   linux /proc/<pid>/status · macOS `ps -o ppid=` · Windows: —
-//   levantar     linux wmctrl (X11; Wayland nativo é cego) · macOS osascript
-//   âncora tmux  linux e macOS (mesmo binário) · Windows: n/a
+// PLATFORM — each primitive answers for itself and degrades silently when it
+// can't answer (never throws):
+//   read environ  linux /proc/<pid>/environ · macOS `ps -E` · Windows: NONE
+//                 (requires native code) → no hints, no anchor, no proof
+//   ancestors     linux /proc/<pid>/status · macOS `ps -o ppid=` · Windows: —
+//   raise         linux wmctrl (X11; native Wayland is blind) · macOS osascript
+//   tmux anchor   linux and macOS (same binary) · Windows: n/a
 //
-// DI: getProcessEnviron (compartilhado c/ usage — lê environ do proc), notifyUser,
-// T, IS_WAYLAND. parseMacOSEnviron/escapeAppleScriptString/getProcessEnviron
-// ficam no main (compartilhados c/ usage/launcher).
+// DI: getProcessEnviron (shared w/ usage — reads environ from proc),
+// notifyUser, T, IS_WAYLAND. parseMacOSEnviron/escapeAppleScriptString/
+// getProcessEnviron stay in main (shared w/ usage/launcher).
 
 function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }) {
   const { execFileSync } = require('child_process');
@@ -22,8 +22,8 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
   const path = require('path');
   const focus = require('../focus');
 
-  // Constroi o set de PIDs ancestrais (para casar janela/aba do agente mesmo
-  // quando o agente é filho de um wrapper). /proc no Linux, ps no macOS.
+  // Builds the set of ancestor PIDs (to match the agent's window/tab even
+  // when the agent is a child of a wrapper). /proc on Linux, ps on macOS.
   function ancestorPidsOf(pid) {
     const set = new Set();
     let p = pid;
@@ -49,19 +49,19 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     return set;
   }
 
-  // Terminais conhecidos: comm do processo → chave usada como PROVA em
-  // focus.tabChannel, e o nome do app pro AppleScript de fallback no macOS.
-  // Padrões ancorados no início porque /proc/<pid>/comm trunca em 15 chars
-  // (gnome-terminal-server vira "gnome-terminal-").
-  // ADICIONAR UM TERMINAL = uma linha aqui + uma em TAB_CHANNELS (src/focus.js)
-  // + o executor em focusTab, se ele tiver canal de aba.
-  // `base` casa contra o BASENAME (ancorado no início); `bundle` contra o
-  // caminho inteiro, e só existe no macOS, onde `ps -o comm=` devolve o
-  // executável completo. Os dois são estritos de propósito: um padrão solto
-  // como /warp/i contra o caminho inteiro daria match em qualquer ancestral sob
-  // um diretório com "warp" no nome (um usuário chamado warp, ~/warpdev/bin/node)
-  // — e "provar" o Warp por engano reabre exatamente o canal fantasma que esta
-  // correção existe pra bloquear.
+  // Known terminals: process comm → key used as PROOF in
+  // focus.tabChannel, and the app name for the fallback AppleScript on macOS.
+  // Patterns anchored at the start because /proc/<pid>/comm truncates at 15
+  // chars (gnome-terminal-server becomes "gnome-terminal-").
+  // ADDING A TERMINAL = one line here + one in TAB_CHANNELS (src/focus.js)
+  // + the executor in focusTab, if it has a tab channel.
+  // `base` matches against the BASENAME (anchored at the start); `bundle`
+  // against the whole path, and only exists on macOS, where `ps -o comm=`
+  // returns the full executable. Both are intentionally strict: a loose
+  // pattern like /warp/i against the whole path would match any ancestor
+  // under a directory with "warp" in the name (a user named warp,
+  // ~/warpdev/bin/node) — and "proving" Warp by mistake reopens exactly the
+  // ghost channel this fix exists to block.
   const TERMINALS = [
     { key: 'warp',      base: /^warp/i,           bundle: /\/Warp\.app\//,     mac: 'Warp' },
     { key: 'iterm',     base: /^iterm/i,          bundle: /\/iTerm\.app\//,    mac: 'iTerm2' },
@@ -76,8 +76,9 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     { key: 'xfce4',     base: /^xfce4-terminal/i },
   ];
 
-  // comm de um pid. '' quando não dá pra saber (Windows, /proc que sumiu, ps
-  // que falhou) — o chamador trata '' como "desconhecido", nunca como erro.
+  // comm of a pid. '' when it can't be determined (Windows, /proc that
+  // vanished, ps that failed) — the caller treats '' as "unknown", never as
+  // an error.
   function procComm(pid) {
     try {
       if (process.platform === 'linux') return fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
@@ -88,8 +89,8 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     return '';
   }
 
-  // Qual terminal está desenhando esta sessão, provado pela árvore de processos
-  // do pid de âncora. null = não reconhecemos ninguém → nenhum canal liberado.
+  // Which terminal is drawing this session, proven by the process tree of
+  // the anchor pid. null = nobody we recognize → no channel released.
   function detectTerminal(ancestorPids) {
     for (const p of ancestorPids) {
       const comm = procComm(p);
@@ -103,12 +104,13 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     return null;
   }
 
-  // Ativa a janela. xdotool ANTES do wmctrl: o `xdo_activate_window` manda
-  // _NET_ACTIVE_WINDOW com source indication "pager" (data.l[0]=2, conferido no
-  // .rodata do libxdo), que o Mutter aceita mesmo com focus-new-windows='smart';
-  // o `wmctrl -i -a` manda a forma legada e a partir do 2º clique consecutivo a
-  // requisição podia ser ignorada — a janela só piscava na dock. --sync com
-  // timeout curto: se o WM recusar, o throw devolve false em vez de mentir.
+  // Activates the window. xdotool BEFORE wmctrl: `xdo_activate_window` sends
+  // _NET_ACTIVE_WINDOW with source indication "pager" (data.l[0]=2, verified
+  // in libxdo's .rodata), which Mutter accepts even with
+  // focus-new-windows='smart'; `wmctrl -i -a` sends the legacy form and from
+  // the 2nd consecutive click the request could be ignored — the window just
+  // flashed in the dock. --sync with a short timeout: if the WM refuses, the
+  // throw returns false instead of lying.
   function activateWindow(id) {
     if (!id) return false;
     try { execFileSync('xdotool', ['windowactivate', '--sync', String(id)], { timeout: 900 }); return true; } catch {}
@@ -116,14 +118,14 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     return false;
   }
 
-  // AppleScript não tem escape nativo; aspas e barras precisam ir escapadas.
+  // AppleScript has no native escaping; quotes and backslashes must be escaped.
   function escapeAppleScriptString(str) {
     if (typeof str !== 'string') return '';
     return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
-  // Ordem: no X11, raise a janela e então troca a aba. No Wayland, a aba primeiro
-  // (wmctrl só enxerga XWayland) e o raise vira tentativa-bônus.
+  // Order: on X11, raise the window then switch the tab. On Wayland, the tab
+  // first (wmctrl only sees XWayland) and the raise becomes a bonus attempt.
   function raiseWindow(windowid, ancestors, macApp) {
     if (!ancestors || !ancestors.size) return false;
     if (process.platform === 'darwin') {
@@ -146,7 +148,7 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
       }
       return false;
     }
-    if (process.platform !== 'linux') return false; // Windows: sem implementação
+    if (process.platform !== 'linux') return false; // Windows: no implementation
     let out = '';
     try { out = execFileSync('wmctrl', ['-l', '-p'], { encoding: 'utf8', timeout: 2000 }); } catch { return false; }
     const wins = [];
@@ -158,8 +160,8 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     return id ? activateWindow(id) : false;
   }
 
-  // Executa o canal escolhido. Devolve se a aba foi de fato alcançada — o
-  // chamador precisa da verdade pra decidir se avisa o usuário.
+  // Runs the chosen channel. Returns whether the tab was actually reached —
+  // the caller needs the truth to decide whether to notify the user.
   function focusTab(state) {
     const ch = focus.tabChannel(state);
     if (!ch) return false;
@@ -172,13 +174,15 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
           '--object-path', '/com/gexperts/Tilix', '--method', 'org.gtk.Actions.Activate',
           'activate-terminal', `[<'${ch.value}'>]`, '{}'], { timeout: 2000 });
       } else if (ch.kind === 'iterm') {
-        // iTerm2 expõe a sessão por id (o uuid depois do ':' em ITERM_SESSION_ID),
-        // já validado como [A-Za-z0-9-] em focus.TAB_CHANNELS.
-        // O script varre janelas/abas/sessões e SAI COM 0 mesmo sem achar nada,
-        // então o exit code não prova foco nenhum: ele devolve "hit"/"miss" e é
-        // isso que checamos. Sem isso, um ITERM_SESSION_ID velho (aba fechada,
-        // agente vivo no tmux) contaria como sucesso e o usuário não seria avisado.
-        // NÃO VALIDADO EM macOS — ver docs/ARCHITECTURE.md.
+        // iTerm2 exposes the session by id (the uuid after the ':' in
+        // ITERM_SESSION_ID), already validated as [A-Za-z0-9-] in
+        // focus.TAB_CHANNELS.
+        // The script scans windows/tabs/sessions and EXITS 0 even without
+        // finding anything, so the exit code proves no focus at all: it returns
+        // "hit"/"miss" and that's what we check. Without this, a stale
+        // ITERM_SESSION_ID (closed tab, agent alive in tmux) would count as
+        // success and the user wouldn't be notified.
+        // NOT VALIDATED ON macOS — see docs/ARCHITECTURE.md.
         const id = escapeAppleScriptString(ch.value);
         const out = execFileSync('osascript', ['-e', [
           'tell application "iTerm2"', 'activate',
@@ -195,10 +199,11 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     } catch { return false; }
   }
 
-  // Foca o PAINEL do agente dentro do tmux (complementar ao raise/tab). O pane
-  // id ($TMUX_PANE) é global no server; select-window traz a janela do pane e
-  // select-pane o ativa. execFileSync não passa por shell e o pane é validado
-  // em focus.tmuxTarget → seguro como argumento.
+  // Focuses the agent's PANE inside tmux (complementary to raise/tab). The
+  // pane id ($TMUX_PANE) is global on the server; select-window brings the
+  // pane's window and select-pane activates it. execFileSync doesn't go
+  // through a shell and the pane is validated in focus.tmuxTarget → safe as
+  // an argument.
   function focusTmuxPane(state) {
     const pane = focus.tmuxTarget(state);
     if (!pane) return false;
@@ -209,17 +214,19 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     } catch { return false; }
   }
 
-  // Resolve o PID do tmux CLIENT anexado à sessão do pane do agente. É o elo
-  // que falta sob tmux: o server é um daemon reparentado pro init, então o PID
-  // do agente NUNCA alcança o terminal — mas o client é filho direto dele.
-  // Duas chamadas ao tmux (list-panes/list-clients); a escolha é pura e testada
-  // em focus.tmuxClientPid. null quando não há tmux/pane/client anexado.
-  // Devolve { pid, asked }. A distinção importa pra mensagem:
-  //   asked=false → não deu pra PERGUNTAR ao tmux (binário fora do PATH do
-  //     processo Electron — que num .desktop/AppImage é mínimo —, socket noutro
-  //     TMUX_TMPDIR, empacotamento em Flatpak/Snap, saída inesperada). Dizer
-  //     "faça attach" numa sessão que está attachada e visível é pior que calar.
-  //   asked=true + pid=null → perguntamos e não há client: detached de verdade.
+  // Resolves the PID of the tmux CLIENT attached to the agent's pane session.
+  // It's the missing link under tmux: the server is a daemon reparented to
+  // init, so the agent's PID NEVER reaches the terminal — but the client is a
+  // direct child of it. Two tmux calls (list-panes/list-clients); the choice
+  // is pure and tested in focus.tmuxClientPid. null when there's no attached
+  // tmux/pane/client. Returns { pid, asked }. The distinction matters for
+  // the message:
+  //   asked=false → we couldn't ASK tmux (binary outside the Electron
+  //     process's PATH — which in a .desktop/AppImage is minimal —, socket in
+  //     another TMUX_TMPDIR, Flatpak/Snap packaging, unexpected output).
+  //     Saying "run attach" on a session that is attached and visible is worse
+  //     than staying quiet.
+  //   asked=true + pid=null → we asked and there is no client: truly detached.
   function tmuxClientPidOf(state) {
     const pane = focus.tmuxTarget(state);
     if (!pane) return { pid: null, asked: false };
@@ -241,10 +248,11 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     } catch { return { pid: null, asked: false }; }
   }
 
-  // Enriquece o alvo com os hints de foco lidos AO VIVO do processo.
-  // O state file guarda um snapshot capturado no prompt; o environ é a fonte
-  // viva — cobre sessões cujo evento veio antes do hook atual e as detectadas
-  // só via /proc (sem focus_url/tilix_id no state). O state tem precedência.
+  // Enriches the target with focus hints read LIVE from the process.
+  // The state file holds a snapshot captured at prompt time; environ is the
+  // live source — covers sessions whose event came before the current hook
+  // and those detected only via /proc (no focus_url/tilix_id in state).
+  // State takes precedence.
   function enrichTarget(target) {
     if (!target || !target.pid) return target;
     try {
@@ -259,29 +267,35 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     } catch { return target; }
   }
 
-  // Sob tmux, reancora o alvo no tmux CLIENT da sessão do agente:
-  //  • anchorPid — o client É filho do emulador, então ancestorPidsOf(anchorPid)
-  //    alcança a janela; a do agente morre no `tmux server → systemd`.
-  //  • hints de aba — os do state vieram do environ CONGELADO do server tmux e
-  //    são idênticos em TODAS as sessões dele. Os do client são por-aba e
-  //    vivos, então SUBSTITUEM os do state EM BLOCO. Substituir em bloco (e não
-  //    com `||`) é o que mata o fantasma: quando o server nasceu num Warp que
-  //    hoje nem roda e o client está no Tilix, o client não tem focus_url
-  //    nenhum — e um `||` deixaria o `warp://` velho passar, abrindo o Warp por
-  //    cima do terminal real. Sem hint do client, sobra a prova do terminal
-  //    (detectTerminal) pra decidir, que é o comportamento correto.
-  //  • windowid — MANTIDO: foi capturado pelo xdotool no prompt, e pickWindow o
-  //    valida contra os ancestrais do client, que agora alcançam o emulador.
-  //  • detached — há pane mas nenhum client anexado: a sessão existe, janela não.
+  // Under tmux, re-anchors the target on the tmux CLIENT of the agent's
+  // session:
+  //  • anchorPid — the client IS a child of the emulator, so
+  //    ancestorPidsOf(anchorPid) reaches the window; the agent's dies at
+  //    `tmux server → systemd`.
+  //  • tab hints — the ones from state came from the FROZEN environ of the
+  //    tmux server and are identical across ALL its sessions. The client's
+  //    are per-tab and live, so they REPLACE the state's EN BLOC. Replacing
+  //    en bloc (not with `||`) is what kills the ghost: when the server was
+  //    born in a Warp that isn't even running today and the client is in
+  //    Tilix, the client has no focus_url at all — and `||` would let the
+  //    stale `warp://` through, opening Warp on top of the real terminal.
+  //    With no client hint, what's left to decide is the terminal proof
+  //    (detectTerminal), which is the correct behavior.
+  //  • windowid — KEPT: it was captured by xdotool at prompt time, and
+  //    pickWindow validates it against the client's ancestors, which now
+  //    reach the emulator.
+  //  • detached — there's a pane but no attached client: the session exists,
+  //    the window doesn't.
   function anchorOnTmuxClient(t) {
-    if (!focus.tmuxTarget(t)) return t;              // não está em tmux
+    if (!focus.tmuxTarget(t)) return t;              // not in tmux
     const { pid: cpid, asked } = tmuxClientPidOf(t);
     if (!cpid) return asked ? { ...t, detached: true } : t;
-    // Substituir em bloco só é seguro quando a leitura FUNCIONOU. getProcessEnviron
-    // devolve '' em qualquer tropeço (no macOS é `ps -E`, que nem sempre responde),
-    // e nesse caso zerar os três hints derrubaria um canal que estava certo. Sem
-    // leitura ficamos com os do state: podem estar velhos, mas a prova do terminal
-    // (detectTerminal) ainda barra o canal do app errado.
+    // Replacing en bloc is only safe when the read WORKED. getProcessEnviron
+    // returns '' on any stumble (on macOS it's `ps -E`, which doesn't always
+    // answer), and in that case zeroing the three hints would kill a channel
+    // that was right. With no read we keep the state's: they may be stale,
+    // but the terminal proof (detectTerminal) still blocks the wrong app's
+    // channel.
     const raw = getProcessEnviron(cpid);
     if (!raw) return { ...t, anchorPid: cpid };
     const live = focus.parseEnviron(raw);
@@ -296,15 +310,15 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
 
   function focusSession(target) {
     if (!target) return;
-    // Sessão de OUTRA máquina (sync P2P): o pid é de outro kernel. Recusamos
-    // ANTES de tocar em /proc ou wmctrl — interpretar esse pid aqui focaria um
-    // processo local homônimo, que é a mesma classe de erro do windowid
-    // reciclado, um nível acima.
+    // Session from ANOTHER machine (P2P sync): the pid belongs to another
+    // kernel. We refuse BEFORE touching /proc or wmctrl — interpreting that
+    // pid here would focus a homonymous local process, which is the same
+    // class of error as a recycled windowid, one level up.
     if (focus.isRemoteSession(target)) { notifyUser(T('ntf_focus_remote')); return; }
 
     const t = anchorOnTmuxClient(enrichTarget(target));
-    // Uma varredura só da árvore, compartilhada pela janela e pela prova do
-    // terminal — no macOS cada nível custa um fork de `ps`.
+    // A single tree scan, shared by the window and the terminal proof —
+    // on macOS each level costs a fork of `ps`.
     const ancestors = ancestorPidsOf(t.anchorPid || t.pid);
     const term = detectTerminal(ancestors);
     const st = { ...t, terminal: term ? term.key : null };
@@ -318,15 +332,17 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
       raised = raiseWindow(st.windowid, ancestors, macApp);
       tabbed = focusTab(st);
     }
-    // Complementar: o painel do agente dentro do tmux. NÃO entra no cálculo de
-    // sucesso: o `tmux select-pane` sai com 0 mesmo quando a janela que contém o
-    // pane está enterrada atrás de outras (ou o client está detached), então
-    // contá-lo silenciava justamente o caso pro qual o aviso foi escrito —
-    // terminal Wayland-nativo sem canal de aba, janela fora de alcance do wmctrl.
+    // Complementary: the agent's pane inside tmux. NOT counted in the success
+    // computation: `tmux select-pane` exits 0 even when the window containing
+    // the pane is buried behind others (or the client is detached), so
+    // counting it silenced exactly the case the warning was written for —
+    // native Wayland terminal with no tab channel, window out of wmctrl's
+    // reach.
     if (!st.detached) focusTmuxPane(st);
 
-    // Nada levantado e nenhuma aba alcançada = clique sem efeito. Avisamos com a
-    // razão em vez de parecer quebrado — silêncio aqui é o pior desfecho.
+    // Nothing raised and no tab reached = click with no effect. We notify
+    // with the reason instead of looking broken — silence here is the worst
+    // outcome.
     const why = focus.focusFailure({
       wayland: IS_WAYLAND, raised, hasTab: tabbed, detached: st.detached,
     });

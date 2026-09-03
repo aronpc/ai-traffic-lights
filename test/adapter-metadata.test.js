@@ -9,9 +9,10 @@ const ROOT = path.join(__dirname, '..');
 
 test('OpenCode preserva metadados e tmux quando o boot não os informa', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-opencode-'));
-  // O plugin captura o contexto do terminal do env no boot (windowid/focus_url/
-  // tilix_id/…). Sem zerar essas vars, quem roda o teste de dentro do Warp/Tilix/
-  // tmux sobrescreve os valores persistidos e o teste vira não-determinístico.
+  // The plugin captures terminal context from env at boot (windowid/
+  // focus_url/tilix_id/…). Without clearing these vars, whoever runs the test
+  // from inside Warp/Tilix/tmux overwrites the persisted values and the test
+  // becomes non-deterministic.
   const VARS = ['XDG_DATA_HOME', 'TMUX', 'TMUX_PANE', 'WINDOWID', 'WARP_FOCUS_URL', 'TILIX_ID', 'ITERM_SESSION_ID', 'ZELLIJ_SESSION_NAME'];
   const old = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
   try {

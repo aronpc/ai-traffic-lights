@@ -1,7 +1,7 @@
-// Regressão #56 (chaves cruzadas): rewriteKeyOrigin traduz o segmento de
-// origem de uma sessionKey entre namespaces — o overlay do receptor conhece a
-// sessão como 'peer:1234', a ORIGEM conhece como 'local:1234', e a marca de
-// lido postada precisa chegar no namespace de quem aplica.
+// Regression #56 (crossed keys): rewriteKeyOrigin translates the origin
+// segment of a sessionKey between namespaces — the receiving overlay knows
+// the session as 'peer:1234', the ORIGIN knows it as 'local:1234', and the
+// posted read mark must arrive in the applier's namespace.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { originOf, sessionKey, rewriteKeyOrigin, isLocalSession } = require('../src/identity.js');
@@ -13,20 +13,20 @@ test('rewriteKeyOrigin: peer→local (o caso do POST /read — quem clica postà
 
 test('rewriteKeyOrigin: local→peer (sentido inverso — ida e volta fecha)', () => {
   assert.equal(rewriteKeyOrigin('local:1234', 'local', 'peer'), 'peer:1234');
-  // ida e volta = chave original
+  // round trip = original key
   const ida = rewriteKeyOrigin('peer:1234', 'peer', 'local');
   assert.equal(rewriteKeyOrigin(ida, 'local', 'peer'), 'peer:1234');
 });
 
 test('rewriteKeyOrigin: origem vazia da chave é o próprio namespace local', () => {
-  // sessionKey nunca gera isso (sempre prefixa), mas a função é tolerante:
+  // sessionKey never produces this (always prefixes), but the function is tolerant:
   assert.equal(rewriteKeyOrigin('local', 'local', 'peer'), 'peer');
   assert.equal(rewriteKeyOrigin('peer', 'peer', 'local'), 'local');
 });
 
 test('rewriteKeyOrigin: chave que NÃO casa com from volta intacta', () => {
   assert.equal(rewriteKeyOrigin('other:1234', 'peer', 'local'), 'other:1234');
-  // armadilha do prefixo: 'peer-x' começa com 'peer' mas não com 'peer:'
+  // prefix trap: 'peer-x' starts with 'peer' but not with 'peer:'
   assert.equal(rewriteKeyOrigin('peer-x:1', 'peer', 'local'), 'peer-x:1');
 });
 
@@ -42,7 +42,7 @@ test('rewriteKeyOrigin: from ausente assume local (default do originOf)', () => 
   assert.equal(rewriteKeyOrigin('local:1234', '', 'peer'), 'peer:1234');
 });
 
-// guarda dos irmãos que já existiam (não é regressão do #56, é sanidade do módulo)
+// guard for the siblings that already existed (not an #56 regression, module sanity)
 test('sessionKey/originOf continuam íntegros', () => {
   assert.equal(originOf({}), 'local');
   assert.equal(originOf({ origin: 'peer' }), 'peer');
@@ -51,11 +51,12 @@ test('sessionKey/originOf continuam íntegros', () => {
   assert.equal(sessionKey(null), '');
 });
 
-// ================= review fix #7: pid de sessão REMOTA no /proc local =================
+// ================= review fix #7: REMOTE session pid in local /proc =================
 // claudeAccountsFromSessions / glmCredsFromSessions / codexCwdsFromSessions
-// liam o environ/cwd do pid de TODA sessão — inclusive as vindas do sync, cujo
-// pid é um processo NO PEER. Colisão de pid com um processo local sem relação
-// fabricava conta/barra fantasma. isLocalSession é o filtro.
+// read the environ/cwd of the pid of EVERY session — including the ones from
+// sync, whose pid is a process ON THE PEER. A pid collision with an unrelated
+// local process fabricated a phantom account/bar. isLocalSession is the
+// filter.
 test('isLocalSession: local é sem origin OU origin "local"; peer NÃO é', () => {
   assert.equal(isLocalSession({ pid: 123 }), true, 'collect não seta origin');
   assert.equal(isLocalSession({ pid: 123, origin: 'local' }), true, 'state file grava local');

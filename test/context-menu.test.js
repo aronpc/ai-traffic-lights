@@ -1,7 +1,7 @@
-// Menu de contexto da linha (botão direito): abre com os itens de copiar
-// (chave/cwd/attach), Renomear e Marcar como lida conforme o tipo da sessão;
-// item clica → copia via IPC e fecha; Esc e mousedown fora fecham. Mesma
-// técnica do search.test.js: scripts REAIS do renderer num vm com DOM mock.
+// Row context menu (right click): opens with the copy items (key/cwd/attach),
+// Rename and Mark as read depending on the session type; item click → copies
+// via IPC and closes; Esc and outside mousedown close it. Same technique as
+// search.test.js: REAL renderer scripts in a vm with mock DOM.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -30,7 +30,7 @@ function mkEl() {
     getAttribute(k) { return this._attr[k] != null ? this._attr[k] : null; },
     hasAttribute(k) { return this._attr[k] != null; },
     focus() {}, select() {},
-    // DOM: contains(node) — o "mousedown fora fecha o menu" depende dele
+    // DOM: contains(node) — "mousedown outside closes the menu" depends on it
     contains(node) { return node === this || this.children.includes(node); },
     get lastElementChild() { return this.children[this.children.length - 1] || null; },
     offsetWidth: 170, offsetHeight: 90, offsetTop: 0, scrollHeight: 120,
@@ -74,7 +74,7 @@ async function setup() {
       onPtyOut() {}, onPtyExit() {}, onTermTabAdded() {}, onTermTabRemoved() {},
       onTermTabActivated() {}, onTermMaximized() {}, onTermShown() {}, onTermRefit() {}, onTermTabTitle() {},
       openExternal() {}, revealOverlay() {},
-      copyText: (t) => calls.copy.push(t),                       // menu de contexto
+      copyText: (t) => calls.copy.push(t),                       // context menu
       markRead: (key, at, origin) => calls.markRead.push({ key, at, origin }),
     },
   };
@@ -82,10 +82,10 @@ async function setup() {
   const ctx = { document, window, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date, Math, console };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
-  await Promise.resolve();                  // drena getSettings().then
+  await Promise.resolve();                  // drains getSettings().then
   const fire = (t, ev) => (winListeners[t] || []).forEach((f) => f(ev || {}));
   const rows = () => els.list.children.filter((k) => k.className === 'row');
-  // botão direito na i-ésima linha
+  // right click on the i-th row
   const rightClick = (i, x = 100, y = 200) => {
     const li = rows()[i];
     li.dispatch('contextmenu', { clientX: x, clientY: y, preventDefault() {} });
@@ -120,8 +120,8 @@ test('clicar em Copiar chave → copyText com a key e o menu fecha', async () =>
   pushSessions([mkSess('api')]);
   rightClick(0);
   itemByText('Copiar ID da sessão').dispatch('click', { stopPropagation() {} });
-  // copia o SESSION_ID do agente (aliasKey prefere session_id), não a chave
-  // interna do ATL (origin:pid) — o UUID é o que o `claude --resume` aceita
+  // copies the agent's SESSION_ID (aliasKey prefers session_id), not the ATL
+  // internal key (origin:pid) — the UUID is what `claude --resume` accepts
   assert.deepEqual(calls.copy, ['api'], 'copiou o session_id do Claude');
   assert.equal(els.ctxMenu.hidden, true, 'menu fechou após o clique');
   assert.equal(els.ctxMenu.textContent, '', 'closures da sessão soltas');
@@ -143,11 +143,11 @@ test('Esc fecha; mousedown fora fecha; mousedown no item não fecha antes do cli
   assert.equal(els.ctxMenu.hidden, false);
   fire('keydown', { key: 'Escape' });
   assert.equal(els.ctxMenu.hidden, true, 'Esc fecha o menu');
-  // reabre e testa mousedown fora
+  // reopen and test outside mousedown
   rightClick(0);
-  fire('mousedown', { target: {} });        // alvo fora do menu (mock não é child)
+  fire('mousedown', { target: {} });        // target outside the menu (mock is not a child)
   assert.equal(els.ctxMenu.hidden, true, 'mousedown fora fecha');
-  // reabre: mousedown DENTRO do menu não fecha
+  // reopen: mousedown INSIDE the menu doesn't close
   rightClick(0);
   fire('mousedown', { target: els.ctxMenu });
   assert.equal(els.ctxMenu.hidden, false, 'mousedown dentro mantém o menu aberto');
@@ -163,7 +163,7 @@ test('awaiting → Marcar como lida presente; clica → markRead IPC + vira cinz
   assert.equal(calls.markRead.length, 1, 'markRead foi pro main');
   assert.equal(calls.markRead[0].key, 'local:1004', 'sessionKey prefere pid (identity.js:25)');
   assert.ok(calls.markRead[0].at > 0, 'readAt epoch');
-  // re-render pós-marca: nível da linha rebaixado (read)
+  // post-mark re-render: row level downgraded (read)
   const li = rows()[0];
   assert.match(li.children[0].className, /led--read/, 'led da linha ficou read (cinza)');
 });

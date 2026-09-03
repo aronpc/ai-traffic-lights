@@ -1,58 +1,59 @@
 #!/usr/bin/env bash
-# traffic-hook.sh — adapter de hooks do ai-traffic-lights.
+# traffic-hook.sh — hook adapter for ai-traffic-lights.
 #
-# Serve DOIS agentes (payloads de hook quase idênticos — session_id,
+# Serves TWO agents (nearly identical hook payloads — session_id,
 # hook_event_name, cwd, tool_name via stdin):
-#   Claude Code  → instalado em ~/.claude/settings.json  (AI_TL_AGENT ausente)
-#   Antigravity CLI → instalado em ~/.gemini/antigravity-cli/settings.json (AI_TL_AGENT=antigravity)
-#   Gemini CLI   → instalado em ~/.gemini/settings.json  (AI_TL_AGENT=gemini)
-# Eventos do Gemini são traduzidos pro vocabulário canônico do contrato
+#   Claude Code  → installed in ~/.claude/settings.json  (AI_TL_AGENT absent)
+#   Antigravity CLI → installed in ~/.gemini/antigravity-cli/settings.json (AI_TL_AGENT=antigravity)
+#   Gemini CLI   → installed in ~/.gemini/settings.json  (AI_TL_AGENT=gemini)
+# Gemini events are translated to the contract's canonical vocabulary
 # (BeforeAgent→UserPromptSubmit, BeforeTool→PreToolUse, AfterTool→PostToolUse,
-# AfterAgent→Stop) — o renderer nunca precisa conhecer dialetos. Antigravity usa os
-# mesmos eventos do Claude Code nativamente.
+# AfterAgent→Stop) — the renderer never needs to know dialects. Antigravity uses
+# the same events as Claude Code natively.
 #
-# Filosofia (revisão v5): este hook SÓ REGISTRA EVENTOS (append-only).
-# NÃO computa o estado do semáforo — isso fica no renderer (computeState),
-# porque a escalada idle (verde→vermelho após N min) exige relógio.
+# Philosophy (v5 revision): this hook ONLY RECORDS EVENTS (append-only).
+# It does NOT compute the traffic-light state — that lives in the renderer
+# (computeState), because idle escalation (green→red after N min) requires
+# a clock.
 #
-# Grava: ${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/state/<session_id>.json
+# Writes to: ${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/state/<session_id>.json
 #
-# Requisito duro: RÁPIDO (<25ms) e nunca falha — roda em TODO tool call
-# de TODA sessão (blast radius global). Quase tudo é fork-free:
-#  - stdin slurpado com `read` (sem cat)
-#  - session_id extraído com regex bash (sem jq)
-#  - pid do claude subindo /proc/comm + /proc/status (sem `ps`, que custa ~75ms)
-#  - timestamp via `printf %(%s)T` (sem `date`)
-#  - estado existente lido com `$(<)` (sem cat)
-#  - UMA única chamada jq monta o JSON final
-# Único fork inevitável: `mv` (escrita atômica). mkdir só na 1ª chamada.
+# Hard requirement: FAST (<25ms) and never fails — runs on EVERY tool call
+# of EVERY session (global blast radius). Almost everything is fork-free:
+#  - stdin slurped with `read` (no cat)
+#  - session_id extracted with bash regex (no jq)
+#  - claude pid found by walking /proc/comm + /proc/status (no `ps`, which costs ~75ms)
+#  - timestamp via `printf %(%s)T` (no `date`)
+#  - existing state read with `$(<)` (no cat)
+#  - a SINGLE jq call assembles the final JSON
+# Only unavoidable fork: `mv` (atomic write). mkdir only on the 1st call.
 
 set -u
 STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ai-traffic-lights/state"
-AGENT="${AI_TL_AGENT:-claude}"              # qual agente registrou este hook
+AGENT="${AI_TL_AGENT:-claude}"              # which agent recorded this hook
 
 main() {
   local input
-  IFS= read -rd '' input || true          # slurpa stdin sem fork
+  IFS= read -rd '' input || true          # slurps stdin without a fork
   [ -z "$input" ] && return 0
 
-  # session_id via regex bash (fork-free) — decide o nome do arquivo.
-  # Validação anti-path-traversal: só [A-Za-z0-9._-]. Um payload com "../"
-  # (de um agente malicioso/bugado) NÃO pode escapar do STATE_DIR.
+  # session_id via bash regex (fork-free) — determines the file name.
+  # Anti-path-traversal validation: only [A-Za-z0-9._-]. A payload with "../"
+  # (from a malicious/buggy agent) must NOT escape STATE_DIR.
   local sid=""
   if [[ $input =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     sid="${BASH_REMATCH[1]}"
   fi
   if [[ ! $sid =~ ^[A-Za-z0-9._-]+$ ]]; then return 0; fi
 
-  # hook_event_name via regex bash (fork-free) — usado 3x abaixo
+  # hook_event_name via bash regex (fork-free) — used 3x below
   local evt=""
   if [[ $input =~ \"hook_event_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     evt="${BASH_REMATCH[1]}"
   fi
 
-  # Tradução de dialeto → vocabulário canônico do contrato (fork-free).
-  # Eventos desconhecidos passam crus (computeState trata como verde).
+  # Dialect translation → contract's canonical vocabulary (fork-free).
+  # Unknown events pass through raw (computeState treats them as green).
   if [ "$AGENT" = "gemini" ]; then
     case "$evt" in
       BeforeAgent) evt="UserPromptSubmit" ;;
@@ -70,14 +71,15 @@ main() {
     esac
   fi
 
-  # SessionEnd: sessão encerrou limpo — remove o state file (não vira zombie).
+  # SessionEnd: session ended cleanly — removes the state file (doesn't become a zombie).
   if [ "$evt" = "SessionEnd" ]; then
     rm -f "$STATE_DIR/${sid}.json" 2>/dev/null
     return 0
   fi
-  # Model: preferido do payload (Codex manda "model" direto no JSON — sem
-  # custo); fallback pro grep do transcript (Claude/Gemini). tail limita o custo
-  # em transcripts grandes; \s* tolera JSONL compacto e JSON pretty-printed.
+  # Model: preferred from the payload (Codex sends "model" directly in the
+  # JSON — no cost); falls back to grepping the transcript (Claude/Gemini).
+  # tail bounds the cost on large transcripts; \s* tolerates both compact
+  # JSONL and pretty-printed JSON.
   local transcript="" model=""
   if [[ $input =~ \"transcript_path\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     transcript="${BASH_REMATCH[1]}"
@@ -88,17 +90,17 @@ main() {
     model=$(tail -n 5000 "$transcript" 2>/dev/null | grep -oP '"model"\s*:\s*"\K[^"]+' | tail -1)
   fi
 
-  # notification_type (evento Notification do Claude Code): é o DISCRIMINADOR
-  # entre "precisa de você" (permission_prompt, idle_prompt, elicitation_dialog)
-  # e benigno (auth_success, elicitation_complete, elicitation_response). O
-  # renderer classifica por este campo — nunca pela message (instável, i18n).
+  # notification_type (Claude Code Notification event): it is the DISCRIMINATOR
+  # between "needs you" (permission_prompt, idle_prompt, elicitation_dialog)
+  # and benign (auth_success, elicitation_complete, elicitation_response). The
+  # renderer classifies by this field — never by message (unstable, i18n).
   local ntype=""
   if [[ $input =~ \"notification_type\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     ntype="${BASH_REMATCH[1]}"
   fi
 
-  # Sobe a árvore até achar o processo do agente. Zero forks no Linux.
-  # No macOS (sem /proc), usamos ps.
+  # Walks up the tree until it finds the agent process. Zero forks on Linux.
+  # On macOS (no /proc), we use ps.
   local agent_pid=$$ pid=$$ comm="" ppid=""
   if [ -d "/proc" ]; then
     while [ "${pid:-0}" -gt 1 ] 2>/dev/null; do
@@ -120,7 +122,7 @@ main() {
       ps_out=$(ps -p "$pid" -o ppid=,comm= 2>/dev/null)
       ppid="" comm=""
       read -r ppid comm <<< "$ps_out"
-      comm="${comm##*/}"  # basename sem fork (evita "basename: illegal option" com -zsh)
+      comm="${comm##*/}"  # fork-free basename (avoids "basename: illegal option" under -zsh)
       case "$AGENT:$comm" in
         claude:claude|claude:claude-agent-acp|gemini:node|antigravity:node|antigravity:agy|antigravity:antigravity|codex:codex) agent_pid="$pid"; break ;;
       esac
@@ -129,25 +131,25 @@ main() {
     done
   fi
 
-  # Canais nativos de foco de aba (invisível pro X11; só o terminal alcança):
+  # Native tab-focus channels (invisible to X11; only the terminal can reach them):
   #  Warp  → WARP_FOCUS_URL (warp://session/<uuid>) via xdg-open
   #  Tilix → TILIX_ID (uuid) via gdbus activate-terminal
   local win="${WINDOWID:-}" tp="${TERM_PROGRAM:-}" zs="${ZELLIJ_SESSION_NAME:-}"
   local furl="${WARP_FOCUS_URL:-}" tid="${TILIX_ID:-}"
-  # tmux: nome da sessão (p/ attach remoto "tmux attach -t <name>"). A captura
-  # fica ABAIXO, depois da leitura do state file: o nome não muda dentro da
-  # mesma sessão, então o valor persistido é reaproveitado (zero fork) e o
-  # `tmux display-message` roda só na 1ª vez — não a cada evento.
-  # tmux_pane ($TMUX_PANE, ex "%3"): p/ FOCO do painel local (zero fork, é env).
+  # tmux: session name (for remote attach "tmux attach -t <name>"). The capture
+  # happens BELOW, after reading the state file: the name doesn't change within
+  # the same session, so the persisted value is reused (zero forks) and
+  # `tmux display-message` runs only the 1st time — not on every event.
+  # tmux_pane ($TMUX_PANE, e.g. "%3"): for LOCAL pane FOCUS (zero forks, it's env).
   local tmuxs="" tmuxp="${TMUX_PANE:-}"
-  # iTerm2 (macOS): ITERM_SESSION_ID = "w0t0p0:<uuid>" → foco de aba exato via
-  # osascript. Leitura de env já exportada: zero fork, orçamento intacto.
+  # iTerm2 (macOS): ITERM_SESSION_ID = "w0t0p0:<uuid>" → exact tab focus via
+  # osascript. Reading an already-exported env var: zero forks, budget intact.
   local iid="${ITERM_SESSION_ID:-}"
 
-  # windowid REAL: no UserPromptSubmit/SessionStart a janela focada do desktop
-  # É o terminal da sessão (o usuário acabou de digitar nela). Resolve Warp
-  # (multi-janela, WINDOWID vazio) e zellij/tmux (árvore de processos descolada
-  # do terminal). 1 fork, só em eventos de prompt (raros) — budget preservado.
+  # REAL windowid: on UserPromptSubmit/SessionStart the desktop's focused
+  # window IS the session's terminal (the user just typed in it). Resolves Warp
+  # (multi-window, empty WINDOWID) and zellij/tmux (process tree detached from
+  # the terminal). 1 fork, only on prompt events (rare) — budget preserved.
   local awin=""
   if [ "$evt" = "UserPromptSubmit" ] || [ "$evt" = "SessionStart" ]; then
     if [ -n "${DISPLAY:-}" ] && command -v xdotool >/dev/null 2>&1; then
@@ -164,10 +166,10 @@ main() {
   local file="$STATE_DIR/${sid}.json"
 
   local existing=""
-  [ -f "$file" ] && existing=$(<"$file")     # idiom bash (sem cat); só lê se existir
+  [ -f "$file" ] && existing=$(<"$file")     # bash idiom (no cat); only reads if it exists
 
-  # tmux_session: reaproveita o já persistido (regex sobre o JSON compacto,
-  # zero fork); só consulta o binário tmux na 1ª vez, quando não há valor.
+  # tmux_session: reuses the already-persisted value (regex over the compact
+  # JSON, zero forks); only queries the tmux binary the 1st time, when no value exists.
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     if [ -n "$existing" ]; then
       [[ $existing =~ \"tmux_session\":\ ?\"([^\"]+)\" ]] && tmuxs="${BASH_REMATCH[1]}"
@@ -177,12 +179,14 @@ main() {
     fi
   fi
 
-  # 1 jq: extrai campos do input ($in) + merge com existente ($ex) + rolling
-  # windowid: prioriza a janela ativa capturada agora ($awin); senão WINDOWID
-  # do ambiente; senão PRESERVA o valor já gravado (não regride pra null).
-  # $existing entra como STRING e é parseado com try/fromjson: arquivo vazio,
-  # truncado ou corrompido (race de escrita) vira {} e o state se regenera no
-  # próximo evento — sem isso, um state quebrado travaria a sessão pra sempre.
+  # 1 jq: extracts fields from the input ($in) + merge with existing ($ex) +
+  # rolling windowid: prefers the active window captured now ($awin); else the
+  # environment's WINDOWID; else PRESERVES the already-stored value (never
+  # regresses to null).
+  # $existing enters as a STRING and is parsed with try/fromjson: an empty,
+  # truncated or corrupted file (write race) becomes {} and the state
+  # regenerates on the next event — without this, a broken state would lock
+  # the session forever.
   jq -n -c \
     --argjson in "$input" \
     --arg exs "$existing" \

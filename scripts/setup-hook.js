@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// setup-hook.js — CLI do instalador do adapter Claude Code.
+// setup-hook.js — CLI installer for the Claude Code adapter.
 //
-//   npm run setup-hook    → instala (idempotente; atualiza caminho se mudou)
-//   npm run remove-hook   → remove só as entradas deste projeto
+//   npm run setup-hook    → installs (idempotent; updates the path if it changed)
+//   npm run remove-hook   → removes only this project's entries
 //
-// A lógica vive em src/hook-installer.js (compartilhada com o menu do tray).
-// O comando registrado aponta para a cópia estável do hook em
-// ~/.local/share/ai-traffic-lights/bin/ — mover o projeto não quebra nada.
+// The logic lives in src/hook-installer.js (shared with the tray menu).
+// The registered command points to the stable hook copy in
+// ~/.local/share/ai-traffic-lights/bin/ — moving the project breaks nothing.
 
 const path = require('path');
 const os = require('os');
@@ -64,7 +64,7 @@ try {
         ? `✓ ${t.label}: já instalado e atualizado.`
         : `✓ ${t.label}: instalado (${r.added} eventos, ${r.updated} caminhos atualizados).`);
     }
-    // OpenCode: adapter é um plugin (arquivo JS), não hooks em settings
+    // OpenCode: the adapter is a plugin (JS file), not hooks in settings
     if (installer.opencodeAvailable()) {
       const ro = installer.installOpencode(OPENCODE_PLUGIN_SRC);
       console.log(`✓ OpenCode: plugin ${ro.updated ? 'atualizado' : 'instalado'} em ${ro.dest}`);
@@ -72,9 +72,10 @@ try {
     } else {
       console.log(`- OpenCode: ${installer.OPENCODE.detectDir} não existe — pulado.`);
     }
-    // Kiro: o adapter é um observador de arquivos carregado pelo próprio overlay.
-    // O gate é ~/.kiro/sessions/cli (paridade com o start() do adapter): sem esse
-    // diretório não há o que observar, e dizer "instalado" seria mentira.
+    // Kiro: the adapter is a file watcher loaded by the overlay itself.
+    // The gate is ~/.kiro/sessions/cli (parity with the adapter's start()):
+    // without that directory there is nothing to watch, and saying "installed"
+    // would be a lie.
     if (installer.kiroAvailable()) {
       const rk = installer.installKiro(KIRO_ADAPTER_SRC, BASE_DIR);
       console.log(`✓ Kiro: adapter ${rk.updated ? 'atualizado' : 'instalado'} em ${rk.dest}`);

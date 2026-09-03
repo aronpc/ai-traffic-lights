@@ -1,27 +1,27 @@
-// adapters/kiro/ai-traffic-lights.js — adapter do Kiro CLI para o ai-traffic-lights.
+// adapters/kiro/ai-traffic-lights.js — Kiro CLI adapter for ai-traffic-lights.
 //
-// O Kiro não expõe hooks de shell como o Claude Code. Em vez disso, ele grava
-// arquivos em ~/.kiro/sessions/cli/ que este adapter monitora com chokidar:
+// Kiro does not expose shell hooks like Claude Code. Instead, it writes files
+// to ~/.kiro/sessions/cli/ which this adapter monitors with chokidar:
 //
-//   <uuid>.jsonl  — stream de eventos append-only (Prompt / AssistantMessage / ToolResults)
-//   <uuid>.json   — estado consolidado da sessão (cwd, title, session_id)
-//   <uuid>.lock   — {"pid": N, "started_at": "..."} — sessão ativa
+//   <uuid>.jsonl  — append-only event stream (Prompt / AssistantMessage / ToolResults)
+//   <uuid>.json   — consolidated session state (cwd, title, session_id)
+//   <uuid>.lock   — {"pid": N, "started_at": "..."} — active session
 //
-// Mapeamento de eventos → vocabulário canônico do contrato:
-//   Prompt           → UserPromptSubmit (usuário enviou mensagem → 🟡)
-//   AssistantMessage → PreToolUse       (Kiro respondendo/pensando → 🟡)
-//   ToolResults      → PostToolUse      (Kiro executou ferramenta → 🟡)
-// A direção importa mesmo os dois caindo em PROCESSING (mesma cor): `last_event`
-// é exibido na linha, e dizer "PreToolUse" depois de uma ferramenta TERMINAR
-// descreve o oposto do que aconteceu.
-//   lock sumiu       → SessionEnd       (remove state file)
-//   lock apareceu    → SessionStart     (nova sessão → 🟢)
-//   jsonl quieto     → Stop (sintetizado) — o jsonl do Kiro NÃO tem marcador de
-//                      fim de turno; sem isto, sessão ociosa fica 🟡 para sempre
+// Event → canonical contract vocabulary mapping:
+//   Prompt           → UserPromptSubmit (user sent a message → 🟡)
+//   AssistantMessage → PreToolUse       (Kiro responding/thinking → 🟡)
+//   ToolResults      → PostToolUse      (Kiro ran a tool → 🟡)
+// The direction matters even though both map to PROCESSING (same color):
+// `last_event` is displayed on the row, and saying "PreToolUse" after a tool
+// FINISHES describes the opposite of what happened.
+//   lock vanished    → SessionEnd       (removes state file)
+//   lock appeared    → SessionStart     (new session → 🟢)
+//   quiet jsonl      → Stop (synthesized) — Kiro's jsonl has NO end-of-turn
+//                      marker; without this, an idle session stays 🟡 forever
 //
-// A escalada idle (verde→vermelho após N min) já é tratada pelo renderer.
+// Idle escalation (green→red after N min) is already handled by the renderer.
 //
-// Este módulo é carregado pelo main.js e retorna { start, stop }.
+// This module is loaded by main.js and returns { start, stop }.
 
 'use strict';
 
@@ -32,34 +32,34 @@ const os   = require('os');
 const KIRO_SESSIONS_DIR = path.join(os.homedir(), '.kiro', 'sessions', 'cli');
 const DATA_HOME  = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
 const STATE_DIR  = path.join(DATA_HOME, 'ai-traffic-lights', 'state');
-// Validação de id vem do módulo compartilhado e testado (src/validate.js) em vez
-// de uma 4ª cópia da mesma regex. Este adapter é carregado pelo overlay
-// (main.js:14, require relativo ao __dirname da app), então o caminho resolve —
-// diferente do plugin do OpenCode, que roda dentro do processo do agente.
+// Id validation comes from the shared, tested module (src/validate.js) instead
+// of a 4th copy of the same regex. This adapter is loaded by the overlay
+// (main.js:14, require relative to the app's __dirname), so the path resolves —
+// unlike the OpenCode plugin, which runs inside the agent process.
 const { validSessionId } = require('../../src/validate.js');
-// Escrita + regra de ouro do contrato vêm do módulo compartilhado (testado):
-// preservar transcript_path, campos de foco e chaves de terceiros é regra, não
-// lembrete — foi o achado 08 do review da PR #46.
+// Write + the contract golden rule come from the shared (tested) module:
+// preserving transcript_path, focus fields and third-party keys is a rule,
+// not a reminder — that was finding 08 of the PR #46 review.
 const { atomicWrite, mergeState } = require('../../src/state-writer.js');
 
-// Síntese de Stop: o Kiro nunca emite fim de turno, então um turno que entregou
-// a resposta e ficou quieto permaneceria amarelo para sempre. Depois de
-// STOP_AFTER_MS sem crescimento do .jsonl, registramos Stop (→ 🟢 → ⏰ vermelho
-// conforme o threshold de idle do renderer). False-positive mid-turn (turno
-// longo com gap aí) só pisca verde e re-acende no próximo evento — cosmético.
-const STOP_AFTER_MS = 120 * 1000;     // silêncio do jsonl → turno considerado parado
-const STALENESS_SCAN_MS = 30 * 1000;  // intervalo da varredura de parada
+// Stop synthesis: Kiro never emits end-of-turn, so a turn that delivered the
+// answer and went quiet would stay yellow forever. After STOP_AFTER_MS with
+// no .jsonl growth, we record Stop (→ 🟢 → ⏰ red per the renderer's idle
+// threshold). A mid-turn false positive (long turn with a gap in that window)
+// only flashes green and re-lights on the next event — cosmetic.
+const STOP_AFTER_MS = 120 * 1000;     // jsonl silence → turn considered stopped
+const STALENESS_SCAN_MS = 30 * 1000;  // stop-scan interval
 
-// ---- helpers de state file (mesma semântica do traffic-hook.sh) ----
+// ---- state file helpers (same semantics as traffic-hook.sh) ----
 
 function readState(sid) {
   try { return JSON.parse(fs.readFileSync(path.join(STATE_DIR, `${sid}.json`), 'utf8')); }
   catch { return {}; }
 }
 
-// Escrita atômica tmp+rename com try/catch. TODA escrita passa por aqui:
-// um EACCES/ENOSPC/EROFS/EBUSY no state NÃO pode derrubar o processo main do
-// Electron (e com ele a tray e o monitoramento de todos os agentes).
+// Atomic tmp+rename write with try/catch. EVERY write goes through here:
+// an EACCES/ENOSPC/EROFS/EBUSY on the state must NOT take down the Electron
+// main process (and with it the tray and the monitoring of all agents).
 function writeState(sid, evt, tool, pid) {
   if (!validSessionId(sid)) return;
   try {
@@ -67,8 +67,8 @@ function writeState(sid, evt, tool, pid) {
     const file = path.join(STATE_DIR, `${sid}.json`);
     const ex   = readState(sid);
     const now  = Math.floor(Date.now() / 1000);
-    // O que ESTE evento sabe. Todo o resto — inclusive chaves que outro escritor
-    // pôs aqui — é preservado pelo mergeState, não por uma lista repetida aqui.
+    // What THIS event knows. Everything else — including keys another writer
+    // put here — is preserved by mergeState, not by a repeated list here.
     const st = mergeState(ex, {
       schema_version: 2,
       agent:         'kiro',
@@ -87,9 +87,9 @@ function dropState(sid) {
   try { fs.unlinkSync(path.join(STATE_DIR, `${sid}.json`)); } catch {}
 }
 
-// ---- leitura dos arquivos do Kiro ----
+// ---- reading Kiro files ----
 
-// Lê o .json da sessão e enriquece o state file com cwd / pid.
+// Reads the session .json and enriches the state file with cwd / pid.
 function enrichFromSessionJson(sid) {
   const jsonFile = path.join(KIRO_SESSIONS_DIR, `${sid}.json`);
   try {
@@ -97,10 +97,11 @@ function enrichFromSessionJson(sid) {
     const stateFile = path.join(STATE_DIR, `${sid}.json`);
     const ex = readState(sid);
     const enriched = { ...ex };
-    // Guarda por PRESENÇA de mudança, não por contagem de chaves: o .json do
-    // Kiro nasce depois do .jsonl — no 1º evento o enrich lança (engolido), o
-    // writeState grava com cwd:null, e nos próximos a contagem já bateria e o
-    // cwd real NUNCA chegaria (linha exibe o rótulo fallback "... · PID").
+    // Save on PRESENCE of change, not on key count: Kiro's .json is born after
+    // the .jsonl — on the 1st event the enrich throws (swallowed), writeState
+    // writes with cwd:null, and on the following ones the count would already
+    // match and the real cwd would NEVER arrive (the row shows the fallback
+    // label "... · PID").
     if (meta.cwd)        enriched.cwd        = meta.cwd;
     if (meta.session_id) enriched.session_id = meta.session_id;
     const changed =
@@ -110,7 +111,7 @@ function enrichFromSessionJson(sid) {
   } catch {}
 }
 
-// Lê o .lock e retorna { pid } ou null.
+// Reads the .lock and returns { pid } or null.
 function readLock(sid) {
   try {
     const lock = JSON.parse(fs.readFileSync(
@@ -120,15 +121,15 @@ function readLock(sid) {
   return null;
 }
 
-// Extrai o session_id de um nome de arquivo (remove extensão).
+// Extracts the session_id from a filename (strips the extension).
 function sidFromFile(file) {
   const base = path.basename(file);
-  // aceita uuid com extensão: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jsonl etc.
+  // accepts uuid with extension: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jsonl etc.
   const m = base.match(/^([A-Za-z0-9._-]+)\.(jsonl|json|lock|history)$/);
   return m ? m[1] : null;
 }
 
-// Processa a última linha do .jsonl para determinar o evento canônico.
+// Processes the last .jsonl line to determine the canonical event.
 function lastJsonlEvent(sid) {
   const file = path.join(KIRO_SESSIONS_DIR, `${sid}.jsonl`);
   try {
@@ -137,25 +138,25 @@ function lastJsonlEvent(sid) {
     let pos = stat.size;
     let tail = Buffer.alloc(0);
     try {
-      // Começa pelo tail de 64 KiB, mas uma entrada JSONL pode ser maior. Nesse
-      // caso o primeiro bloco começa no meio do JSON; recuamos em blocos até
-      // alcançar o '\n' que delimita o início da última entrada completa (ou o
-      // início do arquivo). A sessão inteira só é lida no caso extremo de uma
-      // única entrada gigante ou de uma escrita final gigante ainda incompleta.
+      // Starts with a 64 KiB tail, but a JSONL entry can be larger. In that
+      // case the first chunk starts mid-JSON; we back up in chunks until we
+      // reach the '\n' delimiting the start of the last complete entry (or
+      // the start of the file). The whole session is only read in the extreme
+      // case of a single giant entry or a giant final write still incomplete.
       while (pos > 0) {
         const start = Math.max(0, pos - 65536);
         const chunk = Buffer.alloc(pos - start);
         const n = fs.readSync(fd, chunk, 0, chunk.length, start);
         tail = Buffer.concat([chunk.subarray(0, n), tail]);
 
-        // Se não chegamos ao início do arquivo, o prefixo anterior ao primeiro
-        // newline pode ser só um fragmento e nunca deve ser entregue ao parser.
+        // If we haven't reached the start of the file, the prefix before the
+        // first newline may be just a fragment and must never reach the parser.
         const firstNl = tail.indexOf(0x0a);
         if (start > 0 && firstNl < 0) { pos = start; continue; }
         const complete = start === 0 ? tail : tail.subarray(firstNl + 1);
         const lines = complete.toString('utf8').split('\n');
-        // A linha final pode estar no meio da escrita. Se não parsear, usa a
-        // entrada completa anterior, preservando o comportamento já existente.
+        // The final line may be mid-write. If it doesn't parse, use the
+        // previous complete entry, preserving the existing behavior.
         for (let i = lines.length - 1; i >= 0; i--) {
           try {
             const d = JSON.parse(lines[i]);
@@ -171,7 +172,7 @@ function lastJsonlEvent(sid) {
   return null;
 }
 
-// Mapeia kind do JSONL → evento canônico do contrato.
+// Maps a JSONL kind → canonical contract event.
 function toCanonical(kind) {
   switch (kind) {
     case 'Prompt':           return 'UserPromptSubmit';
@@ -181,11 +182,11 @@ function toCanonical(kind) {
   }
 }
 
-// ---- rastreamento de sessões ativas ----
+// ---- active session tracking ----
 
-// Map: sid → tamanho do .jsonl visto por último (evita re-processar linhas antigas)
+// Map: sid → last seen .jsonl size (avoids re-processing old lines)
 const _jsonlSizes = new Map();
-// Map: sid → ms do último crescimento do .jsonl (base da síntese de Stop)
+// Map: sid → ms of the last .jsonl growth (basis of the Stop synthesis)
 const _lastSeen = new Map();
 
 function handleJsonl(sid) {
@@ -193,9 +194,10 @@ function handleJsonl(sid) {
   try {
     const stat = fs.statSync(jsonlFile);
     const prevSize = _jsonlSizes.get(sid) || 0;
-    // Ignora apenas STAGNAÇÃO (tamanho igual). O Kiro compacta/reescreve o
-    // .jsonl (/clear, crash-recovery, rotação): se o arquivo ENCOLHEU, re-lemos
-    // normal — com `<=` a sessão ficava surda pra sempre após uma compactação.
+    // Ignores only STAGNATION (equal size). Kiro compacts/rewrites the
+    // .jsonl (/clear, crash-recovery, rotation): if the file SHRANK, we
+    // re-read normally — with `<=` the session went permanently deaf after
+    // a compaction.
     if (stat.size === prevSize) return;
     _jsonlSizes.set(sid, stat.size);
     _lastSeen.set(sid, Date.now());
@@ -205,45 +207,46 @@ function handleJsonl(sid) {
   const evt  = toCanonical(kind);
   if (!evt) return;
 
-  // Lê .lock ANTES do primeiro writeState para garantir pid no state file
-  // e evitar race com process discovery (duas linhas pro mesmo pid).
+  // Reads the .lock BEFORE the first writeState to guarantee pid in the state
+  // file and avoid a race with process discovery (two rows for the same pid).
   const lock = readLock(sid);
 
-  // Sem pid (jsonl nasceu antes do .lock) NÃO grava: uma linha pid:null é
-  // invisível pra dedup do readSessions (exige agent+pid), vira zumbi que o
-  // reapDead() ignora e desvia do filtro do lock no discovery (linha duplicada).
-  // O handleLock(add) que vem em seguida cria o state com o pid do lock.
+  // Without pid (jsonl born before the .lock) does NOT write: a pid:null row
+  // is invisible to readSessions dedup (requires agent+pid), becomes a zombie
+  // that reapDead() skips and bypasses the lock filter in discovery (duplicate
+  // row). The handleLock(add) that follows creates the state with the lock's pid.
   if (!lock && !readState(sid).pid) return;
 
   enrichFromSessionJson(sid);
 
-  // O pid do lock cascateia pelo próprio writeState (evita o read+write extra
-  // do antigo bloco de correção) — sem lock, preserva ex.pid (SIGA-sem-pid).
+  // The lock's pid cascades through writeState itself (avoids the extra
+  // read+write of the old fixup block) — without a lock, preserves ex.pid
+  // (SIGA without pid).
   writeState(sid, evt, null, lock && lock.pid);
 }
 
 function handleLock(sid, exists) {
   if (exists) {
-    // Nova sessão ou re-apareceu — garante state file com pid do lock
+    // New session or re-appeared — ensures a state file with the lock's pid
     _lastSeen.set(sid, Date.now());
     const stateFile = path.join(STATE_DIR, `${sid}.json`);
     const lock = readLock(sid);
-    if (!lock) return; // lock inválido
+    if (!lock) return; // invalid lock
 
     enrichFromSessionJson(sid);
 
     let st = {};
     try { st = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
 
-    // Se já existe state file mas sem pid, atualiza com o pid do lock
-    // (race: .jsonl criado antes do .lock → handleJsonl escreveu sem pid)
+    // If a state file already exists but has no pid, update it with the lock's pid
+    // (race: .jsonl created before the .lock → handleJsonl wrote without pid)
     const isFirstWrite = !st.pid || st.pid !== lock.pid;
     if (isFirstWrite) {
       st.schema_version = 2;
       st.agent = 'kiro';
       st.session_id = sid;
       st.pid = lock.pid;
-      // preserva cwd/model/etc. do state existente se houver
+      // preserves cwd/model/etc. from the existing state if any
       if (!st.cwd) {
         try {
           const meta = JSON.parse(fs.readFileSync(
@@ -256,18 +259,18 @@ function handleLock(sid, exists) {
       st.events = st.events || [{ ts: st.last_event_ts, event: 'SessionStart', tool: null }];
       atomicWrite(stateFile, st, fs);
 
-      // Avisa o main para invalidar cache de discovery imediatamente
+      // Tells main to invalidate the discovery cache immediately
       if (_onFirstWrite) _onFirstWrite();
     }
   } else {
-    // Lock sumiu → sessão encerrou
+    // Lock vanished → session ended
     _jsonlSizes.delete(sid);
     _lastSeen.delete(sid);
     dropState(sid);
   }
 }
 
-// ---- bootstrap: processa sessões já abertas ao iniciar o watcher ----
+// ---- bootstrap: processes already-open sessions when the watcher starts ----
 
 function bootstrap() {
   try {
@@ -279,7 +282,7 @@ function bootstrap() {
       if (!validSessionId(sid)) continue;
       handleLock(sid, true);
       _lastSeen.set(sid, Date.now());
-      // processa estado atual do jsonl
+      // process the current jsonl state
       const jsonlFile = path.join(KIRO_SESSIONS_DIR, `${sid}.jsonl`);
       try {
         const stat = fs.statSync(jsonlFile);
@@ -292,7 +295,7 @@ function bootstrap() {
   } catch {}
 }
 
-// ---- API pública ----
+// ---- public API ----
 
 let _watcher = null;
 let _onFirstWrite = null;
@@ -301,10 +304,10 @@ let _bootstrapImmediate = null;
 
 const PROCESSING = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
 
-// Registra Stop em sessões cujo jsonl está quieto há STOP_AFTER_MS e cujo último
-// evento ainda é de PROCESSAMENTO (turno aberto sem novo downstream). Após gravar,
-// re-anchora lastSeen p/ não re-gravar Stop num loop de 30s; qualquer linha nova
-// do jsonl derruba a síntese (volta a amarelo no próximo evento real).
+// Records Stop for sessions whose jsonl has been quiet for STOP_AFTER_MS and
+// whose last event is still PROCESSING (open turn with no new downstream). After
+// writing, re-anchors lastSeen so Stop isn't re-written in a 30s loop; any new
+// jsonl line tears down the synthesis (back to yellow on the next real event).
 function scanForStops() {
   const now = Date.now();
   for (const [sid, lastSeen] of _lastSeen) {
@@ -317,19 +320,19 @@ function scanForStops() {
 }
 
 function start(chokidar, onFirstWrite) {
-  if (_watcher) return; // já rodando
-  if (!fs.existsSync(KIRO_SESSIONS_DIR)) return; // Kiro não instalado
+  if (_watcher) return; // already running
+  if (!fs.existsSync(KIRO_SESSIONS_DIR)) return; // Kiro not installed
 
   _onFirstWrite = onFirstWrite || null;
 
-  // bootstrap DEFERIDO: os reads de sessões já abertas NÃO podem travar o
-  // createWindow() do ready (s8 da PR-46) — o watcher entra ativo antes, e a
-  // janela abre na frente; o state inicial chega na primeira sendSessions.
+  // DEFERRED bootstrap: reads of already-open sessions must NOT block the
+  // ready createWindow() (PR-46 s8) — the watcher comes up active first and
+  // the window opens in front; the initial state arrives on the first sendSessions.
   _bootstrapImmediate = setImmediate(() => { _bootstrapImmediate = null; bootstrap(); });
 
   _watcher = chokidar.watch(KIRO_SESSIONS_DIR, {
     ignoreInitial:    true,
-    depth:            0,         // só arquivos diretos, não subpastas
+    depth:            0,         // only direct files, not subdirectories
     awaitWriteFinish: { stabilityThreshold: 80, pollInterval: 30 },
   });
 
@@ -346,9 +349,9 @@ function start(chokidar, onFirstWrite) {
         if (event === 'add' || event === 'change') handleLock(sid, true);
         if (event === 'unlink')                    handleLock(sid, false);
       } else if (filePath.endsWith('.json')) {
-        // .json consolidado re-escrito pelo Kiro a cada mensagem: re-enriquece
-        // cwd/session_id (o add/change era descartado em silêncio, então o cwd
-        // real nunca chegava ao state file).
+        // Consolidated .json rewritten by Kiro on every message: re-enriches
+        // cwd/session_id (add/change used to be silently dropped, so the real
+        // cwd never reached the state file).
         if (event === 'add' || event === 'change') enrichFromSessionJson(sid);
       }
     } catch {}

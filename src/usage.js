@@ -1,25 +1,25 @@
-// usage.js — coletores de CONSUMO/RESET por agente (feature: % no overlay).
+// usage.js — per-agent USAGE/RESET collectors (feature: % in the overlay).
 //
-// Dois regimes de fonte (ver decisão em /docs e no plano "caminho C"):
-//   PASSIVO (arquivo local, sem rede) — só dá RESET: Claude via ~/.claude.json.
-//   ATIVO  (chamada autenticada)      — dá % E reset: GLM via API de monitor.
+// Two source regimes (see the decision in /docs and in the "caminho C" plan):
+//   PASSIVE (local file, no network) — only yields RESET: Claude via ~/.claude.json.
+//   ACTIVE  (authenticated call)     — yields % AND reset: GLM via the monitor API.
 //
-// A lógica PURA (parse) fica separada do I/O (ler arquivo / HTTP) para que os
-// testes operem sobre fixtures sem rede nem disco. As funções de I/O NUNCA
-// lançam: falha vira { ..., error }. Um agente sem credencial/config é simply
-// omitido do resultado — o overlay mostra só quem tem dado.
+// The PURE logic (parse) is kept separate from the I/O (file read / HTTP) so
+// that tests run against fixtures without network or disk. The I/O functions
+// NEVER throw: failure becomes { ..., error }. An agent without credentials/config is simply
+// omitted from the result — the overlay only shows whoever has data.
 //
-// Objeto canônico (uma entrada por "limite" — um agente pode ter vários):
+// Canonical object (one entry per "limit" — an agent may have several):
 //   {
 //     id:         'glm-tokens' | 'glm-month' | 'claude-plan',
-//     agent:      'glm' | 'claude',         // pega ícone/cor em AGENTS
-//     title:      'Tokens (5h)',            // o que é este limite (curto)
-//     usedPct:    23,                        // 0..100, ou null se desconhecido
-//     resetAt:    '2026-07-10T19:47:09Z',   // ISO, ou null
-//     resetInMin: 1234,                      // conveniência p/ a UI, ou null
-//     extra:      '3 passes',               // info adicional opcional
+//     agent:      'glm' | 'claude',         // picks icon/color in AGENTS
+//     title:      'Tokens (5h)',            // what this limit is (short)
+//     usedPct:    23,                        // 0..100, or null if unknown
+//     resetAt:    '2026-07-10T19:47:09Z',   // ISO, or null
+//     resetInMin: 1234,                      // convenience for the UI, or null
+//     extra:      '3 passes',               // optional extra info
 //     source:     'claude.json' | 'glm.api',
-//     error:      null | '<msg curta>',
+//     error:      null | '<short msg>',
 //   }
 
 const fs = require('fs');
@@ -28,15 +28,15 @@ const https = require('https');
 const os = require('os');
 const claudePaths = require('./claude-config.js');
 
-// ---- tradução de tier Claude Max → label humano ----
+// ---- Claude Max tier → human label translation ----
 const CLAUDE_TIER_LABEL = {
   default_claude_max_5x: 'Max 5×',
   default_claude_max_20x: 'Max 20×',
 };
 
-// ---- tradução de organizationType → label humano (fallback quando o tier não é
-// um dos Max conhecidos). Cobre contas Team/Pro/Enterprise cujo tier tem código
-// interno opaco (ex.: default_raven) que não mapeamos individualmente. ----
+// ---- organizationType → human label translation (fallback when the tier is not
+// one of the known Max tiers). Covers Team/Pro/Enterprise accounts whose tier has
+// an opaque internal code (e.g. default_raven) we don't map individually. ----
 const CLAUDE_ORG_LABEL = {
   claude_max: 'Claude Max',
   claude_team: 'Claude Team',
@@ -44,32 +44,32 @@ const CLAUDE_ORG_LABEL = {
   claude_enterprise: 'Claude Enterprise',
 };
 
-// =========================== LÓGICA PURA (parse) ===========================
+// =========================== PURE LOGIC (parse) ===========================
 
-// Extrai reset/plano/passes/identidade de um objeto .claude.json já parseado.
-// `now` em ms. Devolve {usedPct:null, resetAt, resetInMin, plan, passes,
+// Extracts reset/plan/passes/identity from an already-parsed .claude.json object.
+// `now` in ms. Returns {usedPct:null, resetAt, resetInMin, plan, passes,
 // accountUuid, accountOrgUuid, accountName, accountEmail}.
-// O % do ciclo do Claude Max NÃO fica persistido em disco (só em runtime da
-// API Anthropic) → usedPct é sempre null aqui (honesto: não inventa número).
-// Identidade (multi-conta, #58): quem dedupa é a ORG (accountOrgUuid) quando
-// existe — billing e rate limit são por organizationRateLimitTier, e o MESMO
-// login vive em duas orgs Team com limites independentes (accountUuid igual,
-// organizationUuid diferente → duas contas). Conta pessoal (sem org) dedupa
-// por accountUuid. organizationName/emailAddress só rotulam — o email
-// COMPLETO nunca aparece na UI (só o local-part, e só no renderer).
+// The Claude Max cycle % is NOT persisted on disk (only in the Anthropic API
+// runtime) → usedPct is always null here (honest: doesn't invent a number).
+// Identity (multi-account, #58): the ORG (accountOrgUuid) is what dedupes when
+// it exists — billing and rate limit are per organizationRateLimitTier, and the SAME
+// login lives in two Team orgs with independent limits (same accountUuid,
+// different organizationUuid → two accounts). A personal account (no org) dedupes
+// by accountUuid. organizationName/emailAddress only label — the FULL
+// email never shows in the UI (only the local-part, and only in the renderer).
 function parseClaudeConfig(cfg, now) {
   const out = { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
     accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null };
   if (!cfg || typeof cfg !== 'object') return out;
 
-  // reset do plano: cachedGrowthBookFeatures.tengu_saffron_lattice.planLimitsEndDate
+  // plan reset: cachedGrowthBookFeatures.tengu_saffron_lattice.planLimitsEndDate
   const saffron = ((cfg.cachedGrowthBookFeatures || {}).tengu_saffron_lattice) || {};
   if (saffron.planLimitsEndDate) out.resetAt = saffron.planLimitsEndDate;
 
-  // plano: oauthAccount.organizationType / organizationRateLimitTier
-  // Ordem: tier Max conhecido (mais específico) → tipo de org conhecido → org
-  // presente mas desconhecida (rótulo genérico "Claude"). Só fica null quando
-  // NÃO há conta OAuth alguma — aí o coletor omite o Claude do overlay.
+  // plan: oauthAccount.organizationType / organizationRateLimitTier
+  // Order: known Max tier (most specific) → known org type → org
+  // present but unknown (generic "Claude" label). Only stays null when
+  // there is NO OAuth account at all — then the collector omits Claude from the overlay.
   const acc = cfg.oauthAccount || {};
   if (acc.accountUuid && typeof acc.accountUuid === 'string') out.accountUuid = acc.accountUuid;
   if (acc.organizationUuid && typeof acc.organizationUuid === 'string') out.accountOrgUuid = acc.organizationUuid;
@@ -80,12 +80,12 @@ function parseClaudeConfig(cfg, now) {
   } else if (acc.organizationType && CLAUDE_ORG_LABEL[acc.organizationType]) {
     out.plan = CLAUDE_ORG_LABEL[acc.organizationType];
   } else if (acc.organizationType || acc.organizationUuid || acc.emailAddress) {
-    // conta existe (algum campo de identidade), mas tipo/tier não mapeados →
-    // não some do overlay; mostra o rótulo genérico.
+    // account exists (some identity field), but type/tier unmapped →
+    // doesn't vanish from the overlay; shows the generic label.
     out.plan = 'Claude';
   }
 
-  // passes restantes (free passes do plano)
+  // passes remaining (plan free passes)
   if (typeof cfg.passesLastSeenRemaining === 'number') out.passes = cfg.passesLastSeenRemaining;
 
   if (out.resetAt) {
@@ -95,22 +95,22 @@ function parseClaudeConfig(cfg, now) {
   return out;
 }
 
-// Extrai os limites de um payload /api/monitor/usage/quota/limit do GLM.
-// Schema (mapeado do plugin oficial glm-plan-usage):
+// Extracts the limits from a GLM /api/monitor/usage/quota/limit payload.
+// Schema (mapped from the official glm-plan-usage plugin):
 //   { limits: [
 //     { type:'TOKENS_LIMIT', percentage:<N> },                        // 5h
-//     { type:'TIME_LIMIT',   percentage:<N>, currentValue, usage }    // mensal
+//     { type:'TIME_LIMIT',   percentage:<N>, currentValue, usage }    // monthly
 //   ]}
-// `now` em ms. Devolve array de entradas canônicas (sem agent/id/source —
-// quem chama adiciona o contexto do agente).
+// `now` in ms. Returns an array of canonical entries (without agent/id/source —
+// the caller adds the agent context).
 //
-// Schema real do /api/monitor/usage/quota/limit (z.ai/bigmodel):
+// Real schema of /api/monitor/usage/quota/limit (z.ai/bigmodel):
 //   { code:200, success:true, data: { level:'pro',
 //     limits: [
 //       { type:'TIME_LIMIT',  percentage:<N>, currentValue, usage, remaining, nextResetTime:<ms>, usageDetails:[...] },
 //       { type:'TOKENS_LIMIT', percentage:<N>, nextResetTime:<ms> },
 //     ]}}
-// `limits` pode vir na raiz (testes) ou dentro de `data` (API real) — ambos aceitos.
+// `limits` may come at the root (tests) or inside `data` (real API) — both accepted.
 function parseGlmQuota(payload, now) {
   const out = [];
   if (!payload || typeof payload !== 'object') return out;
@@ -123,7 +123,7 @@ function parseGlmQuota(payload, now) {
     const resetInMin = resetAt ? Math.max(0, Math.round((Date.parse(resetAt) - nowMs) / 60000)) : null;
     const pct = typeof lim.percentage === 'number' ? clampPct(lim.percentage) : null;
     if (lim.type === 'TOKENS_LIMIT') {
-      let title = 'Tokens (5h)'; // fallback padrão para payloads antigos/testes
+      let title = 'Tokens (5h)'; // default fallback for old payloads/tests
       if (lim.unit === 6) {
         title = 'Tokens (7d)';
       } else if (lim.unit === 5) {
@@ -131,15 +131,15 @@ function parseGlmQuota(payload, now) {
       }
       out.push({ title: title, usedPct: pct, resetAt, resetInMin, extra: null, level: root.level || null });
     } else if (lim.type === 'TIME_LIMIT') {
-      // MCP/tools mensal (search-prime, web-reader, zread, ...).
+      // Monthly MCP/tools (search-prime, web-reader, zread, ...).
       out.push({ title: 'MCP (mês)', usedPct: pct, resetAt, resetInMin, extra: formatUsage(lim.currentValue, lim.usage), level: root.level || null });
     }
   }
   return out;
 }
 
-// nextResetTime vem em MILISSEGUNDOS (epoch) no schema real. Fallback heurístico
-// para campos em string (resetAt, reset_at, ...) caso o schema mude.
+// nextResetTime comes in MILLISECONDS (epoch) in the real schema. Heuristic fallback
+// for string fields (resetAt, reset_at, ...) in case the schema changes.
 function pickReset(lim) {
   if (typeof lim.nextResetTime === 'number' && lim.nextResetTime > 0) {
     return new Date(lim.nextResetTime).toISOString();
@@ -164,12 +164,12 @@ function fmt(n) {
 }
 function clampPct(n) { return Math.max(0, Math.min(100, Math.round(n))); }
 
-// Extrai as janelas de uso do payload de api.anthropic.com/api/oauth/usage.
-// Schema (confirmado em runtime 2026-07-07):
+// Extracts the usage windows from the api.anthropic.com/api/oauth/usage payload.
+// Schema (confirmed in runtime 2026-07-07):
 //   { five_hour:{utilization,resets_at}, seven_day:{utilization,resets_at},
 //     seven_day_opus:null|{...}, seven_day_sonnet:null|{...}, ... }
-// utilization é 0..100 (%). resets_at é ISO. `planLabel` já resolvido pelo caller.
-// Devolve [{title, usedPct, resetAt, resetInMin}] — só janelas presentes.
+// utilization is 0..100 (%). resets_at is ISO. `planLabel` already resolved by the caller.
+// Returns [{title, usedPct, resetAt, resetInMin}] — only windows present.
 function parseAnthropicUsage(payload, now) {
   const out = [];
   if (!payload || typeof payload !== 'object') return out;
@@ -186,11 +186,11 @@ function parseAnthropicUsage(payload, now) {
       ? Math.max(0, Math.round((Date.parse(resetAt) - nowMs) / 60000)) : null;
     out.push({ title: w.title, usedPct: clampPct(win.utilization), resetAt, resetInMin });
   }
-  // extra_usage: uso "extra"/overage medido em dinheiro (Team/Enterprise com
-  // limite mensal de crédito, ou Pro com overage). used_credits/monthly_limit
-  // vêm em UNIDADES MENORES da moeda (decimal_places: USD=2 → centavos). Vira um
-  // tile "Extra" com % e o valor gasto/limite (ex.: "$50.4/$50"). Só entra quando
-  // habilitado e com limite positivo — senão fica fora (não polui a barra).
+  // extra_usage: "extra"/overage usage measured in money (Team/Enterprise with a
+  // monthly credit limit, or Pro with overage). used_credits/monthly_limit
+  // come in SMALLER UNITS of the currency (decimal_places: USD=2 → cents). Becomes
+  // an "Extra" tile with % and the spent/limit value (e.g. "$50.4/$50"). Only included
+  // when enabled and with a positive limit — otherwise left out (doesn't clutter the bar).
   const ex = payload.extra_usage;
   if (ex && typeof ex === 'object' && ex.is_enabled && typeof ex.monthly_limit === 'number' && ex.monthly_limit > 0) {
     const dec = (typeof ex.decimal_places === 'number' && ex.decimal_places >= 0 && ex.decimal_places <= 4) ? ex.decimal_places : 2;
@@ -209,15 +209,15 @@ function parseAnthropicUsage(payload, now) {
   return out;
 }
 
-// Extrai as janelas de uso do rate_limits de um evento token_count do Codex.
-// Schema (confirmado runtime 2026-07-07, ~/.codex/sessions/**/rollout-*.jsonl):
+// Extracts the usage windows from the rate_limits of a Codex token_count event.
+// Schema (confirmed runtime 2026-07-07, ~/.codex/sessions/**/rollout-*.jsonl):
 //   payload.rate_limits: {
 //     primary:   { used_percent, window_minutes:300,   resets_at:<epoch s> },  // 5h
 //     secondary: { used_percent, window_minutes:10080, resets_at:<epoch s> },  // 7d
 //     plan_type: 'plus'|'pro'|...
 //   }
-// resets_at é epoch em SEGUNDOS (≠ Anthropic ISO, ≠ GLM ms). window_minutes
-// nomeia a janela (300→"5 h", 10080→"7 dias", outro→"Nh"/"Nd"). `now` em ms.
+// resets_at is epoch in SECONDS (≠ Anthropic ISO, ≠ GLM ms). window_minutes
+// names the window (300→"5 h", 10080→"7 dias", other→"Nh"/"Nd"). `now` in ms.
 function parseCodexRateLimits(rateLimits, now) {
   const out = [];
   if (!rateLimits || typeof rateLimits !== 'object') return out;
@@ -233,9 +233,9 @@ function parseCodexRateLimits(rateLimits, now) {
   return out;
 }
 
-// Extrai as janelas de uso do payload da API OpenCode Go (/zen/go/v1/usage).
+// Extracts the usage windows from the OpenCode Go API payload (/zen/go/v1/usage).
 // Schema: { usage: { rolling: { percent, resets_at, status }, weekly, monthly } }
-// resets_at é ISO string (igual Anthropic). `now` em ms.
+// resets_at is an ISO string (same as Anthropic). `now` in ms.
 function parseOpencodeUsage(cfg, now) {
   const out = [];
   if (!cfg || typeof cfg !== 'object' || !cfg.usage || typeof cfg.usage !== 'object') return out;
@@ -260,7 +260,7 @@ function parseOpencodeUsage(cfg, now) {
   return out;
 }
 
-// Nomeia a janela pelo tamanho em minutos (Codex não rotula por nome).
+// Names the window by its size in minutes (Codex doesn't label by name).
 function windowTitle(min) {
   if (min === 300) return '5 h';
   if (min === 10080) return '7 dias';
@@ -272,19 +272,19 @@ function windowTitle(min) {
 
 // =========================== I/O ===========================
 
-// Lê o .claude.json e devolve o objeto COMPLETO do parseClaudeConfig — plano e
-// passes (o tile plano-só usa isso quando a API OAuth não responde). Barato,
-// síncrono. Devolve null quando NÃO há conta OAuth (sem .claude.json ou sem
-// campos de identidade) — distingue "sem Claude" de "Claude sem plano mapeado".
-// Obs.: parsed.resetAt aqui é o planLimitsEndDate (fim do ciclo do PLANO), NÃO o
-// reset da janela de uso — por isso o caller o ignora no tile plano-só.
+// Reads the .claude.json and returns the COMPLETE parseClaudeConfig object — plan and
+// passes (the plan-only tile uses this when the OAuth API doesn't respond). Cheap,
+// synchronous. Returns null when there is NO OAuth account (no .claude.json or no
+// identity fields) — distinguishes "no Claude" from "Claude without a mapped plan".
+// Note: parsed.resetAt here is the planLimitsEndDate (end of the PLAN cycle), NOT the
+// usage window reset — that's why the caller ignores it in the plan-only tile.
 //
-// Path pelo claude-config.js: <configdir>/.claude.json (vivo; configdir pode ser
-// symlink de perfil/dd-claude) com fallback legado ~/.claude.json (congelado).
-// Cache por mtime do .claude.json (arquivo grande, ~170 KB): multi-conta lê N
-// destes por ciclo de coleta — re-parsear N× a cada tick seria desperdício. O
-// mtime muda em cada escrita do Claude Code, então a invalidação é automática.
-// resetInMin depende de `now` → recalculado a cada retorno, sem re-parsear.
+// Path via claude-config.js: <configdir>/.claude.json (live; configdir may be a
+// profile/dd-claude symlink) with legacy fallback ~/.claude.json (frozen).
+// Cache keyed by .claude.json mtime (large file, ~170 KB): multi-account reads N
+// of these per collection cycle — re-parsing N× on every tick would be wasteful. The
+// mtime changes on every Claude Code write, so invalidation is automatic.
+// resetInMin depends on `now` → recomputed on every return, without re-parsing.
 const _claudeCfgCache = new Map(); // file → { mtime, parsed }
 function readClaudeConfig({ home, now, dir } = {}) {
   try {
@@ -297,34 +297,34 @@ function readClaudeConfig({ home, now, dir } = {}) {
         _claudeCfgCache.set(f, hit);
       }
       const parsed = hit.parsed;
-      // resetInMin é derivado do agora — sempre fresco, mesmo com cache:
+      // resetInMin is derived from the current time — always fresh, even cached:
       if (parsed.resetAt) {
         const ms = Date.parse(parsed.resetAt) - (now || Date.now());
         parsed.resetInMin = ms > 0 ? Math.round(ms / 60000) : 0;
       }
-      // Legível → É a fonte, com ou sem conta: um dir novo sem OAuth NÃO pode
-      // cair no legado congelado (conta de outro login) — seria o bug do #58
-      // de novo, invertido. Sem plan → sem conta, fim.
+      // Readable → it IS the source, with or without an account: a new dir without OAuth CANNOT
+      // fall through to the frozen legacy (another login's account) — that would be the #58
+      // bug again, inverted. No plan → no account, end.
       return parsed.plan ? parsed : null;
     }
     return null;
   } catch { return null; }
 }
 
-// Lê o OAuth access token do Claude Code de ~/.claude/.credentials.json
-// (claudeAiOauth.accessToken). É o mesmo token que o próprio Claude Code usa;
-// não gravamos nem renovamos — se estiver expirado, a API rejeita e caímos no
-// fallback plano-só (o Claude Code renova sozinho no uso normal). Nunca lança.
+// Reads the Claude Code OAuth access token from ~/.claude/.credentials.json
+// (claudeAiOauth.accessToken). It's the same token Claude Code itself uses;
+// we never write or renew it — if it's expired, the API rejects it and we fall back to the
+// plan-only fallback (Claude Code renews it on its own during normal use). Never throws.
 function readClaudeOAuthToken({ home } = {}) {
   return readClaudeCreds({ home }).accessToken;
 }
 
-// Lê as credenciais OAuth: accessToken + subscriptionType + rateLimitTier. Estes
-// dois últimos são a fonte MAIS confiável do plano (o .claude.json pode trazer um
-// tier interno opaco como 'default_raven', enquanto as credenciais trazem o tier
-// real 'default_claude_max_5x'). Nunca lança — campos ausentes viram null.
-// Path pelo claude-config.js: <configdir>/.credentials.json (configdir pode ser
-// symlink de perfil/dd-claude — atravessa sozinho no acesso).
+// Reads the OAuth credentials: accessToken + subscriptionType + rateLimitTier. These
+// last two are the MOST reliable source of the plan (the .claude.json may carry an
+// opaque internal tier like 'default_raven', while the credentials carry the
+// real tier 'default_claude_max_5x'). Never throws — missing fields become null.
+// Path via claude-config.js: <configdir>/.credentials.json (configdir may be a
+// profile/dd-claude symlink — traversed automatically on access).
 function readClaudeCreds({ home, dir } = {}) {
   try {
     const creds = JSON.parse(fs.readFileSync(claudePaths.credsFile({ home, dir }), 'utf8'));
@@ -337,9 +337,9 @@ function readClaudeCreds({ home, dir } = {}) {
   } catch { return { accessToken: null, subscriptionType: null, rateLimitTier: null }; }
 }
 
-// Resolve o rótulo do plano a partir das credenciais (fonte confiável). O tier
-// Max conhecido vence; senão o subscriptionType (team/pro/enterprise) vira label.
-// Devolve null se as credenciais não bastam (o caller cai no .claude.json).
+// Resolves the plan label from the credentials (trusted source). A known Max
+// tier wins; otherwise the subscriptionType (team/pro/enterprise) becomes the label.
+// Returns null if the credentials aren't enough (the caller falls back to the .claude.json).
 function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
   if (rateLimitTier && CLAUDE_TIER_LABEL[rateLimitTier]) return 'Claude ' + CLAUDE_TIER_LABEL[rateLimitTier];
   const sub = (subscriptionType || '').toLowerCase();
@@ -348,35 +348,35 @@ function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
   return null;
 }
 
-// Coletor do Claude. Tenta a API OAuth de uso (% E reset REAIS das janelas 5h e
-// 7 dias — o mesmo dado do painel/`/status`); se não houver token ou a chamada
-// falhar, cai no fallback: uma linha só com o plano (sem número, honesto).
-// Cache por token, 30s. Nunca lança.
+// Claude collector. Tries the OAuth usage API (REAL % AND reset of the 5h and
+// 7d windows — the same data as the dashboard/`/status`); if there's no token or the call
+// fails, falls back to: a single plan-only line (no number, honest).
+// Cache per token, 30s. Never throws.
 //
-// 429 (rate limit): a API manda Retry-After (ex.: ~1000s). Rebater a cada 60s
-// RENOVA a penalidade e o % nunca volta — foi o bug do "Claude sumiu". Ao levar
-// 429 agendamos um cooldown (respeitando Retry-After) durante o qual NÃO batemos
-// na API: devolvemos o último valor bom conhecido, ou o plano-só. Assim o tile
-// não some nem pisca ⚠ e a janela de rate limit expira sozinha.
+// 429 (rate limit): the API sends Retry-After (e.g. ~1000s). Hitting it every 60s
+// RENEWS the penalty and the % never comes back — that was the "Claude vanished" bug. On a
+// 429 we schedule a cooldown (respecting Retry-After) during which we DON'T hit
+// the API: we return the last known good value, or plan-only. That way the tile
+// doesn't vanish nor flicker ⚠ and the rate limit window expires on its own.
 const _claudeCacheByToken = new Map(); // token → { at, entries, cooldownUntil }
 
-// Tile plano-só (sem a API OAuth): mostra só o plano + passes, SEM reset. O
-// planLimitsEndDate do .claude.json é o fim do ciclo do PLANO (ex.: Jul 13),
-// NÃO o reset da janela de uso (5h/7d, que reseta várias vezes até lá) — pô-lo
-// aqui enganava ("3d" logo após a janela ter resetado). O reset REAL das
-// janelas só existe no runtime da API (resets_at) → sem API, honestamente sem
-// reset. `passes` (free passes do plano) é info local legítima, fica.
+// Plan-only tile (without the OAuth API): shows only plan + passes, WITHOUT reset. The
+// planLimitsEndDate from .claude.json is the end of the PLAN cycle (e.g. Jul 13),
+// NOT the usage window reset (5h/7d, which resets several times until then) — putting it
+// here was misleading ("3d" right after the window had reset). The REAL reset of the
+// windows only exists in the API runtime (resets_at) → no API, honestly no
+// reset. `passes` (plan free passes) is legitimate local info, it stays.
 //
-// Conta SEM oauth e SEM plano = perfil técnico de PROXY (ex. gh-claude →
-// vm-contabo, que roteia GLM): sem isto a conta não gerava barra NENHUMA —
-// invisível na lista de uso. Ganha um tile plano-só "API <host>" (o proxy
-// não expõe quota Anthropic → sem %, honesto). Só conta NAMED (dir
-// explícito): a default é o symlink de org, settings.json dela não diz
-// nada de API alternativa. Perfis sem base_url seguem sem barra.
+// Account WITHOUT oauth and WITHOUT a plan = technical PROXY profile (e.g. gh-claude →
+// vm-contabo, which routes GLM): without this the account produced NO bar at all —
+// invisible in the usage list. It gets a plan-only "API <host>" tile (the proxy
+// doesn't expose Anthropic quota → no %, honest). Only counts NAMED (explicit
+// dir): the default is the org symlink, whose settings.json says
+// nothing about an alternative API. Profiles without base_url still get no bar.
 //
-// Devolve null quando não há plano nem API para mostrar. Usada pelo
-// readClaudeUsage (sem token / rede falhou) E pelo catch do collectUsage
-// (exceção inesperada do leitor — o tile vira sinal de família viva, ver lá).
+// Returns null when there's no plan nor API to show. Used by
+// readClaudeUsage (no token / network failed) AND by collectUsage's catch
+// (unexpected reader exception — the tile becomes a live-family signal, see there).
 function claudePlanOnlyTile(plan, pc, dir) {
   const api = !plan && dir ? apiProviderFromSettings(dir) : null;
   const planLabel = plan || (api ? 'API ' + api : null);
@@ -390,9 +390,9 @@ function claudePlanOnlyTile(plan, pc, dir) {
 async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldownFails, setCooldown, allowFetch = true } = {}) {
   const pc = readClaudeConfig({ home, now, dir });
   const creds = readClaudeCreds({ home, dir });
-  // Plano: credenciais primeiro (tier/subscription REAIS — ex.: 'default_claude_max_5x'),
-  // depois o .claude.json (que pode ter só um tier interno opaco). Se nenhum
-  // resolve mas há conta, cai no genérico do .claude.json (ou null = sem conta).
+  // Plan: credentials first (REAL tier/subscription — e.g. 'default_claude_max_5x'),
+  // then the .claude.json (which may have only an opaque internal tier). If neither
+  // resolves but there's an account, falls back to the .claude.json generic (or null = no account).
   const plan = claudePlanFromCreds(creds) || (pc ? pc.plan : null);
   const token = creds.accessToken;
   const planOnly = claudePlanOnlyTile(plan, pc, dir);
@@ -401,18 +401,18 @@ async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldow
   const nowMs = now || Date.now();
   const cached = _claudeCacheByToken.get(token);
   if (cached && (nowMs - cached.at) < CLAUDE_CACHE_MS) return cached.entries;
-  // Cooldown PERSISTIDO (injetado pelo main.js, sobrevive a restart): sem isto,
-  // `bun start`/dev perde o cooldown em memória a cada reinício, re-bate no boot
-  // e RE-ESCALA o 429 (o servidor sobe o Retry-After a cada toque). Não rebate.
+  // PERSISTED cooldown (injected by main.js, survives a restart): without this,
+  // `bun start`/dev loses the in-memory cooldown on every restart, hits the API again at boot
+  // and RE-ESCALATES the 429 (the server raises Retry-After on every hit). No re-hitting.
   const cd = Math.max(cached && cached.cooldownUntil || 0, cooldownUntil || 0);
   if (cd && nowMs < cd) return (cached && cached.entries) || planOnly;
 
-  // LAZY (coleta sob demanda): o loop de fundo passa allowFetch=false e NÃO bate
-  // na API — a chamada só acontece quando o usuário VAI OLHAR o uso (abrir/revelar
-  // o overlay, botão ⟳) ou no boot. A /api/oauth/usage divide um limite AGREGADO
-  // com o /status do próprio Claude Code; consultá-la em loop de 60s alimentava o
-  // 429. Sem gatilho, devolvemos o último valor bom conhecido (ou o plano-só) —
-  // mesmo comportamento do cooldown, porém sem tocar na rede.
+  // LAZY (on-demand collection): the background loop passes allowFetch=false and does NOT
+  // hit the API — the call only happens when the user IS ABOUT TO LOOK at usage (opening/
+  // revealing the overlay, ⟳ button) or at boot. /api/oauth/usage shares an AGGREGATED
+  // limit with Claude Code's own /status; polling it in a 60s loop fed the
+  // 429. Without a trigger, we return the last known good value (or plan-only) —
+  // same behavior as the cooldown, but without touching the network.
   if (!allowFetch) return (cached && cached.entries) || planOnly;
 
   const headers = {
@@ -425,9 +425,9 @@ async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldow
   try {
     payload = await _httpsGetJson('https://api.anthropic.com/api/oauth/usage', headers, fetcher);
   } catch (e) {
-    // 429 → backoff exponencial: cada 429 seguido alonga a espera (Retry-After ×
-    // 1.5^fails, teto 1h) p/ dar espaço ao limite agregado recuperar. Mantém o
-    // último valor bom (ou plano-só). Outras falhas (401/offline) → plano-só.
+    // 429 → exponential backoff: each consecutive 429 lengthens the wait (Retry-After ×
+    // 1.5^fails, 1h cap) to give the aggregated limit room to recover. Keeps the
+    // last good value (or plan-only). Other failures (401/offline) → plan-only.
     if (e && e.statusCode === 429) {
       const baseMs = (typeof e.retryAfterMs === 'number' && e.retryAfterMs > 0)
         ? e.retryAfterMs : CLAUDE_429_COOLDOWN_MS;
@@ -437,16 +437,16 @@ async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldow
       const until = nowMs + backoff;
       const keep = (cached && cached.entries) ? cached.entries : planOnly;
       _claudeCacheByToken.set(token, { at: nowMs, entries: keep, cooldownUntil: until, fails: fails + 1 });
-      // Persiste {until, fails} (só timestamps/contador, nunca o token) p/ restart.
-      if (typeof setCooldown === 'function') { try { setCooldown({ until, fails: fails + 1 }); } catch { /* nunca quebra a coleta */ } }
+      // Persists {until, fails} (only timestamps/counter, never the token) for restart.
+      if (typeof setCooldown === 'function') { try { setCooldown({ until, fails: fails + 1 }); } catch { /* never breaks the collection */ } }
       return keep;
     }
-    return planOnly; // token expirado/offline → plano-só (não polui com ⚠)
+    return planOnly; // expired token/offline → plan-only (doesn't clutter with ⚠)
   }
   const windows = parseAnthropicUsage(payload, nowMs);
   if (!windows.length) return planOnly;
-  // id estável por janela (5h/7d/extra) — o 'Extra' (overage) NÃO pode colidir
-  // com o 7d; um mapa explícito evita o ternário que jogava tudo em '7d'.
+  // stable id per window (5h/7d/extra) — 'Extra' (overage) must NOT collide
+  // with 7d; an explicit map avoids the ternary that dumped everything into '7d'.
   const idByTitle = { '5 h': 'claude-5h', '7 dias': 'claude-7d', 'Extra': 'claude-extra' };
   const entries = windows.map((w) => ({
     id: idByTitle[w.title] || 'claude-' + String(w.title).replace(/\s+/g, ''),
@@ -456,28 +456,28 @@ async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldow
     usedPct: w.usedPct,
     resetAt: w.resetAt,
     resetInMin: w.resetInMin,
-    extra: w.extra || null,          // 'Extra' traz "$50.4/$50"; janelas não têm
+    extra: w.extra || null,          // 'Extra' carries "$50.4/$50"; windows don't have one
     source: 'anthropic.oauth',
     error: null,
   }));
   _claudeCacheByToken.set(token, { at: nowMs, entries, fails: 0 });
-  // Sucesso → zera o backoff persistido (libera p/ futuras coletas normais).
-  if (typeof setCooldown === 'function') { try { setCooldown({ until: 0, fails: 0 }); } catch { /* nunca quebra a coleta */ } }
+  // Success → clears the persisted backoff (releases for future normal collections).
+  if (typeof setCooldown === 'function') { try { setCooldown({ until: 0, fails: 0 }); } catch { /* never breaks the collection */ } }
   return entries;
 }
 function _clearClaudeCache() { _claudeCacheByToken.clear(); }
 
 
-// ---- Codex (OpenAI, plano ChatGPT) — PASSIVO, sem rede ----
-// O uso vive no rollout da sessão: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl.
-// O ÚLTIMO evento token_count tem payload.rate_limits (% e reset reais das
-// janelas 5h/semanal). Associamos o rollout à sessão viva pelo cwd (o
-// session_meta do rollout tem cwd; o main.js passa o cwd lido de /proc/<pid>/cwd).
-// Tudo injetável (sessionsDir, readFile, listFiles) → testável sem disco.
+// ---- Codex (OpenAI, ChatGPT plan) — PASSIVE, no network ----
+// Usage lives in the session rollout: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl.
+// The LAST token_count event has payload.rate_limits (real % and reset of the
+// 5h/weekly windows). We associate the rollout with the live session by cwd (the
+// rollout's session_meta has cwd; main.js passes the cwd read from /proc/<pid>/cwd).
+// Everything injectable (sessionsDir, readFile, listFiles) → testable without disk.
 
-// Acha o caminho do rollout mais recente cujo session_meta.cwd == cwd alvo.
-// `files` é a lista de caminhos absolutos de rollouts (mais recente primeiro é
-// ideal, mas ordenamos por mtime via statMtime). Puro-ish: I/O por callbacks.
+// Finds the path of the most recent rollout whose session_meta.cwd == target cwd.
+// `files` is the list of absolute rollout paths (most recent first is
+// ideal, but we sort by mtime via statMtime). Pure-ish: I/O via callbacks.
 function findCodexRollout(cwd, opts = {}) {
   const listFiles = opts.listFiles || defaultListRollouts;
   const readHead = opts.readHead || defaultReadHead;
@@ -485,11 +485,11 @@ function findCodexRollout(cwd, opts = {}) {
   let files;
   try { files = listFiles(opts.sessionsDir); } catch { return null; }
   if (!Array.isArray(files) || !files.length) return null;
-  // ordena por mtime desc (rollout ativo é o mais recém-escrito)
+  // sorts by mtime desc (the active rollout is the most recently written)
   const sorted = files.map((f) => ({ f, m: statMtime(f) })).sort((a, b) => b.m - a.m);
   for (const { f } of sorted) {
     let head;
-    try { head = readHead(f); } catch { continue; }   // 1ª linha = session_meta
+    try { head = readHead(f); } catch { continue; }   // 1st line = session_meta
     let meta;
     try { meta = JSON.parse(head); } catch { continue; }
     const mcwd = meta && (meta.payload ? meta.payload.cwd : meta.cwd);
@@ -498,8 +498,8 @@ function findCodexRollout(cwd, opts = {}) {
   return null;
 }
 
-// Extrai o rate_limits do ÚLTIMO token_count de um rollout já lido (string
-// JSONL). Puro/testável. Devolve o objeto rate_limits ou null.
+// Extracts the rate_limits from the LAST token_count of an already-read rollout (JSONL
+// string). Pure/testable. Returns the rate_limits object or null.
 function lastCodexRateLimits(jsonl) {
   if (typeof jsonl !== 'string') return null;
   let found = null;
@@ -507,16 +507,16 @@ function lastCodexRateLimits(jsonl) {
     if (!line || line.indexOf('token_count') === -1) continue;
     let o;
     try { o = JSON.parse(line); } catch { continue; }
-    // O evento é {type:'event_msg', payload:{type:'token_count', rate_limits}}.
+    // The event is {type:'event_msg', payload:{type:'token_count', rate_limits}}.
     const p = o && o.payload;
     if (p && p.type === 'token_count' && p.rate_limits) {
-      found = p.rate_limits; // sobrescreve → fica com o ÚLTIMO token_count
+      found = p.rate_limits; // overwrites → keeps the LAST token_count
     }
   }
   return found;
 }
 
-// Lê o uso do Codex para um cwd. Cache por cwd, 30s. Nunca lança.
+// Reads Codex usage for a cwd. Cache per cwd, 30s. Never throws.
 const _codexCacheByCwd = new Map(); // cwd → { at, entries }
 function readCodexUsage({ cwd, now, sessionsDir, listFiles, readHead, readFull, statMtime } = {}) {
   if (!cwd) return null;
@@ -551,7 +551,7 @@ function readCodexUsage({ cwd, now, sessionsDir, listFiles, readHead, readFull, 
 }
 function _clearCodexCache() { _codexCacheByCwd.clear(); }
 
-// I/O default do Codex (usados em produção; testes injetam os próprios).
+// Codex default I/O (used in production; tests inject their own).
 function defaultListRollouts(dir) {
   const base = dir || path.join(os.homedir(), '.codex', 'sessions');
   const out = [];
@@ -570,13 +570,13 @@ function defaultListRollouts(dir) {
 }
 function defaultMtime(f) { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }
 function defaultReadHead(f) {
-  // Lê só a 1ª linha (session_meta) — mas ela pode ser GRANDE: o Codex embute o
-  // system prompt inteiro em payload.base_instructions (dezenas de KB). Lê em
-  // blocos até o primeiro \n (com teto de segurança) em vez de um buffer fixo,
-  // senão o JSON.parse quebra numa linha cortada no meio.
+  // Reads only the 1st line (session_meta) — but it can be LARGE: Codex embeds the
+  // whole system prompt in payload.base_instructions (tens of KB). Reads in
+  // chunks up to the first \n (with a safety cap) instead of a fixed buffer,
+  // otherwise JSON.parse breaks on a line cut in the middle.
   const fd = fs.openSync(f, 'r');
   try {
-    const CHUNK = 65536, MAX = 4 * 1024 * 1024; // teto 4MB p/ a 1ª linha
+    const CHUNK = 65536, MAX = 4 * 1024 * 1024; // 4MB cap for the 1st line
     let acc = '', pos = 0;
     const buf = Buffer.alloc(CHUNK);
     while (pos < MAX) {
@@ -593,16 +593,16 @@ function defaultReadHead(f) {
 function defaultReadFull(f) { return fs.readFileSync(f, 'utf8'); }
 
 // ---- Antigravity / Gemini CLI (Google Code Assist) ----
-// PASSIVO, sem rede. Duas fontes:
-//  1. RÓTULO: o modelo ativo em ~/.gemini/antigravity-cli/settings.json.
-//  2. QUOTA ESGOTADA: os DBs de conversa (~/.gemini/antigravity-cli/conversations/
-//     *.db) gravam a resposta de erro QUOTA_EXHAUSTED da API, que traz o
-//     quotaResetTimeStamp (reset semanal). O Google NÃO expõe % contínuo — só
-//     sabemos "esgotado" quando estoura. Então: com quota → só o rótulo (—);
-//     esgotado → usedPct=100 (barra cheia/vermelha) + reset.
-// Síncrona (não faz rede) → collectUsage a envolve num Promise.resolve.
+// PASSIVE, no network. Two sources:
+//  1. LABEL: the active model in ~/.gemini/antigravity-cli/settings.json.
+//  2. EXHAUSTED QUOTA: the conversation DBs (~/.gemini/antigravity-cli/conversations/
+//     *.db) record the API's QUOTA_EXHAUSTED error response, which carries the
+//     quotaResetTimeStamp (weekly reset). Google does NOT expose a continuous % — we
+//     only know "exhausted" when it blows. So: with quota → label only (—);
+//     exhausted → usedPct=100 (full/red bar) + reset.
+// Synchronous (does no network) → collectUsage wraps it in a Promise.resolve.
 
-// Parser puro: extrai o rótulo do objeto settings já lido. Testável.
+// Pure parser: extracts the label from the already-read settings object. Testable.
 function parseAntigravityTier(settings) {
   if (!settings || typeof settings !== 'object') return null;
   const model = settings.model || settings.selectedModel || settings.defaultModel;
@@ -610,13 +610,13 @@ function parseAntigravityTier(settings) {
   return { model };
 }
 
-// Parser puro: acha o QUOTA_EXHAUSTED com o MAIOR quotaResetTimeStamp num texto
-// (o conteúdo bruto de um .db, lido como string). Devolve {resetAt} ISO ou null.
-// Regex-based (o .db é binário/protobuf; os JSONs de erro ficam legíveis dentro).
+// Pure parser: finds the QUOTA_EXHAUSTED with the LARGEST quotaResetTimeStamp in a text
+// (the raw content of a .db, read as a string). Returns {resetAt} ISO or null.
+// Regex-based (the .db is binary/protobuf; the error JSONs stay readable inside).
 function parseAntigravityQuota(dbText, now) {
   if (typeof dbText !== 'string') return null;
-  // Ignora conversas de suporte técnico do próprio semáforo de IA que contêm
-  // discussões do código de cota e geram falsos positivos de teste.
+  // Ignores the AI traffic light's own technical support conversations that contain
+  // discussions of the quota code and generate test false positives.
   if (dbText.includes('debug_usage.js') || dbText.includes('traffic-hook.sh')) {
     return null;
   }
@@ -629,7 +629,7 @@ function parseAntigravityQuota(dbText, now) {
     const ms = Date.parse(tsStr);
     if (Number.isNaN(ms)) continue;
 
-    // Confirma se QUOTA_EXHAUSTED está próximo (limita a janela a 250 caracteres antes/depois)
+    // Confirms QUOTA_EXHAUSTED is nearby (limits the window to 250 characters before/after)
     const idx = m.index;
     const start = Math.max(0, idx - 250);
     const end = Math.min(dbText.length, idx + 250);
@@ -638,35 +638,35 @@ function parseAntigravityQuota(dbText, now) {
       if (ms > bestTs) { bestTs = ms; bestAt = tsStr; }
     }
   }
-  // só conta se o reset é no FUTURO (quota realmente esgotada agora).
+  // only counts if the reset is in the FUTURE (quota really exhausted now).
   if (bestAt && bestTs > nowMs) return { resetAt: bestAt };
   return null;
 }
 
-// Lê o uso do Antigravity. Rótulo do settings.json + estado de quota dos DBs de
-// conversa (o mais recente por mtime). Sem settings → null. Nunca lança.
-// I/O injetável (readFile, listDbs, readDb, mtime) pra teste.
+// Reads Antigravity usage. Label from settings.json + quota state from the
+// conversation DBs (the most recent by mtime). No settings → null. Never throws.
+// Injectable I/O (readFile, listDbs, readDb, mtime) for testing.
 function readAntigravityUsage({ home, now, readFile, listDbs, readDb, mtime } = {}) {
   const base = path.join(home || os.homedir(), '.gemini', 'antigravity-cli');
   let settings;
   try {
     const raw = (readFile || ((f) => fs.readFileSync(f, 'utf8')))(path.join(base, 'settings.json'));
     settings = JSON.parse(raw);
-  } catch { return null; } // sem Antigravity configurado
+  } catch { return null; } // no Antigravity configured
   const t = parseAntigravityTier(settings);
   if (!t) return null;
 
-  // quota esgotada: checa DBs de conversa RECENTES (modificados nas últimas 2h).
-  // DBs antigos podem conter erros de quota de um plano anterior que já foi
-  // atualizado — não devem afetar o status atual.
-  const QUOTA_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 horas
+  // exhausted quota: checks RECENT conversation DBs (modified in the last 2h).
+  // Old DBs may contain quota errors from a previous plan that has since been
+  // upgraded — they must not affect the current status.
+  const QUOTA_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
   let quota = null;
   try {
     const list = (listDbs || defaultListAntigravityDbs)(base);
     const stat = mtime || ((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } });
     const read = readDb || ((f) => fs.readFileSync(f, 'latin1'));
     const nowMs = now || Date.now();
-    // Filtra apenas por modificados nas últimas 2h, ordenando pelos mais recentes.
+    // Filters only those modified in the last 2h, sorting by most recent first.
     const candidates = list
       .map((f) => ({ f, m: stat(f) }))
       .filter(({ m }) => (nowMs - m) < QUOTA_MAX_AGE_MS)
@@ -678,7 +678,7 @@ function readAntigravityUsage({ home, now, readFile, listDbs, readDb, mtime } = 
       const q = parseAntigravityQuota(txt, now);
       if (q) { quota = q; break; }
     }
-  } catch { /* sem DBs / sem permissão → segue só com rótulo */ }
+  } catch { /* no DBs / no permission → carries on with label only */ }
 
   const nowMs = now || Date.now();
   const plan = t.model ? 'Antigravity (' + t.model + ')' : 'Antigravity';
@@ -686,29 +686,29 @@ function readAntigravityUsage({ home, now, readFile, listDbs, readDb, mtime } = 
     const resetInMin = Math.max(0, Math.round((Date.parse(quota.resetAt) - nowMs) / 60000));
     return [{
       id: 'antigravity-quota', agent: 'antigravity', title: 'Cota', plan,
-      usedPct: 100,                        // esgotado → barra cheia (vermelha)
+      usedPct: 100,                        // exhausted → full (red) bar
       resetAt: quota.resetAt, resetInMin, extra: null,
       source: 'antigravity.quota', error: null,
     }];
   }
   return [{
     id: 'antigravity-plan', agent: 'antigravity', title: 'Cota', plan,
-    usedPct: null,                         // com quota → sem número (só rótulo)
+    usedPct: null,                         // with quota → no number (label only)
     resetAt: null, resetInMin: null, extra: null,
     source: 'antigravity.settings', error: null,
   }];
 }
 
-// Lista os .db de conversa do Antigravity (I/O default; testes injetam o seu).
+// Lists Antigravity's conversation .db files (default I/O; tests inject their own).
 function defaultListAntigravityDbs(base) {
   const dir = path.join(base, 'conversations');
   try { return fs.readdirSync(dir).filter((f) => f.endsWith('.db')).map((f) => path.join(dir, f)); }
   catch { return []; }
 }
 
-// Converte o header Retry-After em ms. Aceita os dois formatos do HTTP: um
-// número de SEGUNDOS ("1007") ou uma data HTTP ("Wed, 21 Oct 2026 07:28:00 GMT").
-// `now` em ms (injetável p/ teste). Devolve ms >= 0, ou null se ilegível.
+// Converts the Retry-After header to ms. Accepts both HTTP formats: a
+// SECONDS number ("1007") or an HTTP date ("Wed, 21 Oct 2026 07:28:00 GMT").
+// `now` in ms (injectable for testing). Returns ms >= 0, or null if unreadable.
 function parseRetryAfter(header, now) {
   if (header == null) return null;
   const s = String(header).trim();
@@ -718,8 +718,8 @@ function parseRetryAfter(header, now) {
   return Math.max(0, when - (now || Date.now()));
 }
 
-// Faz um GET HTTPS injetando um `fetcher` (testável). Em produção usa https.get.
-// Devolve o JSON parseado ou lança (quem chama captura).
+// Makes an HTTPS GET with an injectable `fetcher` (testable). In production uses https.get.
+// Returns the parsed JSON or throws (the caller catches).
 function _httpsGetJson(url, headers, fetcher, timeoutMs = 4000) {
   const fetch = fetcher || ((u, h, t) => new Promise((resolve, reject) => {
     const parsed = new URL(u);
@@ -730,7 +730,7 @@ function _httpsGetJson(url, headers, fetcher, timeoutMs = 4000) {
         res.on('data', (c) => { data += c; });
         res.on('end', () => {
           if (res.statusCode === 200) { resolve(data); return; }
-          // Anexa metadados ao erro p/ o caller decidir backoff (429 → cooldown).
+          // Attaches metadata to the error so the caller can decide backoff (429 → cooldown).
           const err = new Error(`HTTP ${res.statusCode}`);
           err.statusCode = res.statusCode;
           const ra = parseRetryAfter(res.headers && res.headers['retry-after']);
@@ -746,22 +746,22 @@ function _httpsGetJson(url, headers, fetcher, timeoutMs = 4000) {
   return fetch(url, headers, timeoutMs).then((body) => JSON.parse(body));
 }
 
-// Lê a quota do GLM via API de monitor. Requer ANTHROPIC_BASE_URL (z.ai ou
-// bigmodel) + ANTHROPIC_AUTH_TOKEN no env. Sem credencial → null (omitido).
-// Cache POR TOKEN (não global): contas z.ai distintas em terminais distintos
-// não se sobrescrevem no cache. `label`/`suffix` distinguem contas na UI quando
-// há mais de uma (multi-conta); com 1 conta ficam vazios e o id fica canônico.
+// Reads the GLM quota via the monitor API. Requires ANTHROPIC_BASE_URL (z.ai or
+// bigmodel) + ANTHROPIC_AUTH_TOKEN in env. No credentials → null (omitted).
+// Cache PER TOKEN (not global): distinct z.ai accounts in distinct terminals
+// don't overwrite each other in the cache. `label`/`suffix` distinguish accounts in the
+// UI when there is more than one (multi-account); with 1 account they stay empty and the id stays canonical.
 const CACHE_MS = 30 * 1000;
-// O Claude tem cache PRÓPRIO e mais longo: a API /api/oauth/usage é fortemente
-// rate-limited (Retry-After ~1000s) e as janelas são de 5h/7d — o % mal muda em
-// minutos. 5 min = no máx. 12 req/h, tira a pressão do endpoint. (GLM segue 30s.)
+// Claude has its OWN, longer cache: the /api/oauth/usage API is heavily
+// rate-limited (Retry-After ~1000s) and the windows are 5h/7d — the % barely
+// changes within minutes. 5 min = at most 12 req/h, takes pressure off the endpoint. (GLM stays at 30s.)
 const CLAUDE_CACHE_MS = 5 * 60 * 1000; // 5 min
-// Cooldown padrão quando o 429 não traz Retry-After legível (fallback conservador).
+// Default cooldown when the 429 carries no readable Retry-After (conservative fallback).
 const CLAUDE_429_COOLDOWN_MS = 15 * 60 * 1000; // 15 min
-// Backoff exponencial: a cada 429 SEGUIDO, o app espera cada vez mais antes de
-// tentar (Retry-After × 1.5^fails), até o teto. Evita o ciclo "cooldown expira →
-// rebater → 429 de novo → re-armar" que mantinha o limite agregado estourado (o
-// mesmo endpoint é consultado pelo próprio Claude Code no /status). Teto de 1h.
+// Exponential backoff: on each CONSECUTIVE 429 the app waits longer and longer
+// before trying (Retry-After × 1.5^fails), up to the cap. Avoids the "cooldown expires →
+// re-hit → 429 again → re-arm" cycle that kept the aggregated limit blown (the
+// same endpoint is queried by Claude Code itself in /status). 1h cap.
 const CLAUDE_429_BACKOFF_FACTOR = 1.5;
 const CLAUDE_429_MAX_BACKOFF_MS = 60 * 60 * 1000;
 const _glmCacheByToken = new Map(); // token → { at, entries }
@@ -770,7 +770,7 @@ async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
   const base = E.ANTHROPIC_BASE_URL || '';
   const token = E.ANTHROPIC_AUTH_TOKEN || '';
   if (!token || !base) return null;
-  if (!/api\.z\.ai|bigmodel\.cn/.test(base)) return null; // backend não-GLM
+  if (!/api\.z\.ai|bigmodel\.cn/.test(base)) return null; // non-GLM backend
 
   const nowMs = now || Date.now();
   const cached = _glmCacheByToken.get(token);
@@ -780,8 +780,8 @@ async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
   const domain = `${parsed.protocol}//${parsed.host}`;
   const quotaUrl = `${domain}/api/monitor/usage/quota/limit`;
   const headers = { Authorization: token, 'Accept-Language': 'en-US,en', 'Content-Type': 'application/json' };
-  const sfx = suffix ? ':' + suffix : '';       // id único por conta (renderer key)
-  const planTag = label ? ' (' + label + ')' : ''; // rótulo humano da conta
+  const sfx = suffix ? ':' + suffix : '';       // unique id per account (renderer key)
+  const planTag = label ? ' (' + label + ')' : ''; // human label of the account
 
   let payload;
   try {
@@ -810,9 +810,9 @@ async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
     source: 'glm.api',
     error: null,
   }));
-  // Sem limites parseados = payload com schema desconhecido. Ainda assim
-  // devolvemos uma entrada "GLM" marcando que a conta existe (source ativo),
-  // mas sem número — honesto, não inventa.
+  // No limits parsed = payload with unknown schema. Even so we
+  // return a "GLM" entry marking that the account exists (active source),
+  // but without a number — honest, doesn't invent one.
   const result = entries.length ? entries : [{
     id: 'glm' + sfx, agent: 'glm', title: 'GLM' + planTag, usedPct: null, resetAt: null,
     resetInMin: null, extra: null, source: 'glm.api', error: 'no limits parsed',
@@ -821,12 +821,12 @@ async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
   return result;
 }
 
-// Limpa o cache (testes / mudança de credencial).
+// Clears the cache (tests / credential change).
 function _clearGlmCache() { _glmCacheByToken.clear(); }
 
 const _opencodeCacheByToken = new Map(); // token → { at, entries }
 
-// Lê o uso da API OpenCode Go (https://opencode.ai/zen/go/v1/usage)
+// Reads usage from the OpenCode Go API (https://opencode.ai/zen/go/v1/usage)
 async function readOpencodeUsage({ env, now, fetcher, label, suffix } = {}) {
   const token = env && env.OPENCODE_AUTH_TOKEN;
   if (!token) return null;
@@ -878,32 +878,32 @@ async function readOpencodeUsage({ env, now, fetcher, label, suffix } = {}) {
 
 function _clearOpencodeCache() { _opencodeCacheByToken.clear(); }
 
-// Sufixo estável da conta Claude multi-conta (#58; mesmo padrão do GLM):
-// sha256-6 do uuid — o dir pode mudar de nome (perfil renomeado) sem perder o
-// histórico de merge. Exportado: o main.js usa o MESMO sfx p/ mapear o rename
-// de apelido (renderer manda accountId=sfx → main resolve uuid → grava label).
+// Stable suffix for the multi-account Claude account (#58; same pattern as GLM):
+// sha256-6 of the uuid — the dir can change name (renamed profile) without losing
+// the merge history. Exported: main.js uses the SAME sfx to map the nickname
+// rename (renderer sends accountId=sfx → main resolves uuid → saves the label).
 function claudeAccountSfx(src) {
   try { return require('crypto').createHash('sha256').update(String(src)).digest('hex').slice(0, 6); }
   catch { return String(src).slice(0, 6); }
 }
 
-// Chave de IDENTIDADE de conta Claude — UMA definição (review fix #9: eram 4
-// expressões iguais-a-mas-não-idênticas espalhadas por collectUsage,
-// claudeAccountsFromSessions, annotate e o sfx do tile; divergência = dedup
-// que não dedupa ou rename gravado sob chave que nenhuma leitura casa).
-// Precedência: orgUuid (billing/limite por org, #60) > accountUuid (contas
-// pessoais) > dir (perfil SEM oauth — proxy/API key, .claude.json sem
-// oauthAccount: identidade local, e o tile dele precisa ser renomeável) >
-// 'default' (conta do symlink). Pura e exportada.
+// Claude account IDENTITY key — ONE definition (review fix #9: there were 4
+// equal-but-not-identical expressions scattered across collectUsage,
+// claudeAccountsFromSessions, annotate and the tile's sfx; divergence = dedup
+// that doesn't dedupe, or a rename saved under a key no read matches).
+// Precedence: orgUuid (billing/limit per org, #60) > accountUuid (personal
+// accounts) > dir (profile WITHOUT oauth — proxy/API key, .claude.json without
+// oauthAccount: local identity, and its tile needs to be renamable) >
+// 'default' (symlink account). Pure and exported.
 function claudeAccountKey(pc, dir) {
   return (pc && (pc.accountOrgUuid || pc.accountUuid)) || dir || 'default';
 }
 
-// Rótulo de uma conta Claude (#58): apelido manual > nome da org >
-// local-part do email (email COMPLETO nunca aparece; o corte é aqui) >
-// basename do dir do perfil (sem o ponto: ~/.gh-claude → 'gh-claude').
-// Pura e exportada — usada pela barra de uso (collectUsage) e pelo main p/
-// rotular a conta de cada sessão (modal de detalhes). Uma fonte só de precedência.
+// Label for a Claude account (#58): manual nickname > org name >
+// email local-part (the FULL email never shows; the cut happens here) >
+// profile dir basename (without the dot: ~/.gh-claude → 'gh-claude').
+// Pure and exported — used by the usage bar (collectUsage) and by main to
+// label each session's account (details modal). A single source of precedence.
 function accountLabel(pc, dir, manual) {
   if (manual) return manual;
   if (pc && pc.accountName) return pc.accountName;
@@ -912,13 +912,13 @@ function accountLabel(pc, dir, manual) {
   return null;
 }
 
-// Provedor de API alternativo do perfil (detalhes da sessão): o settings.json
-// do config dir pode trocar a API do Claude Code por um proxy/roteador próprio
-// (env.ANTHROPIC_BASE_URL — ex. ~/.gh-claude aponta pra vm-contabo, que roteia
-// GLM). Devolve host[:porta] legível pra compor "gh-claude · vm-contabo:20128",
-// ou null quando o perfil usa a API oficial (sem base_url). Pura e exportada —
-// o main compõe o sufixo no rótulo da conta de cada sessão. O AUTH_TOKEN do
-// mesmo bloco `env` NUNCA é lido/retornado.
+// Profile's alternative API provider (session details): the config dir's
+// settings.json can swap Claude Code's API for a custom proxy/router
+// (env.ANTHROPIC_BASE_URL — e.g. ~/.gh-claude points to vm-contabo, which routes
+// GLM). Returns a readable host[:port] to compose "gh-claude · vm-contabo:20128",
+// or null when the profile uses the official API (no base_url). Pure and exported —
+// main composes the suffix in each session's account label. The AUTH_TOKEN in the
+// same `env` block is NEVER read/returned.
 function apiProviderFromSettings(dir) {
   if (!dir) return null;
   try {
@@ -931,35 +931,35 @@ function apiProviderFromSettings(dir) {
   } catch { return null; }
 }
 
-// =========================== ORQUESTRADOR ===========================
+// =========================== ORCHESTRATOR ===========================
 
-// Junta todas as fontes. Ordem estável: Claude (local) primeiro, GLM depois.
-// `now` em ms. Sempre resolve (nunca rejeita) — erros viram entries ou omissão.
+// Joins all sources. Stable order: Claude (local) first, GLM after.
+// `now` in ms. Always resolves (never rejects) — errors become entries or omission.
 //
-// GLM multi-conta: opts.glmCreds é uma lista de credenciais distintas (uma por
-// conta z.ai) coletadas das IAs rodando —
+// GLM multi-account: opts.glmCreds is a list of distinct credentials (one per
+// z.ai account) collected from the running AIs —
 //   [{ env:{ANTHROPIC_BASE_URL,ANTHROPIC_AUTH_TOKEN}, label?, suffix? }]
-// Cada IA rodando tem seu consumo buscado com a credencial DELA; contas iguais
-// (mesmo token) já vêm deduplicadas por quem monta a lista (main.js). Fallback:
-// opts.env (uma credencial) mantém o contrato antigo/testes. Os GLM rodam em
-// paralelo (Promise.all) — I/O de rede independente por conta.
+// Each running AI gets its usage fetched with ITS OWN credentials; equal accounts
+// (same token) already come deduplicated from whoever builds the list (main.js). Fallback:
+// opts.env (one credential) keeps the old contract/tests. GLMs run in
+// parallel (Promise.all) — independent network I/O per account.
 async function collectUsage(opts = {}) {
   const out = [];
 
   const creds = Array.isArray(opts.glmCreds) && opts.glmCreds.length
     ? opts.glmCreds
     : (opts.env ? [{ env: opts.env }] : []);
-  const multi = creds.length > 1;              // >1 conta → rotula cada bloco
+  const multi = creds.length > 1;              // >1 account → labels each block
 
-  // Claude multi-conta (#58): opts.claudeAccounts = [{ dir, label? }] — o
-  // main.js coleta os CLAUDE_CONFIG_DIRs dos environ das sessões vivas
-  // (dir null = conta default do symlink ~/.claude). O dedup por identidade
-  // acontece AQUI, não no main: só quem lê o .claude.json de cada dir conhece
-  // os uuids. Identidade = organizationUuid || accountUuid: billing/rate
-  // limit são por ORG — mesmo login em duas orgs Team (accountUuid igual,
-  // organizationUuid diferente) são DUAS contas; conta pessoal sem org dedupa
-  // por accountUuid (dois perfis, mesmo login → uma barra). Fallback sem
-  // claudeAccounts = 1 conta default — ids canônicos, UI idêntica a hoje.
+  // Claude multi-account (#58): opts.claudeAccounts = [{ dir, label? }] —
+  // main.js collects the CLAUDE_CONFIG_DIRs from the live sessions' environs
+  // (dir null = the default ~/.claude symlink account). Identity dedup
+  // happens HERE, not in main: only whoever reads each dir's .claude.json knows
+  // the uuids. Identity = organizationUuid || accountUuid: billing/rate
+  // limit are per ORG — same login in two Team orgs (same accountUuid,
+  // different organizationUuid) are TWO accounts; a personal account without org dedupes
+  // by accountUuid (two profiles, same login → one bar). Fallback without
+  // claudeAccounts = 1 default account — canonical ids, UI identical to today.
   const accountsIn = Array.isArray(opts.claudeAccounts) && opts.claudeAccounts.length
     ? opts.claudeAccounts
     : [{ dir: null }];
@@ -968,56 +968,56 @@ async function collectUsage(opts = {}) {
   for (const a of accountsIn) {
     if (!a) continue;
     const pc = readClaudeConfig({ home: opts.home, now: opts.now, dir: a.dir });
-    // claudeAccountKey (uma definição, review #9): key nunca é null — conta
-    // sem oauth dedupa pelo dir (perfis distintos continuam 2 barras).
+    // claudeAccountKey (one definition, review #9): key is never null — an
+    // account without oauth dedupes by dir (distinct profiles remain 2 bars).
     const key = claudeAccountKey(pc, a.dir);
-    if (seenKey.has(key)) continue;             // mesma org/login noutro perfil → 1 barra
+    if (seenKey.has(key)) continue;             // same org/login in another profile → 1 bar
     seenKey.add(key);
     claudeAccounts.push({ dir: a.dir, label: a.label, pc, key });
   }
   const multiClaude = claudeAccounts.length > 1;
 
-  // Rótulo da barra (#58): apelido dado (account-labels.json) > nome da org >
-  // local-part do email (email completo nunca aparece; o corte é aqui) >
-  // basename do dir. Cair no plano não distingue nada (2 barras, mesmo plano) —
-  // o nome do perfil é local, da própria máquina do usuário, e distingue.
-  // A precedência vive em accountLabel (exportada) — o main reusa p/ rotular
-  // a conta de CADA SESSÃO no modal de detalhes; uma fonte só.
+  // Bar label (#58): given nickname (account-labels.json) > org name >
+  // email local-part (the full email never shows; the cut happens here) >
+  // dir basename. Falling back to the plan distinguishes nothing (2 bars, same plan) —
+  // the profile name is local, from the user's own machine, and distinguishes.
+  // The precedence lives in accountLabel (exported) — main reuses it to label
+  // EACH SESSION's account in the details modal; a single source.
   const claudeAccountLabel = (acc) => accountLabel(acc.pc, acc.dir, acc.label);
 
-  // Contas Claude + OpenCode Go + todas as contas GLM em paralelo — I/O de rede
-  // independente. Claude usa opts.claudeFetcher (separado do de GLM/OpenCode:
-  // cada API tem schema/mock próprio; em teste sem claudeFetcher e sem token, o
-  // Claude cai no plano-só).
+  // Claude accounts + OpenCode Go + all GLM accounts in parallel — independent
+  // network I/O. Claude uses opts.claudeFetcher (separate from GLM/OpenCode's:
+  // each API has its own schema/mock; in tests without claudeFetcher and without a token,
+  // Claude falls back to plan-only).
   const results = await Promise.all([
     ...claudeAccounts.map((acc) => {
-      // Cooldown do 429 é POR CONTA (opts.claudeCooldowns = { key: {until, fails} },
-      // persistido pelo main). O cooldown GLOBAL antigo silenciava as contas
-      // saudáveis junto: um 429 da conta A fazia a B devolver stale/planOnly
-      // pela janela toda — e um restart no meio (cache por token vazio) deixava
-      // a B plan-only sem nunca ter levado 429. A chave é a identidade da conta
-      // (org/account uuid — a mesma do dedup), com fallback no dir.
+      // The 429 cooldown is PER ACCOUNT (opts.claudeCooldowns = { key: {until, fails} },
+      // persisted by main). The old GLOBAL cooldown silenced the healthy
+      // accounts along: a 429 from account A made B return stale/planOnly
+      // for the whole window — and a restart midway (empty per-token cache) left
+      // B plan-only without ever having taken a 429. The key is the account identity
+      // (org/account uuid — the same one as the dedup), with dir as fallback.
       const cdKey = acc.key || acc.dir || 'default';
       const cd = (opts.claudeCooldowns && opts.claudeCooldowns[cdKey]) || { until: 0, fails: 0 };
       return readClaudeUsage({
         home: opts.home, dir: acc.dir, now: opts.now, fetcher: opts.claudeFetcher,
         cooldownUntil: cd.until, cooldownFails: cd.fails,
         setCooldown: (v) => {
-          if (typeof opts.claudeSetCooldown === 'function') { try { opts.claudeSetCooldown(cdKey, v); } catch { /* nunca quebra a coleta */ } }
+          if (typeof opts.claudeSetCooldown === 'function') { try { opts.claudeSetCooldown(cdKey, v); } catch { /* never breaks the collection */ } }
         },
-        // Lazy: só bate na API do Claude quando o caller pede (gatilho de UI). O
-        // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
-        // omite → false. Default true preserva o contrato dos testes/uso direto.
+        // Lazy: only hits the Claude API when the caller asks (UI trigger).
+        // main.js passes true when opening/revealing the overlay and on ⟳; the
+        // background loop omits it → false. Default true preserves the tests/direct-use contract.
         allowFetch: opts.claudeAllowFetch !== false,
       }).catch(() =>
-        // Exceção inesperada do leitor (rede/429/offline ele mesmo engole e
-        // devolve planOnly/último bom — o catch só vê o imprevisto). A conta
-        // está VIVA (só sessões vivas a descobriram): devolver null a faria
-        // sumir do fresh e o prune do mergeUsage leria "conta fechou",
-        // matando o último valor bom NA HORA (review, fix do prune). Em vez
-        // disso, o tile plano-só dela (acc.pc já foi lido no dedup) marca a
-        // família como viva — o prune respeita e o merge segura o prev por
-        // DROP_MS (stale) como qualquer linha que não veio nesta coleta.
+        // Unexpected reader exception (network/429/offline it swallows itself and
+        // returns planOnly/last good — the catch only sees the unforeseen). The account
+        // is ALIVE (only live sessions discovered it): returning null would make it
+        // vanish from fresh and mergeUsage's prune would read "account closed",
+        // killing the last good value RIGHT AWAY (review, prune fix). Instead,
+        // its plan-only tile (acc.pc was already read in the dedup) marks the
+        // family as alive — the prune respects it and the merge holds prev for
+        // DROP_MS (stale) like any line that didn't come in this collection.
         claudePlanOnlyTile(acc.pc && acc.pc.plan || null, acc.pc, acc.dir));
     }),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
@@ -1029,47 +1029,47 @@ async function collectUsage(opts = {}) {
       env: c.env, now: opts.now, fetcher: opts.fetcher,
       label: multi ? c.label : undefined,
       suffix: multi ? c.suffix : undefined,
-    }).catch(() => null)),                       // readGlmUsage já captura; dupla defesa
+    }).catch(() => null)),                       // readGlmUsage already catches; double defense
   ]);
   const nClaude = claudeAccounts.length;
   const antigravity = results[nClaude];
   const opencode = results[nClaude + 1];
   const glm = results.slice(nClaude + 2);
 
-  // Claude: >1 conta → id sufixado (claude-5h:<sfx>, como glm-month:<sha>) +
-  // campos account/accountId pro renderer e pro rename de apelido. 1 conta →
-  // ids canônicos, nenhum campo novo (regressão zero na UI de 1 conta).
+  // Claude: >1 account → suffixed id (claude-5h:<sfx>, like glm-month:<sha>) +
+  // account/accountId fields for the renderer and the nickname rename. 1 account →
+  // canonical ids, no new fields (zero regression in the 1-account UI).
   results.slice(0, nClaude).forEach((entries, i) => {
     if (!Array.isArray(entries)) return;
     const acc = claudeAccounts[i];
     if (!multiClaude) { out.push(...entries); return; }
-    // sfx da chave ÚNICA (review #9): acc.key já carrega os fallbacks — o
-    // accountId do tile bate com o lastAccountIds do rename em TODA conta,
-    // inclusive proxy sem oauth (key = dir).
+    // sfx from the UNIQUE key (review #9): acc.key already carries the fallbacks —
+    // the tile's accountId matches the rename's lastAccountIds on EVERY account,
+    // including proxies without oauth (key = dir).
     const sfx = claudeAccountSfx(acc.key);
     const label = claudeAccountLabel(acc);
     for (const e of entries) {
-      // Cópia obrigatória: `entries` pode ser O array vivo do cache por token
-      // (_claudeCacheByToken devolve por referência) — mutar e.id in place
-      // contaminava o cache e o sufixo acumulava a cada rodada (id
-      // 'claude-5h:<sfx>:<sfx>'). O spread isola a entry do cache (#58).
+      // Copying is mandatory: `entries` may be THE live array from the per-token
+      // cache (_claudeCacheByToken returns by reference) — mutating e.id in place
+      // contaminated the cache and the suffix piled up every round (id
+      // 'claude-5h:<sfx>:<sfx>'). The spread isolates the entry from the cache (#58).
       out.push({ ...e, id: e.id + ':' + sfx, accountId: sfx, ...(label ? { account: label } : {}) });
     }
   });
   if (Array.isArray(antigravity)) out.push(...antigravity);
   if (Array.isArray(opencode)) out.push(...opencode);
 
-  // Codex (passivo, sem rede): uma leitura por cwd distinto de sessão Codex viva.
-  // opts.codexCwds = ['/home/x/proj', ...] (main.js coleta de /proc/<pid>/cwd).
+  // Codex (passive, no network): one read per distinct cwd of live Codex sessions.
+  // opts.codexCwds = ['/home/x/proj', ...] (main.js collects from /proc/<pid>/cwd).
   const codexCwds = [...new Set(Array.isArray(opts.codexCwds) ? opts.codexCwds.filter(Boolean) : [])];
-  const multiCodex = codexCwds.length > 1;     // >1 projeto → distingue no rótulo
+  const multiCodex = codexCwds.length > 1;     // >1 project → distinguishes in the label
   for (const cwd of codexCwds) {
     let entries = null;
-    try { entries = readCodexUsage({ cwd, now: opts.now, ...(opts.codexIO || {}) }); } catch { /* nunca quebra */ }
+    try { entries = readCodexUsage({ cwd, now: opts.now, ...(opts.codexIO || {}) }); } catch { /* never breaks */ }
     if (!Array.isArray(entries)) continue;
-    if (multiCodex) {                          // rotula pela pasta do projeto
+    if (multiCodex) {                          // labels by the project folder
       const proj = cwd.split('/').filter(Boolean).pop() || cwd;
-      // spread: mesma proteção do Claude — nunca mutar a saída do leitor (cache)
+      // spread: same protection as Claude — never mutate the reader's output (cache)
       for (const e of entries) out.push({ ...e, plan: e.plan + ' · ' + proj, id: e.id + ':' + proj });
     } else {
       out.push(...entries);
@@ -1080,62 +1080,62 @@ async function collectUsage(opts = {}) {
   return out;
 }
 
-// Janelas do "envelhecimento" de uma linha de uso (ms). Depois de STALE_MS sem
-// atualização, a linha é marcada stale=true (a UI a pinta cinza). Depois de
-// DROP_MS, some (sessão provavelmente fechou). Um valor bom NOVO zera o relógio.
-const USAGE_STALE_MS = 4 * 60 * 1000;   // ~4 min → cinza
-const USAGE_DROP_MS = 20 * 60 * 1000;   // ~20 min → remove
+// "Aging" windows for a usage line (ms). After STALE_MS without
+// an update, the line is marked stale=true (the UI paints it gray). After
+// DROP_MS, it disappears (session probably closed). A NEW good value resets the clock.
+const USAGE_STALE_MS = 4 * 60 * 1000;   // ~4 min → gray
+const USAGE_DROP_MS = 20 * 60 * 1000;   // ~20 min → removed
 
-// Tile "resumo/degradado": representa um agente SEM janela concreta — o
-// plano-só do Claude (claude.json, sem %) ou o GLM cujos limites não foram
-// parseados / a chamada falhou. Não deve coexistir com tiles concretos
-// (claude-5h/7d, glm-tokens/month) do mesmo agente: quando a coleta oscila
-// entre OK (reais) e falha (fallback) entre ticks, isso evita "Claude Max" e
-// "Claude Max 5× - 5 h" na mesma tela. (issue: overlay duplicando tiles às vezes.)
-// glm:suffix é multi-conta; glm-tokens/month (com hífen) NÃO são resumo.
-// claude-plan:zzzzzz é o plano-só de UMA conta multi-conta (id sufixado).
+// "Summary/degraded" tile: represents an agent WITHOUT a concrete window — the
+// Claude plan-only (claude.json, no %) or the GLM whose limits weren't
+// parsed / the call failed. It must not coexist with concrete tiles
+// (claude-5h/7d, glm-tokens/month) of the same agent: when the collection oscillates
+// between OK (real) and failure (fallback) across ticks, this avoids "Claude Max" and
+// "Claude Max 5× - 5 h" on the same screen. (issue: overlay sometimes duplicating tiles.)
+// glm:suffix is multi-account; glm-tokens/month (with a hyphen) are NOT summary.
+// claude-plan:zzzzzz is the plan-only of ONE multi-account account (suffixed id).
 function isSummaryEntry(e) {
   if (!e || !e.id) return false;
   const id = String(e.id);
   return id === 'claude-plan' || id.startsWith('claude-plan:') || id === 'antigravity-plan' || id === 'glm' || id.startsWith('glm:') || id === 'opencode' || id.startsWith('opencode:');
 }
 
-// Legado do bug da mutação in place do cache (sufixo acumulado 'a:sfx:sfx'):
-// colapsa segmentos consecutivos repetidos para o id fundir com o fresh
-// pós-fix em vez de virar órfão por DROP_MS. Idempotente.
+// Legacy of the in-place cache mutation bug (accumulated suffix 'a:sfx:sfx'):
+// collapses repeated consecutive segments so the id merges with the
+// post-fix fresh instead of becoming an orphan for DROP_MS. Idempotent.
 function collapseSuffixId(id) {
   const parts = String(id).split(':');
   for (let i = parts.length - 1; i > 0; i--) if (parts[i] === parts[i - 1]) parts.splice(i, 1);
   return parts.join(':');
 }
 
-// Funde a coleta nova (fresh) com o estado anterior (prev), por `id`. Resolve o
-// bug de "os contadores zeram quando o dado não vem": em vez de substituir tudo,
-// mantém o ÚLTIMO valor bom de cada linha até chegar um novo. Regras por id:
-//   • fresh tem valor bom (usedPct != null, sem error) → adota, fetchedAt=now, stale=false
-//   • fresh veio ruim (null/error) mas prev tinha valor → mantém prev, marca stale se velho
-//   • id só no prev (não veio nesta coleta) → mantém, marca stale/dropa por idade
-//   • id novo sem valor → passa como veio (primeira aparição honesta)
-// `now` em ms. Retorna a lista fundida (ordem: fresh primeiro, depois órfãos do
-// prev que ainda não expiraram), cada item com fetchedAt e stale.
+// Merges the new collection (fresh) with the previous state (prev), by `id`. Fixes the
+// "counters reset when the data doesn't come" bug: instead of replacing everything,
+// it keeps the LAST good value of each line until a new one arrives. Rules per id:
+//   • fresh has a good value (usedPct != null, no error) → adopt, fetchedAt=now, stale=false
+//   • fresh came bad (null/error) but prev had a value → keep prev, mark stale if old
+//   • id only in prev (didn't come in this collection) → keep, mark stale/drop by age
+//   • new id without a value → pass through as-is (honest first appearance)
+// `now` in ms. Returns the merged list (order: fresh first, then orphans from
+// prev that haven't expired), each item with fetchedAt and stale.
 function mergeUsage(prev, fresh, now) {
   const nowMs = now || Date.now();
-  // Normaliza o sufixo acumulado do legado (a:sfx:sfx → a:sfx) nas duas pontas.
+  // Normalizes the legacy accumulated suffix (a:sfx:sfx → a:sfx) on both ends.
   const norm = (list) => (Array.isArray(list) ? list : [])
     .map((e) => (e && e.id ? { ...e, id: collapseSuffixId(e.id) } : e));
   const freshList = norm(fresh);
   const prevById = new Map();
   for (const p of norm(prev)) if (p && p.id) prevById.set(p.id, p);
 
-  // Oscilação single↔multi conta (#58): os ids de agente mudam conforme o
-  // número de contas VIVAS no instante da coleta (claude-5h ↔ claude-5h:<sfx>,
-  // glm-tokens ↔ glm-tokens:<sha>). Quando o modo muda entre ticks (sessão da
-  // 2ª conta abre/fecha, rename re-coleta na hora), as duas famílias
-  // coexistiriam por DROP_MS — a MESMA conta em 2 barras. O fresh é a verdade
-  // do momento: a família que ele não traz morre na hora.
-  const freshSfxByBase = new Map(); // 'claude-5h' → Set dos sufixos vindos
-  const freshCanonical = new Set(); // 'claude-5h' vindo exato (sem sufixo)
-  const freshSfxAll = new Set();    // TODO sufixo vivo do fresh, em qualquer base
+  // Single↔multi account oscillation (#58): agent ids change according to the
+  // number of LIVE accounts at the moment of collection (claude-5h ↔ claude-5h:<sfx>,
+  // glm-tokens ↔ glm-tokens:<sha>). When the mode changes between ticks (the 2nd
+  // account's session opens/closes, rename re-collects right away), the two families
+  // would coexist for DROP_MS — the SAME account in 2 bars. The fresh is the
+  // truth of the moment: the family it doesn't bring dies immediately.
+  const freshSfxByBase = new Map(); // 'claude-5h' → Set of suffixes that came
+  const freshCanonical = new Set(); // 'claude-5h' that came exactly (no suffix)
+  const freshSfxAll = new Set();    // every live suffix from fresh, on any base
   for (const f of freshList) {
     if (!f || !f.id) continue;
     const i = f.id.indexOf(':');
@@ -1149,17 +1149,17 @@ function mergeUsage(prev, fresh, now) {
   for (const id of [...prevById.keys()]) {
     const i = id.indexOf(':');
     if (i > 0) {
-      // multi→single: fresh canônico na base → prev sufixado morre.
-      // multi→multi: fresh traz a base com OUTROS sufixos → o sufixo é a
-      // identidade da conta; prev com sufixo fora do fresh é a key VELHA da
-      // mesma conta (migração de chave, ex. #58 accountUuid → #60 orgUuid:
-      // claude-5h:ffdc8e + claude-5h:39e493 duplicavam a barra Artemis) ou
-      // conta que fechou — nos dois casos o sufixo SOME do fresh inteiro.
-      // Exceção (review): sufixo vivo em OUTRA base é conta VIVA cuja coleta
-      // degradou — só o plano-só dela veio (claude-plan:<sfx> de 401/offline/
-      // exceção; glm:<sha> idem). Não é "fechou": o prev concreto dela segue
-      // o regime normal de linha ausente — stale até DROP_MS, não morte na
-      // hora (a barra boa não pode piscar fora por um blip de rede).
+      // multi→single: fresh canonical on the base → suffixed prev dies.
+      // multi→multi: fresh brings the base with OTHER suffixes → the suffix is the
+      // account identity; prev with a suffix outside fresh is the OLD key of the
+      // same account (key migration, e.g. #58 accountUuid → #60 orgUuid:
+      // claude-5h:ffdc8e + claude-5h:39e493 duplicated the Artemis bar) or an
+      // account that closed — in both cases the suffix is GONE from the whole fresh.
+      // Exception (review): a live suffix in ANOTHER base is a LIVE account whose
+      // collection degraded — only its plan-only came (claude-plan:<sfx> from 401/offline/
+      // exception; glm:<sha> likewise). It isn't "closed": its concrete prev follows
+      // the normal missing-line regime — stale until DROP_MS, not immediate
+      // death (the good bar must not blink out over a network blip).
       const sfx = id.slice(i + 1);
       const sfxs = freshSfxByBase.get(id.slice(0, i));
       if (freshCanonical.has(id.slice(0, i))
@@ -1167,7 +1167,7 @@ function mergeUsage(prev, fresh, now) {
     } else if (freshSfxByBase.has(id)) prevById.delete(id); // single→multi
   }
 
-  // Se a nova coleta traz o plano do Antigravity, limpa a cota esgotada do cache anterior.
+  // If the new collection brings the Antigravity plan, clears the exhausted quota from the previous cache.
   const freshIds = new Set(freshList.map((f) => f && f.id).filter(Boolean));
   if (freshIds.has('antigravity-plan')) {
     prevById.delete('antigravity-quota');
@@ -1185,34 +1185,34 @@ function mergeUsage(prev, fresh, now) {
     if (isGood(f)) {
       out.push({ ...f, fetchedAt: nowMs, stale: false });
     } else if (isGood(p)) {
-      // coleta atual falhou pra esta linha, mas tínhamos um valor bom: mantém.
+      // the current collection failed for this line, but we had a good value: keep it.
       const age = nowMs - (p.fetchedAt || nowMs);
       out.push({ ...p, stale: age >= USAGE_STALE_MS });
     } else {
-      // nunca tivemos valor bom: passa o fresh como veio (honesto).
+      // we never had a good value: pass fresh through as-is (honest).
       out.push({ ...f, fetchedAt: f.fetchedAt || nowMs, stale: false });
     }
   }
 
-  // Linhas que existiam antes mas NÃO vieram nesta coleta (coletor sumiu de vez
-  // por um tick): mantém até DROP_MS, marcando stale após STALE_MS.
+  // Lines that existed before but did NOT come in this collection (the collector
+  // vanished for a tick): keep until DROP_MS, marking stale after STALE_MS.
   for (const [id, p] of prevById) {
     if (seen.has(id)) continue;
     const age = nowMs - (p.fetchedAt || nowMs);
-    if (age >= USAGE_DROP_MS) continue;               // muito velho → some
-    if (!isGood(p)) continue;                          // nunca teve valor → não segura
+    if (age >= USAGE_DROP_MS) continue;               // too old → disappears
+    if (!isGood(p)) continue;                          // never had a value → don't hold it
     out.push({ ...p, stale: age >= USAGE_STALE_MS });
   }
 
-  // Desduplicação semântica: um tile "resumo" (claude-plan / glm sem limites) é
-  // redundante se já existe um tile concreto do mesmo agente (vindo do fresh ou
-  // segurado como órfão bom acima). Surge quando a coleta oscila entre OK e
-  // falha entre ticks — sem isto, resumo e concreto coexistem na mesma tela.
-  // POR FAMÍLIA (agente + sufixo da conta), não por agente: multi-conta, o
-  // plano-só da conta B (claude-plan:ca2705 — token falhou/sem janela) convive
-  // com os concretos da conta A (claude-5h:ffdc8e). Filtrar por agente puro
-  // sumia com a barra INTEIRA da B (#58). Canônico ↔ canônico segue igual
-  // (família sem sufixo).
+  // Semantic dedup: a "summary" tile (claude-plan / glm without limits) is
+  // redundant if a concrete tile of the same agent already exists (coming from fresh or
+  // held as a good orphan above). It appears when the collection oscillates between
+  // OK and failure across ticks — without this, summary and concrete coexist on the same screen.
+  // PER FAMILY (agent + account suffix), not per agent: in multi-account, the
+  // plan-only of account B (claude-plan:ca2705 — token failed/no window) coexists
+  // with the concrete tiles of account A (claude-5h:ffdc8e). Filtering by pure agent
+  // wiped out B's ENTIRE bar (#58). Canonical ↔ canonical stays the same
+  // (family without suffix).
   const fam = (e) => {
     const id = String(e && e.id || '');
     const i = id.indexOf(':');
@@ -1224,35 +1224,35 @@ function mergeUsage(prev, fresh, now) {
     ? out.filter((e) => !isSummaryEntry(e) || !concreteFams.has(fam(e)))
     : out;
 
-  // Dedup por CONTEÚDO (mesma conta, tokens diferentes): a mesma conta z.ai pode
-  // chegar por N credenciais (subprocesso no /proc, OpenCode auth.json, terminal)
-  // com ids/sufixos distintos, mas as linhas são IDÊNTICAS (mesmo agente, mesma
-  // janela, mesmo reset). Colapsa por chave semântica — fica com a de valor bom
-  // e fetchedAt mais recente. Resolve o "GLM aparecendo muitas vezes".
+  // Dedup by CONTENT (same account, different tokens): the same z.ai account can
+  // arrive via N credentials (subprocess in /proc, OpenCode auth.json, terminal)
+  // with distinct ids/suffixes, but the lines are IDENTICAL (same agent, same
+  // window, same reset). Collapses by semantic key — keeps the one with a good
+  // value and the most recent fetchedAt. Fixes "GLM appearing many times".
   const byContent = new Map();
   for (const e of deduped) {
     if (!e) continue;
-    // Normaliza o rótulo de provedor do GLM (" (z.ai)"/" (bigmodel.cn)") antes de
-    // gerar a chave: a MESMA conta pode chegar canônica (1 conta → plan 'GLM Pro',
-    // id 'glm-month') ou sufixada (multi-conta → plan 'GLM Pro (z.ai)', id
-    // 'glm-month:hash') conforme o número de contas oscila entre ticks, ou ficar
-    // como resquício legado no usage.json. Sem isto as duas versões têm chaves
-    // diferentes e não colapsam → o GLM aparece duplicado ("z.ai 2×").
+    // Normalizes the GLM provider label (" (z.ai)"/" (bigmodel.cn)") before
+    // generating the key: the SAME account can arrive canonical (1 account → plan 'GLM Pro',
+    // id 'glm-month') or suffixed (multi-account → plan 'GLM Pro (z.ai)', id
+    // 'glm-month:hash') depending on how the number of accounts oscillates across ticks, or linger
+    // as a legacy leftover in usage.json. Without this the two versions have different
+    // keys and don't collapse → GLM appears duplicated ("z.ai 2×").
     const planNorm = String(e.plan || '').replace(/\s*\((z\.ai|bigmodel\.cn)\)\s*$/, '').trim();
-    // Normaliza o resetAt p/ SEGUNDOS na chave: a mesma conta chegando por 2
-    // credenciais (tokens distintos) recebe resetAt da API com diferença de ~1ms
-    // ("...09.995Z" vs "...09.996Z") — sem isto, a chave difere e o tile mensal
-    // aparece duplicado ("z.ai Pro mês 2×"). Trunca sub-segundo; contas realmente
-    // distintas têm resets separados por muito mais que 1s.
+    // Normalizes resetAt to SECONDS in the key: the same account arriving via 2
+    // credentials (distinct tokens) gets resetAt from the API differing by ~1ms
+    // ("...09.995Z" vs "...09.996Z") — without this, the key differs and the monthly tile
+    // appears duplicated ("z.ai Pro mês 2×"). Truncates sub-second; truly distinct
+    // accounts have resets separated by far more than 1s.
     const resetMs = e.resetAt ? Date.parse(e.resetAt) : NaN;
     const resetKey = Number.isNaN(resetMs) ? '' : Math.floor(resetMs / 1000);
-    // `account` (multi-conta Claude, #58) entra na chave: duas contas com o
-    // mesmo plano e a mesma janela são linhas DIFERENTES — sem isto o dedup por
-    // conteúdo as colapsaria numa barra só.
+    // `account` (Claude multi-account, #58) enters the key: two accounts with the
+    // same plan and the same window are DIFFERENT lines — without this, content
+    // dedup would collapse them into a single bar.
     const key = [e.agent, e.title || '', e.account || '', planNorm, resetKey].join('|');
     const prev = byContent.get(key);
     if (!prev) { byContent.set(key, e); continue; }
-    // escolhe a melhor: valor bom > stale menor > fetchedAt maior.
+    // picks the best: good value > less stale > more recent fetchedAt.
     const better = (isGood(e) && !isGood(prev)) ? e
       : (isGood(prev) && !isGood(e)) ? prev
       : ((e.fetchedAt || 0) >= (prev.fetchedAt || 0) ? e : prev);
@@ -1261,9 +1261,9 @@ function mergeUsage(prev, fresh, now) {
   return [...byContent.values()];
 }
 
-// Parseia o conteúdo de /proc/<pid>/environ (pares KEY=val separados por NUL)
-// e devolve só as chaves pedidas. Puro (testável) — o I/O de ler o arquivo fica
-// no main.js. Usado pra extrair ANTHROPIC_BASE_URL/AUTH_TOKEN do terminal GLM.
+// Parses the contents of /proc/<pid>/environ (KEY=val pairs separated by NUL)
+// and returns only the requested keys. Pure (testable) — the I/O of reading the file stays
+// in main.js. Used to extract ANTHROPIC_BASE_URL/AUTH_TOKEN from the GLM terminal.
 function parseEnviron(raw, keys) {
   const want = new Set(keys || []);
   const out = {};
@@ -1277,48 +1277,48 @@ function parseEnviron(raw, keys) {
   return out;
 }
 
-// ======================= detectReset (aviso de "cota resetou") =======================
-// Decide QUANDO avisar que um limite que estava ESGOTADO acabou de resetar (a
-// cota liberou de novo). Reconcilia por TRANSIÇÃO de estado entre coletas — não
-// agenda timer no resetAt — então sobrevive a app dormir/hibernar e coletas
-// perdidas: o loop de 60s do main.js compara o antes/depois a cada tick.
+// ======================= detectReset ("cota resetou" quota-reset notice) =======================
+// Decides WHEN to notify that a limit that was EXHAUSTED has just reset (the
+// quota freed up again). Reconciles by state TRANSITION between collections — it does not
+// schedule a timer at resetAt — so it survives the app sleeping/hibernating and lost
+// collections: main.js's 60s loop compares before/after on every tick.
 //
-// FUNÇÃO PURA: não usa Date.now() nem dispara Notification. O main.js injeta o
-// relógio (`now`) e faz o efeito colateral. Testável com `now` fixo — os casos
-// em test/usage.test.js são a especificação.
+// PURE FUNCTION: uses no Date.now() and fires no Notification. main.js injects the
+// clock (`now`) and performs the side effect. Testable with a fixed `now` — the cases
+// in test/usage.test.js are the specification.
 //
-// Parâmetros:
-//   prevState — estado da chamada anterior por id: { [id]: { resetAtMs, armed } }
-//               (ou null/undefined na 1ª coleta).
-//   entries   — entradas atuais de uso: [{ id, usedPct, resetAt, plan, title, ... }].
-//   now       — epoch em ms (injetado).
-//   threshold — % de uso que "arma" o aviso (0–100). armado = usedPct >= threshold.
-// Retorna:
-//   { toNotify, nextState } — toNotify = entradas que resetaram estando armadas;
-//                             nextState = estado a passar para a próxima chamada.
+// Parameters:
+//   prevState — state from the previous call by id: { [id]: { resetAtMs, armed } }
+//               (or null/undefined on the 1st collection).
+//   entries   — current usage entries: [{ id, usedPct, resetAt, plan, title, ... }].
+//   now       — epoch in ms (injected).
+//   threshold — usage % that "arms" the notice (0–100). armed = usedPct >= threshold.
+// Returns:
+//   { toNotify, nextState } — toNotify = entries that reset while armed;
+//                             nextState = state to pass to the next call.
 function detectReset(prevState, entries, now, threshold) {
   const prev = prevState || {};
   const nextState = {};
   const toNotify = [];
   for (const e of Array.isArray(entries) ? entries : []) {
-    if (!e || !e.id || nextState[e.id]) continue;       // sem id, ou id já visto neste tick → dedupe
-    if (!e.resetAt) continue;                            // sem horário de reset → não dá pra detectar
+    if (!e || !e.id || nextState[e.id]) continue;       // no id, or id already seen in this tick → dedupe
+    if (!e.resetAt) continue;                            // no reset time → can't detect
     const resetAtMs = Date.parse(e.resetAt);
-    if (Number.isNaN(resetAtMs)) continue;             // resetAt malformado → ignora
+    if (Number.isNaN(resetAtMs)) continue;             // malformed resetAt → ignore
     const armed = typeof e.usedPct === 'number' && e.usedPct >= threshold;
-    const p = prev[e.id];                              // estado anterior deste limite (ou undefined)
+    const p = prev[e.id];                              // previous state of this limit (or undefined)
 
-    // Resetou estando armado? O relógio passou do resetAt da leitura ANTERIOR E
-    // o limite estava esgotado nessa leitura — no instante do reset o % já caiu,
-    // então "estava esgotado" só existe em `p`. (Só `now >= p.resetAtMs`: antes
-    // havia `|| resetAtMs > p.resetAtMs`, mas era falso positivo quando a API
-    // estendia o resetAt antes do tempo sem resetar de verdade.)
+    // Reset while armed? The clock passed the resetAt of the PREVIOUS read AND
+    // the limit was exhausted in that read — at the moment of the reset the % has
+    // already dropped, so "was exhausted" only exists in `p`. (Only `now >= p.resetAtMs`: before there
+    // was `|| resetAtMs > p.resetAtMs`, but it was a false positive when the API
+    // extended resetAt early without actually resetting.)
     const windowTurned = !!p && now >= p.resetAtMs;
     const resetou = windowTurned && p.armed;
     if (resetou) toNotify.push(e);
-    // Re-arma pelo % atual, mas "gruda" o armado enquanto a MESMA janela segue:
-    // uma oscilação do % pra baixo antes do reset não pode desarmar o aviso.
-    // Numa janela nova (após reset) NÃO regruda → dedupe no tick seguinte.
+    // Re-arms by the current %, but "sticks" armed while the SAME window continues:
+    // a downward dip of the % before the reset must not disarm the notice.
+    // In a new window (after reset) it does NOT re-stick → dedupe on the next tick.
     const sameWindow = !!p && resetAtMs === p.resetAtMs;
     const staleResetWindow = sameWindow && now >= resetAtMs && !p.armed;
     const nextArmed = resetou || staleResetWindow

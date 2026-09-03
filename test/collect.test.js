@@ -1,6 +1,6 @@
-// Testes do core de coleta (src/collect.js): findTranscript valida sid do peer
-// contra path traversal (PR-32 #02). findTranscript lê process.env.HOME, então
-// mockamos HOME para um tmp controlado.
+// Tests for the collection core (src/collect.js): findTranscript validates the
+// peer's sid against path traversal (PR-32 #02). findTranscript reads
+// process.env.HOME, so we mock HOME to a controlled tmp dir.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -23,8 +23,8 @@ test('findTranscript: session_id válido (UUID) é encontrado', () => {
 test('findTranscript: path traversal (../ / .. / vazio) é rejeitado → null', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-ft-'));
   fs.mkdirSync(path.join(tmp, '.claude/projects/p'), { recursive: true });
-  // armadilhas que o traversal alcançaria SEM validação:
-  fs.writeFileSync(path.join(tmp, '.claude/secret.jsonl'), 'X');        // ../../secret a partir de projects/p
+  // traps the traversal would reach WITHOUT validation:
+  fs.writeFileSync(path.join(tmp, '.claude/secret.jsonl'), 'X');        // ../../secret from projects/p
   fs.writeFileSync(path.join(tmp, 'secret.jsonl'), 'Y');                 // ../../../secret
   for (const bad of ['../../secret', '../../../secret', '../secret', '..', '/', 'foo/bar', 'a b', '', null, undefined]) {
     const got = withHome(tmp, () => findTranscript(bad));

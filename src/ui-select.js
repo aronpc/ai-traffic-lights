@@ -1,15 +1,15 @@
-// ui-select.js — dropdown custom que "aprimora" um <select> nativo. O <select>
-// continua no DOM (escondido) como FONTE DE VERDADE: escolher uma opção seta
-// select.value e dispara 'change', então toda a lógica existente (listeners de
-// change: pushLive, syncSoundFileField, syncTerminalCmdField…) segue funcionando
-// sem alteração. O popup nativo do <select> não é estilizável (tema do SO); este
-// componente desenha a lista no tema dark do app.
+// ui-select.js — custom dropdown that "enhances" a native <select>. The
+// <select> stays in the DOM (hidden) as the SOURCE OF TRUTH: picking an option
+// sets select.value and fires 'change', so all existing logic (change
+// listeners: pushLive, syncSoundFileField, syncTerminalCmdField…) keeps working
+// unchanged. The native <select> popup is not stylable (OS theme); this
+// component draws the list in the app's dark theme.
 //
-// A lista é INLINE (empurra o conteúdo), não absolute — o .tab-body rola
-// (overflow-y:auto) e cortaria um dropdown absolute. Fecha ao escolher, ao
-// clicar fora ou com Esc; navegável por teclado (setas/Enter/Esc).
+// The list is INLINE (pushes the content), not absolute — .tab-body scrolls
+// (overflow-y:auto) and would clip an absolute dropdown. Closes on pick, on
+// outside click or with Esc; keyboard-navigable (arrows/Enter/Esc).
 
-// Fecha todos os dropdowns abertos (sem depender do closure de cada um).
+// Closes all open dropdowns (without depending on each one's closure).
 function closeAllSelects() {
   for (const w of document.querySelectorAll('.sel.is-open')) {
     w.classList.remove('is-open');
@@ -17,11 +17,11 @@ function closeAllSelects() {
     const b = w.querySelector('.sel__btn'); if (b) b.setAttribute('aria-expanded', 'false');
   }
 }
-document.addEventListener('click', closeAllSelects); // clique fora fecha qualquer aberto
+document.addEventListener('click', closeAllSelects); // outside click closes any open one
 
-// Re-sincroniza rótulo + item marcado de um custom select a partir do <select>
-// real. Usar quando o value muda programaticamente (setar .value NÃO dispara
-// 'change') — ex.: o load das Preferências popula os selects após o enhance.
+// Re-syncs the label + marked item of a custom select from the real
+// <select>. Use when the value changes programmatically (setting .value does
+// NOT fire 'change') — e.g. the Preferences load populates selects after the enhance.
 function refreshSelect(sel) {
   const wrap = sel.closest && sel.closest('.sel'); if (!wrap) return;
   const label = wrap.querySelector('.sel__label');
@@ -31,15 +31,15 @@ function refreshSelect(sel) {
 }
 function refreshAllSelects(root) { (root || document).querySelectorAll('.sel select').forEach(refreshSelect); }
 
-// Re-copia os textos das <option> para as opções custom. Necessário após o i18n
-// trocar os <option>: o enhance captura os rótulos ANTES do applyI18n rodar (é
-// síncrono, no top-level; o applyI18n vem do getLang async), então sem isto o
-// dropdown mostraria os rótulos no idioma default do HTML (pt), não no traduzido.
+// Re-copies the <option> texts to the custom options. Needed after i18n
+// swaps the <option>s: the enhance captures the labels BEFORE applyI18n runs
+// (it is synchronous, at top level; applyI18n comes from async getLang), so
+// without this the dropdown would show labels in the HTML default language (pt), not the translated one.
 function relabelSelect(sel) {
   const wrap = sel.closest && sel.closest('.sel'); if (!wrap) return;
   const opts = wrap.querySelectorAll('.sel__opt');
   Array.from(sel.options).forEach((o, i) => { if (opts[i]) opts[i].textContent = o.textContent; });
-  refreshSelect(sel); // atualiza o rótulo do botão a partir da opção selecionada
+  refreshSelect(sel); // updates the button label from the selected option
 }
 function relabelAllSelects(root) { (root || document).querySelectorAll('.sel select').forEach(relabelSelect); }
 
@@ -77,7 +77,7 @@ function enhanceSelect(sel) {
     if (i < 0 || i >= sel.options.length) return;
     if (i !== sel.selectedIndex) {
       sel.selectedIndex = i;
-      sel.dispatchEvent(new Event('change', { bubbles: true })); // dispara a lógica existente
+      sel.dispatchEvent(new Event('change', { bubbles: true })); // fires the existing logic
     }
     sync();
   }
@@ -90,7 +90,7 @@ function enhanceSelect(sel) {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     const willOpen = list.hidden;
-    closeAllSelects();          // fecha outros dropdowns antes de abrir este
+    closeAllSelects();          // closes other dropdowns before opening this one
     setOpen(willOpen);
   });
   btn.addEventListener('keydown', (e) => {
@@ -99,10 +99,10 @@ function enhanceSelect(sel) {
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const o = list.hidden; closeAllSelects(); setOpen(o); }
     else if (e.key === 'Escape') setOpen(false);
   });
-  sel.addEventListener('change', sync); // reflete mudanças externas (ex.: o load popula o value)
+  sel.addEventListener('change', sync); // reflects external changes (e.g. the load populates the value)
 
   sel.parentNode.insertBefore(wrap, sel);
-  wrap.append(sel, btn, list); // o <select> fica dentro do wrapper (escondido via CSS)
+  wrap.append(sel, btn, list); // the <select> stays inside the wrapper (hidden via CSS)
   sync();
 }
 

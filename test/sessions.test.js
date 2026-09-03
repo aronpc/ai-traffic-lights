@@ -1,4 +1,4 @@
-// Testes do merge/dedup de sessões (regressão: Tilix sumia por term_program null).
+// Tests for session merge/dedup (regression: Tilix vanished due to null term_program).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mergeSessions } = require('../src/sessions.js');
@@ -13,12 +13,12 @@ test('sessão com term_program=null (Tilix) NÃO é mais descartada', () => {
 });
 
 test('mescla state files + descobertos via /proc, sem duplicar por pid', () => {
-  // WARP e TILIX têm state file; o 3º claude (3759491) só via /proc
+  // WARP and TILIX have state files; the 3rd claude (3759491) only via /proc
   const discovered = [{ pid: 3308681, agent: 'claude' }, { pid: 3759491, agent: 'claude' }];
   const out = mergeSessions([WARP, TILIX], discovered);
   const pids = out.map((s) => s.pid).sort();
   assert.deepEqual(pids, [3308681, 3553176, 3759491]);
-  // o WARP (já tem state file) não ganha entrada proc- duplicada
+  // WARP (already has a state file) doesn't get a duplicate proc- entry
   assert.equal(out.filter((s) => s.pid === 3308681).length, 1);
 });
 
@@ -39,7 +39,7 @@ test('pid ausente dedupe por session_id (nunca colide)', () => {
 });
 
 test('sem term_program filter: headless-fiction e real coexistem só por pid', () => {
-  // não há mais gate por term_program — quem aparece é decidido em outra camada
+  // there is no term_program gate anymore — who shows up is decided in another layer
   const out = mergeSessions([
     { session_id: 'h', pid: 1, term_program: null, last_event_ts: 5 },
   ], []);
@@ -59,10 +59,10 @@ test('inputs vazios/nulos → []', () => {
   assert.deepEqual(mergeSessions(null, null), []);
 });
 
-// ---- fase 1 (sync P2P): dedup namespaced por origin ----
+// ---- phase 1 (P2P sync): dedup namespaced by origin ----
 test('mesmo pid em origens diferentes NÃO colide (namespacing)', () => {
-  // Duas máquinas podem ter o mesmo pid (ex.: 1234). Sem o prefixo origin,
-  // uma sobrescreveria a outra no dedup. Elas são linhas distintas.
+  // Two machines can have the same pid (e.g. 1234). Without the origin
+  // prefix, one would overwrite the other in dedup. They are distinct rows.
   const out = mergeSessions([
     { session_id: 'local-a', pid: 1234, origin: 'local', last_event_ts: 10 },
     { session_id: 'peer-a', pid: 1234, origin: 'alienware', last_event_ts: 20 },
@@ -75,7 +75,7 @@ test('mesmo pid em origens diferentes NÃO colide (namespacing)', () => {
 test('origin default = local quando ausente (state file legado / proc)', () => {
   const out = mergeSessions([{ session_id: 's', pid: 7, last_event_ts: 1 }], []);
   assert.equal(out[0].origin, 'local', 'recebe origin=local');
-  // discovered (proc) também
+  // discovered (proc) too
   const p = mergeSessions([], [{ pid: 99, agent: 'claude' }]);
   assert.equal(p[0].origin, 'local');
 });

@@ -1,29 +1,30 @@
-// src/annotate.js — conta Claude de cada sessão LOCAL (#58 / modal de detalhes).
-// Extraído do main para ser testável: resolve o rótulo da conta a partir do
-// CLAUDE_CONFIG_DIR lido do environ do pid — a mesma descoberta de contas do
-// claudeAccountsFromSessions, mas por sessão.
+// src/annotate.js — Claude account for each LOCAL session (#58 / details
+// modal). Extracted from main to be testable: resolves the account label from
+// the CLAUDE_CONFIG_DIR read out of the pid's environ — the same account
+// discovery as claudeAccountsFromSessions, but per session.
 //
-// O cache aqui é só do que NÃO muda na vida do processo (environ → dir); o
-// RÓTULO é recomputado a cada chamada — apelido renomeado no tile da barra
-// (account-labels.json) propaga no ciclo seguinte. Invariantes do cache
-// (achados do review):
-//  • pid → { sid, dir } só entra com environ LIDO: getEnviron devolve '' num
-//    pid morto/race de exec → NÃO cacheia (o rótulo ficaria congelado na
-//    conta default para sempre), tenta de novo no próximo ciclo;
-//  • hit só vale com o MESMO session_id — pid reusado por outro processo
-//    chega com sid diferente e re-lê o environ;
-//  • pids fora do conjunto vivo são podados no fim da chamada.
-// Anotação em memória: nada disso é gravado no state file. Remota (com
-// origin) já chega anotada pelo peer — o rótulo é inofensivo (apelido/org/
-// local-part, nunca email completo/uuid) e NÃO é LOCAL_ONLY.
+// The cache here holds only what does NOT change over the process's lifetime
+// (environ → dir); the LABEL is recomputed on every call — a nickname renamed
+// in the bar tile (account-labels.json) propagates on the next cycle. Cache
+// invariants (review findings):
+//  • pid → { sid, dir } only enters with the environ READ: getEnviron returns
+//    '' on a dead pid/exec race → do NOT cache (the label would be frozen on
+//    the default account forever), retry on the next cycle;
+//  • a hit only counts with the SAME session_id — a pid reused by another
+//    process arrives with a different sid and the environ is re-read;
+//  • pids outside the live set are pruned at the end of the call.
+// In-memory annotation: none of this is written to the state file. Remote
+// sessions (with origin) already arrive annotated by the peer — the label is
+// harmless (nickname/org/local-part, never full email/uuid) and is NOT
+// LOCAL_ONLY.
 
 const { isLocalSession } = require('./identity.js');
 
 function makeAnnotator({
-  getEnviron,                      // (pid) → raw do environ ('' = ilegível)
+  getEnviron,                      // (pid) → raw environ ('' = unreadable)
   parseEnviron,                    // usage.parseEnviron
-  readClaudeConfig,                // (dir) → config do perfil (cache mtime no usage)
-  claudeAccountKey,                // usage.claudeAccountKey (review #9: MESMA chave do tile/rename)
+  readClaudeConfig,                // (dir) → profile config (mtime cache in usage)
+  claudeAccountKey,                // usage.claudeAccountKey (review #9: SAME key as tile/rename)
   accountLabel,                    // usage.accountLabel
   apiProviderFromSettings,         // usage.apiProviderFromSettings
   agentOf,                         // agents.agentOf
@@ -34,47 +35,51 @@ function makeAnnotator({
   return function annotate(sessions) {
     if (!Array.isArray(sessions)) return sessions;
     const alive = new Set();
-    let labels;                    // lazy: labelsFile 1x por ciclo (arquivo pequeno)
+    let labels;                    // lazy: labelsFile 1x per cycle (small file)
     for (const s of sessions) {
-      // Só sessão LOCAL: o pid de sessão remota é processo na outra máquina —
-      // probeá-lo no /proc daqui pode colidir com processo local sem relação.
-      // Locais vêm sem origin (collect) ou com 'local' (state file).
+      // LOCAL sessions only: a remote session's pid is a process on the other
+      // machine — probing it in the local /proc can collide with an unrelated
+      // local process. Locals come without origin (collect) or with 'local'
+      // (state file).
       if (!isLocalSession(s) || agentOf(s) !== 'claude' || !s.pid) continue;
       alive.add(s.pid);
       const sid = s.session_id || '';
       let dir;
       const hit = pidDir.get(s.pid);
       if (hit && hit.sid === sid) {
-        dir = hit.dir;             // environ não muda: cache válido p/ o mesmo processo
+        dir = hit.dir;             // environ does not change: cache valid for the same process
       } else {
-        // '' = ilegível (pid morreu / race de fork-exec / ps falhou): NÃO
-        // cacheia — o label null/default viraria permanente.
+        // '' = unreadable (pid died / fork-exec race / ps failed): do NOT
+        // cache — the null/default label would become permanent.
         const raw = getEnviron(s.pid);
         if (!raw) continue;
         try { dir = parseEnviron(raw, ['CLAUDE_CONFIG_DIR']).CLAUDE_CONFIG_DIR || null; }
         catch { continue; }
         pidDir.set(s.pid, { sid, dir });
       }
-      // Rótulo resolve TODA chamada (cache só do dir): rename no tile muda o
-      // account-labels.json e o modal de detalhes vê no próximo ciclo.
+      // Label resolves on EVERY call (only the dir is cached): a rename in the
+      // tile changes account-labels.json and the details modal sees it on the
+      // next cycle.
       let label = null;
       try {
         const pc = readClaudeConfig(dir);
         if (labels === undefined) {
           try { labels = JSON.parse(fs.readFileSync(labelsFile, 'utf8')) || {}; } catch { labels = {}; }
         }
-        // Chave de identidade UMA definição (claudeAccountKey injetada — a
-        // MESMA do tile/rename/dedup, review #9). Fallback labels[accountUuid]:
-        // apelido gravado antes da chave de org continuar funcionando.
+        // Identity key has ONE definition (claudeAccountKey injected — the
+        // SAME one as tile/rename/dedup, review #9). Fallback
+        // labels[accountUuid]: a nickname saved before the org key keeps
+        // working.
         const key = claudeAccountKey(pc, dir);
         const manual = labels[key] || (pc && pc.accountUuid && labels[pc.accountUuid]) || null;
         label = accountLabel(pc, dir, manual);
       } catch {}
-      // API alternativa do perfil (settings.json env.ANTHROPIC_BASE_URL):
-      // sessão de perfil técnico (ex. gh-claude → proxy vm-contabo/GLM) mostra
-      // "gh-claude · vm-contabo:20128" em vez do nome seco do dir — o host diz
-      // QUAL API a sessão realmente usa. Perfis de org não têm base_url →
-      // rótulo intacto. dir null (conta default do symlink) → sem provedor.
+      // Profile's alternative API (settings.json env.ANTHROPIC_BASE_URL): a
+      // technical profile's session (e.g. gh-claude → vm-contabo/GLM proxy)
+      // shows "gh-claude · vm-contabo:20128" instead of the dir's bare name —
+      // the host tells WHICH API the session actually uses. Org profiles have
+      // no base_url → label intact. dir null (symlink default account) → no
+      // provider.
       const api = dir && apiProviderFromSettings(dir);
       if (label && api) label += ' · ' + api;
       if (label) s.account = label;

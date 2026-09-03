@@ -1,53 +1,53 @@
-// preload.js — ponte segura (contextBridge) entre o renderer e o main.
+// preload.js — secure bridge (contextBridge) between the renderer and main.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('trafficLight', {
   onSessions: (cb) => ipcRenderer.on('sessions', (_e, sessions) => cb(sessions)),
   requestSessions: () => ipcRenderer.send('request-sessions'),
-  // Consumo/reset dos agentes (Claude via ~/.claude.json, GLM via API). Push do
-  // main a cada 60s + carga sob demanda. entries: [{agent,title,usedPct,resetAt,...}]
+  // Agent usage/reset (Claude via ~/.claude.json, GLM via API). Push from
+  // main every 60s + on-demand load. entries: [{agent,title,usedPct,resetAt,...}]
   onUsage: (cb) => ipcRenderer.on('usage', (_e, entries) => cb(entries)),
   requestUsage: () => ipcRenderer.send('request-usage'),
-  forceUsage: () => ipcRenderer.send('force-usage'), // fura o cache de conveniência e recoleta já (respeita o cooldown do 429)
-  onUsageMeta: (cb) => ipcRenderer.on('usage-meta', (_e, meta) => cb(meta)), // {claudeCooldownUntil} — p/ o tooltip do force
+  forceUsage: () => ipcRenderer.send('force-usage'), // bypasses the convenience cache and re-collects now (respects the 429 cooldown)
+  onUsageMeta: (cb) => ipcRenderer.on('usage-meta', (_e, meta) => cb(meta)), // {claudeCooldownUntil} — for the force tooltip
   setExpanded: (expanded, h) => ipcRenderer.send('set-expanded', { expanded, h }),
   autoHeight: (h) => ipcRenderer.send('auto-height', h),
   resizeStart: () => ipcRenderer.send('resize-start'),
   resizeMove: (dw, dh) => ipcRenderer.send('resize-move', { dw, dh }),
-  // Fase 3:
+  // Phase 3:
   focus: (target) => ipcRenderer.send('focus', target),       // click-to-focus {pid, windowid}
   getAliases: () => ipcRenderer.invoke('get-aliases'),        // rename in-place
   setAlias: (key, alias) => ipcRenderer.send('set-alias', { key, alias }),
-  setAccountLabel: (accountId, label) => ipcRenderer.send('set-account-label', { accountId, label }), // apelido da CONTA Claude (multi-conta #58)
-  notify: (title, body) => ipcRenderer.send('notify', { title, body }), // alerta vermelho
-  toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × esconde (tray)
-  revealOverlay: () => ipcRenderer.send('reveal-overlay'),       // traz à frente (transição p/ vermelho)
-  setTrayLevel: (info) => ipcRenderer.send('set-tray-level', info), // tray dinâmico: pior cor + contagem
-  getLaunchers: () => ipcRenderer.invoke('get-launchers'),          // Quick Launcher: agentes detectados
+  setAccountLabel: (accountId, label) => ipcRenderer.send('set-account-label', { accountId, label }), // nickname for the Claude ACCOUNT (multi-account #58)
+  notify: (title, body) => ipcRenderer.send('notify', { title, body }), // red alert
+  toggleVisibility: () => ipcRenderer.send('toggle-visibility'), // × hides (tray)
+  revealOverlay: () => ipcRenderer.send('reveal-overlay'),       // brings to front (transition to red)
+  setTrayLevel: (info) => ipcRenderer.send('set-tray-level', info), // dynamic tray: worst color + count
+  getLaunchers: () => ipcRenderer.invoke('get-launchers'),          // Quick Launcher: detected agents
   launchAgent: (target) => ipcRenderer.send('launch-agent', target), // {agent, cwd}
-  // Settings (threshold de idle + atalho) — lidos/gravados pela janela de Preferências
+  // Settings (idle threshold + shortcut) — read/written by the Preferences window
   getSettings: () => ipcRenderer.invoke('get-settings'),
-  getLang: () => ipcRenderer.invoke('get-lang'),              // idioma da UI (en|pt)
-  getVersion: () => ipcRenderer.invoke('get-version'),        // rodapé das Preferências
-  getRepoUrl: () => ipcRenderer.invoke('get-repo-url'),       // link do repo no rodapé
-  getUpdate: () => ipcRenderer.invoke('get-update'),           // versão + release mais nova (GitHub)
-  checkUpdate: () => ipcRenderer.send('check-update'),         // "verificar agora" (ignora o cache)
-  downloadUpdate: () => ipcRenderer.send('download-update'),   // AppImage: baixa a nova versão
-  installUpdate: () => ipcRenderer.send('install-update'),     // AppImage: reinicia e instala
-  onUpdateState: (cb) => ipcRenderer.on('update-state', (_e, s) => cb(s)), // push do estado de update
-  openExternal: (url) => ipcRenderer.send('open-external', url), // abre no navegador (http/s só)
+  getLang: () => ipcRenderer.invoke('get-lang'),              // UI language (en|pt)
+  getVersion: () => ipcRenderer.invoke('get-version'),        // Preferences footer
+  getRepoUrl: () => ipcRenderer.invoke('get-repo-url'),       // repo link in the footer
+  getUpdate: () => ipcRenderer.invoke('get-update'),           // version + newest release (GitHub)
+  checkUpdate: () => ipcRenderer.send('check-update'),         // "check now" (ignores the cache)
+  downloadUpdate: () => ipcRenderer.send('download-update'),   // AppImage: downloads the new version
+  installUpdate: () => ipcRenderer.send('install-update'),     // AppImage: restarts and installs
+  onUpdateState: (cb) => ipcRenderer.on('update-state', (_e, s) => cb(s)), // push of update state
+  openExternal: (url) => ipcRenderer.send('open-external', url), // opens in the browser (http/s only)
   saveSettings: (cfg) => ipcRenderer.send('save-settings', cfg),
   openSettings: () => ipcRenderer.send('open-settings'),
-  getSync: () => ipcRenderer.invoke('get-sync'),                 // config sync (P2P) — opt-in
-  setSync: (sync) => ipcRenderer.send('set-sync', sync),         // grava só o sub-objeto sync
-  syncAvailable: () => ipcRenderer.invoke('sync-available'),     // feature sync = build beta (aba Sincronização some na estável)
-  fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // ver prompt (local/remote)
-  attachRemote: (origin, tmuxSession, cwd, alias, key, label) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd, alias, key, label }), // abre na janela Terminal (título = o mesmo label da linha)
-  // janela Terminal (abas): o estado dos pty/ws vive no main; o renderer só desenha.
-  // Cada método carrega tabId p/ rotear input/output/resize à aba certa.
-  newShell: (host) => ipcRenderer.send('term-new-shell', host),         // host=undefined|'local' → local; senão abre shell num peer
-  termHosts: () => ipcRenderer.invoke('term-hosts'),                    // [{id,label}] local + peers p/ o menu do botão +
-  termWinControl: (op) => ipcRenderer.send('term-win-control', op),     // 'min' | 'max' | 'close' (chrome custom frameless)
+  getSync: () => ipcRenderer.invoke('get-sync'),                 // sync config (P2P) — opt-in
+  setSync: (sync) => ipcRenderer.send('set-sync', sync),         // writes only the sync sub-object
+  syncAvailable: () => ipcRenderer.invoke('sync-available'),     // sync feature = beta build (Sync tab disappears on stable)
+  fetchTranscript: (origin, key, n) => ipcRenderer.invoke('fetch-transcript', { origin, key, n }), // view prompt (local/remote)
+  attachRemote: (origin, tmuxSession, cwd, alias, key, label) => ipcRenderer.send('attach-remote', { origin, tmux_session: tmuxSession, cwd, alias, key, label }), // opens in the Terminal window (title = the same label as the row)
+  // Terminal window (tabs): pty/ws state lives in main; the renderer only draws.
+  // Each method carries tabId to route input/output/resize to the right tab.
+  newShell: (host) => ipcRenderer.send('term-new-shell', host),         // host=undefined|'local' → local; otherwise opens a shell on a peer
+  termHosts: () => ipcRenderer.invoke('term-hosts'),                    // [{id,label}] local + peers for the + button menu
+  termWinControl: (op) => ipcRenderer.send('term-win-control', op),     // 'min' | 'max' | 'close' (custom frameless chrome)
   resizeStartTerm: () => ipcRenderer.send('resize-term-start'),
   resizeMoveTerm: (dw, dh) => ipcRenderer.send('resize-term-move', { dw, dh }),
   resizeEndTerm: () => ipcRenderer.send('resize-term-end'),
@@ -57,33 +57,34 @@ contextBridge.exposeInMainWorld('trafficLight', {
   ptyResize: (tabId, cols, rows) => ipcRenderer.send('term-resize', { tabId, cols, rows }),
   onPtyOut: (cb) => ipcRenderer.on('pty-out', (_e, p) => cb(p)),            // p = { tabId, data }
   onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, p) => cb(p)),          // p = { tabId }
-  // Marcas de leitura (#56): boot envia o estado inteiro; ao vivo chega cada
-  // marca aplicada vinda de peer (POST /read). LWW no receptor: só aplica se
-  // readAt > marca atual — nunca rebaixa um "lido" mais recente.
+  // Read marks (#56): boot sends the whole state; live, each applied mark
+  // coming from a peer arrives (POST /read). LWW on the receiver: only applies
+  // if readAt > current mark — never downgrades a more recent "read".
   onReadMarks: (cb) => ipcRenderer.on('read-marks', (_e, state) => cb(state)),
   onRemoteRead: (cb) => ipcRenderer.on('remote-read', (_e, m) => cb(m)),    // m = { key, readAt }
-  // Clique "li" (#56): renderer pinta o cinza otimista NA HORA e avisa o main,
-  // que persiste e — se a sessão é de um PEER — posta a marca na origem (chave
-  // reescrita no namespace dela) p/ propagar a TODOS os peers via /sessions.
+  // "Read" click (#56): the renderer paints the optimistic gray RIGHT AWAY and
+  // notifies main, which persists and — if the session belongs to a PEER —
+  // posts the mark to the origin (key rewritten into its namespace) to
+  // propagate it to ALL peers via /sessions.
   markRead: (key, readAt, origin) => ipcRenderer.send('mark-read', { key, readAt, origin }),
-  copyText: (text) => ipcRenderer.send('copy-text', text), // menu de contexto da linha → clipboard (main valida o tamanho)
-  // Janela SOLTA de detalhes (#59): o overlay pede para abrir por sessionKey;
-  // o main empurra { s, readAt } à janela a cada refresh (s=null = encerrou);
-  // Esc/× da janela pedem o close (main destrói a BrowserWindow).
+  copyText: (text) => ipcRenderer.send('copy-text', text), // row context menu → clipboard (main validates the size)
+  // DETACHED details window (#59): the overlay asks to open it by sessionKey;
+  // main pushes { s, readAt } to the window on every refresh (s=null = ended);
+  // the window's Esc/× request the close (main destroys the BrowserWindow).
   openDetails: (key) => ipcRenderer.send('details-open', { key }),
   onDetailsData: (cb) => ipcRenderer.on('details-data', (_e, p) => cb(p)),
   closeDetails: () => ipcRenderer.send('details-close'),
   onTermTabAdded: (cb) => ipcRenderer.on('term-tab-added', (_e, p) => cb(p)),   // { tabId, title }
   onTermTabRemoved: (cb) => ipcRenderer.on('term-tab-removed', (_e, p) => cb(p)), // { tabId }
-  onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — foca aba existente
-  onTermMaximized: (cb) => ipcRenderer.on('term-maximized', (_e, v) => cb(v)),        // bool — alterna classe .maximized (tira o radius)
-  onTermShown: (cb) => ipcRenderer.on('term-shown', () => cb()),                      // janela reapareceu → repintar (canvas do xterm foi descartado)
-  onTermRefit: (cb) => ipcRenderer.on('term-refit', (_e, p) => cb(p)),                // {tabId} — conexão (re)estabeleceu: re-fit + re-envia o tamanho ao pty/ws
-  onTermTabTitle: (cb) => ipcRenderer.on('term-tab-title', (_e, p) => cb(p)),        // { tabId, title } — rename da aba (sincroniza c/ o alias)
-  pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // som custom: diálogo nativo → copia p/ BASE_DIR/sounds
-  getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // bytes do som custom p/ decodificar (Web Audio)
+  onTermTabActivated: (cb) => ipcRenderer.on('term-tab-activated', (_e, p) => cb(p)), // { tabId } — focuses an existing tab
+  onTermMaximized: (cb) => ipcRenderer.on('term-maximized', (_e, v) => cb(v)),        // bool — toggles the .maximized class (removes the radius)
+  onTermShown: (cb) => ipcRenderer.on('term-shown', () => cb()),                      // window reappeared → repaint (xterm's canvas was discarded)
+  onTermRefit: (cb) => ipcRenderer.on('term-refit', (_e, p) => cb(p)),                // {tabId} — connection (re)established: re-fit + re-sends the size to the pty/ws
+  onTermTabTitle: (cb) => ipcRenderer.on('term-tab-title', (_e, p) => cb(p)),        // { tabId, title } — tab rename (syncs with the alias)
+  pickSoundFile: () => ipcRenderer.invoke('pick-sound-file'),          // custom sound: native dialog → copies to BASE_DIR/sounds
+  getSoundBytes: (file) => ipcRenderer.invoke('get-sound-bytes', file), // custom sound bytes for decoding (Web Audio)
   onSettingsChanged: (cb) => ipcRenderer.on('settings-changed', (_e, cfg) => cb(cfg)),
-  // Espelho do tray na janela de Preferências
+  // Tray mirror in the Preferences window
   getAutostart: () => ipcRenderer.invoke('get-autostart'),
   setAutostart: (on) => ipcRenderer.send('set-autostart', on),
   installHooks: () => ipcRenderer.send('install-hooks'),

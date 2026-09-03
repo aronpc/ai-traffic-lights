@@ -1,8 +1,8 @@
-// Testes do annotator de conta Claude por sessão (src/annotate.js, extraído
-// do main no fix do review): cache só do dir por pid (environ não muda),
-// rótulo recomputado a cada ciclo — rename no tile propaga, environ ilegível
-// não congela no default e pid reusado re-lê o environ. Deps de I/O mockadas;
-// parseEnviron/accountLabel/agentOf REAIS (puras).
+// Tests for the per-session Claude account annotator (src/annotate.js,
+// extracted from main in the review fix): dir-only cache per pid (environ
+// doesn't change), label recomputed on every cycle — tile rename propagates,
+// unreadable environ doesn't freeze on the default, and a reused pid re-reads
+// the environ. I/O deps mocked; parseEnviron/accountLabel/agentOf REAL (pure).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,16 +14,16 @@ const usage = require('../src/usage.js');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'atl-ann-'));
 
-// Monta o annotator com environ/labels programáveis e conta as leituras.
+// Builds the annotator with programmable environ/labels and counts reads.
 function setup({ labels = {}, configs = {}, apis = {} } = {}) {
   const dir = tmp();
   const labelsFile = path.join(dir, 'account-labels.json');
   fs.writeFileSync(labelsFile, JSON.stringify(labels));
-  const state = { environ: {}, reads: 0 };   // pid → raw do environ ('' = ilegível)
+  const state = { environ: {}, reads: 0 };   // pid → raw environ ('' = unreadable)
   const annotate = makeAnnotator({
     getEnviron: (pid) => { state.reads++; return state.environ[pid] !== undefined ? state.environ[pid] : ''; },
     parseEnviron: usage.parseEnviron,
-    readClaudeConfig: (d) => configs[d] || null,          // dir → .claude.json parseado
+    readClaudeConfig: (d) => configs[d] || null,          // dir → parsed .claude.json
     claudeAccountKey: usage.claudeAccountKey,
     accountLabel: usage.accountLabel,
     apiProviderFromSettings: (d) => apis[d] || null,
@@ -49,8 +49,8 @@ test('anota o rótulo da conta do CLAUDE_CONFIG_DIR (org name vence)', () => {
 });
 
 test('review: rename no tile PROPAGA — rótulo recomputa a cada ciclo', () => {
-  // O bug: o label era cacheado por pid; account-labels.json novo só era lido
-  // para pid NOVO — o modal mostrava o rótulo velho até a sessão morrer.
+  // The bug: the label was cached per pid; a new account-labels.json was only
+  // read for a NEW pid — the modal showed the old label until the session died.
   const t = setup({ configs: { '/home/u/.prof-a': { accountUuid: 'uuid-a', accountName: 'Org Alpha' } } });
   t.env(100, RAW_A);
   const s1 = t.sess(100, 's1');
@@ -58,30 +58,30 @@ test('review: rename no tile PROPAGA — rótulo recomputa a cada ciclo', () => 
   assert.equal(s1.account, 'Org Alpha');
 
   fs.writeFileSync(t.labelsFile, JSON.stringify({ 'uuid-a': 'Meu Apelido' }));
-  const s2 = t.sess(100, 's1');                     // MESMA sessão, próximo ciclo
+  const s2 = t.sess(100, 's1');                     // SAME session, next cycle
   t.annotate([s2]);
   assert.equal(s2.account, 'Meu Apelido', 'apelido novo vale no ciclo seguinte');
 });
 
 test('review: environ ilegível NÃO congela no default — retry no próximo ciclo', () => {
-  // O bug: getProcessEnviron devolve '' na falha (pid morto/race de exec);
-  // parseEnviron('') = {} → dir=null cacheado → conta default PARA SEMEMA,
-  // mesmo quando o environ ficasse legível. Agora '' não entra no cache.
+  // The bug: getProcessEnviron returns '' on failure (dead pid/exec race);
+  // parseEnviron('') = {} → dir=null cached → default account FOREVER, even
+  // when the environ became readable. Now '' doesn't enter the cache.
   const t = setup({ configs: { '/home/u/.prof-a': { accountName: 'Org Alpha' } } });
-  t.env(100, '');                                   // ilegível neste ciclo
+  t.env(100, '');                                   // unreadable this cycle
   let s = t.sess(100, 's1');
   t.annotate([s]);
   assert.equal(s.account, undefined, 'sem rótulo quando não conseguiu ler');
 
-  t.env(100, RAW_A);                                // legível no ciclo seguinte
+  t.env(100, RAW_A);                                // readable on the next cycle
   s = t.sess(100, 's1');
   t.annotate([s]);
   assert.equal(s.account, 'Org Alpha', 'recuperou — nada foi cacheado da falha');
 });
 
 test('review: pid REUSADO por outro processo re-lê o environ (guard por session_id)', () => {
-  // O bug: pid morre → novo processo pega o MESMO pid → cache hit → rótulo
-  // da sessão ANTIGA. O hit agora exige o mesmo session_id.
+  // The bug: pid dies → a new process takes the SAME pid → cache hit → the
+  // OLD session's label. The hit now requires the same session_id.
   const t = setup({
     configs: {
       '/home/u/.prof-a': { accountName: 'Conta A' },
@@ -91,7 +91,7 @@ test('review: pid REUSADO por outro processo re-lê o environ (guard por session
   t.env(100, RAW_A);
   t.annotate([t.sess(100, 's1')]);
   t.env(100, 'CLAUDE_CONFIG_DIR=/home/u/.prof-b\0');
-  const s2 = t.sess(100, 's2');                     // processo NOVO, mesmo pid
+  const s2 = t.sess(100, 's2');                     // NEW process, same pid
   t.annotate([s2]);
   assert.equal(s2.account, 'Conta B', 'pid reusado resolve a conta do processo novo');
 });
@@ -104,8 +104,8 @@ test('cache do dir: mesma sessão NÃO re-lê o environ (1 leitura por sessão n
   t.annotate([t.sess(100, 's1')]);
   assert.equal(t.state.reads, 1, 'environ lido 1x — dir é imutável na vida do processo');
 
-  t.annotate([]);                                   // sessão morreu → prune
-  t.annotate([t.sess(100, 's1')]);                  // voltou (novo processo)
+  t.annotate([]);                                   // session died → prune
+  t.annotate([t.sess(100, 's1')]);                  // came back (new process)
   assert.equal(t.state.reads, 2, 'prune derrubou o cache: re-leu');
 });
 
@@ -120,7 +120,7 @@ test('sessão REMOTA não é anotada aqui (peer já anota na origem)', () => {
 
 test('sufixo de API alternativa: "gh-claude · vm-contabo:20128"', () => {
   const t = setup({
-    configs: { '/home/u/.gh-claude': { accountUuid: 'u-gh' } },   // sem nome → basename do dir
+    configs: { '/home/u/.gh-claude': { accountUuid: 'u-gh' } },   // no name → dir basename
     apis: { '/home/u/.gh-claude': 'vm-contabo:20128' },
   });
   t.env(100, 'CLAUDE_CONFIG_DIR=/home/u/.gh-claude\0');
@@ -131,7 +131,7 @@ test('sufixo de API alternativa: "gh-claude · vm-contabo:20128"', () => {
 
 test('dir null (conta default do symlink) anota com o config do home', () => {
   const t = setup({ configs: { null: { accountName: 'Default' } } });
-  t.env(100, 'PATH=/x\0TERM=xterm\0');              // environ sem CLAUDE_CONFIG_DIR
+  t.env(100, 'PATH=/x\0TERM=xterm\0');              // environ without CLAUDE_CONFIG_DIR
   const s = t.sess(100, 's1');
   t.annotate([s]);
   assert.equal(s.account, 'Default', 'sem a var = conta default, lida e cacheada (válida)');

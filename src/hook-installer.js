@@ -1,26 +1,26 @@
-// hook-installer.js — registra/remove o adapter do Claude Code no
-// ~/.claude/settings.json. Usado pelo CLI (scripts/setup-hook.js) e pelo
-// próprio app (menu do tray) — tanto rodando do fonte quanto empacotado.
+// hook-installer.js — registers/removes the Claude Code adapter in
+// ~/.claude/settings.json. Used by the CLI (scripts/setup-hook.js) and by
+// the app itself (tray menu) — both when running from source and packaged.
 //
-// Garantias:
-//  - NUNCA toca em hooks de outras ferramentas (remoção é por marcador).
-//  - Backup de ~/.claude/settings.json antes de qualquer escrita.
-//  - settings.json inválido → lança erro sem escrever (nunca corrompe).
+// Guarantees:
+//  - NEVER touches hooks from other tools (removal is marker-based).
+//  - Backs up ~/.claude/settings.json before any write.
+//  - Invalid settings.json → throws without writing (never corrupts).
 //
-// O comando registrado aponta para uma CÓPIA estável do hook em
-// <baseDir>/bin/traffic-hook.sh (ver syncHookCopy) — assim mover o projeto
-// não quebra nada, e o AppImage (montado em path efêmero) funciona.
+// The registered command points to a STABLE COPY of the hook in
+// <baseDir>/bin/traffic-hook.sh (see syncHookCopy) — so moving the project
+// breaks nothing, and the AppImage (mounted on an ephemeral path) works.
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
 const { shellQuote } = require('./validate');
-const HOOK_MARKER = 'traffic-hook.sh';       // identifica entradas nossas
+const HOOK_MARKER = 'traffic-hook.sh';       // identifies our entries
 
-// Alvos de instalação — cada agente com hooks nativos vira uma entrada aqui.
-// O MESMO traffic-hook.sh serve todos; o AI_TL_AGENT diz o dialeto (o hook
-// traduz eventos pro vocabulário canônico do contrato).
+// Install targets — each agent with native hooks becomes an entry here.
+// The SAME traffic-hook.sh serves them all; AI_TL_AGENT tells the dialect
+// (the hook translates events to the contract's canonical vocabulary).
 const TARGETS = {
   claude: {
     label: 'Claude Code',
@@ -32,7 +32,7 @@ const TARGETS = {
       'Stop', 'SubagentStop', 'SessionEnd',
     ],
     command: (dest) => `bash ${shellQuote(dest)}`,
-    // schema do Claude: {type, command} — sem campo name
+    // Claude schema: {type, command} — no name field
     entry: (cmd) => ({ type: 'command', command: cmd }),
   },
   antigravity: {
@@ -43,10 +43,10 @@ const TARGETS = {
     command: (dest) => `AI_TL_AGENT=antigravity bash ${shellQuote(dest)}`,
   },
   codex: {
-    // Codex usa o MESMO schema de hooks do Claude (hooks.json em JSON, mesmos
-    // eventos, mesmo payload) — sem tradução de dialeto. Bônus: o campo
-    // `model` vem direto no payload. Atenção: hooks do Codex precisam ser
-    // confiados via `/hooks` no CLI antes de rodar (trust por hash).
+    // Codex uses the SAME hooks schema as Claude (hooks.json in JSON, same
+    // events, same payload) — no dialect translation. Bonus: the `model` field
+    // comes straight in the payload. Note: Codex hooks must be trusted via
+    // `/hooks` in the CLI before running (trust by hash).
     label: 'Codex',
     settings: path.join(os.homedir(), '.codex', 'hooks.json'),
     detectDir: path.join(os.homedir(), '.codex'),
@@ -56,13 +56,13 @@ const TARGETS = {
   },
 };
 
-// Alvo está presente na máquina? (dir de config do agente existe)
+// Is the target present on this machine? (agent's config dir exists)
 function available(targetId) {
   try { return fs.existsSync(TARGETS[targetId].detectDir); } catch { return false; }
 }
 
-// ---- OpenCode: o adapter é um PLUGIN (arquivo JS em ~/.config/opencode/
-// plugin/), não hooks em settings — mecânica própria de instalação. ----
+// ---- OpenCode: the adapter is a PLUGIN (JS file in ~/.config/opencode/
+// plugin/), not hooks in settings — its own installation mechanics. ----
 const OPENCODE = {
   label: 'OpenCode',
   detectDir: path.join(os.homedir(), '.config', 'opencode'),
@@ -89,14 +89,14 @@ function removeOpencode() {
   } catch {}
   return { removed: 0, wrote: false };
 }
-// Auto-atualização no boot do app: só re-copia se o usuário JÁ instalou.
+// Auto-update on app boot: only re-copies if the user ALREADY installed.
 function syncOpencodeIfInstalled(srcPlugin) {
   try { if (opencodeInstalled()) fs.copyFileSync(srcPlugin, opencodePluginPath()); } catch {}
 }
 
-// Copia o hook empacotado/do repo para <baseDir>/bin e retorna o destino.
-// Rodar de novo atualiza a cópia (idempotente). Funciona de dentro do asar
-// (o fs do Electron lê asar transparentemente).
+// Copies the packaged/repo hook to <baseDir>/bin and returns the destination.
+// Running again updates the copy (idempotent). Works from inside the asar
+// (Electron's fs reads asar transparently).
 function syncHookCopy(srcHook, baseDir) {
   const dir = path.join(baseDir, 'bin');
   const dest = path.join(dir, 'traffic-hook.sh');
@@ -115,7 +115,7 @@ function load(settingsPath) {
 }
 
 function backupAndWrite(settingsPath, settings) {
-  try { fs.copyFileSync(settingsPath, `${settingsPath}.bak.${Date.now()}`); } catch {} // ENOENT: 1ª instalação
+  try { fs.copyFileSync(settingsPath, `${settingsPath}.bak.${Date.now()}`); } catch {} // ENOENT: first install
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
@@ -161,7 +161,7 @@ function removeAntigravityHooks(target) {
   return { removed, wrote };
 }
 
-// Instala/atualiza o comando nos eventos do alvo. Retorna {added, updated, wrote}.
+// Installs/updates the command in the target's events. Returns {added, updated, wrote}.
 function install(targetId, hookDest) {
   const target = TARGETS[targetId];
   if (targetId === 'antigravity') {
@@ -180,7 +180,7 @@ function install(targetId, hookDest) {
     }
     const groups = (settings.hooks[evt] = settings.hooks[evt] || []);
 
-    // já instalado? (em qualquer grupo) — atualiza o caminho se mudou
+    // already installed? (in any group) — updates the path if it changed
     let found = null;
     for (const g of groups) for (const h of g.hooks || []) {
       if (h && h.type === 'command' && String(h.command).includes(HOOK_MARKER)) found = h;
@@ -190,7 +190,7 @@ function install(targetId, hookDest) {
       continue;
     }
 
-    // adiciona no primeiro grupo sem matcher (não invade grupos com matcher de tool)
+    // adds to the first group without a matcher (does not invade groups with a tool matcher)
     let group = groups.find((g) => !g.matcher);
     if (!group) { group = { matcher: '', hooks: [] }; groups.push(group); }
     group.hooks = group.hooks || [];
@@ -203,7 +203,7 @@ function install(targetId, hookDest) {
   return { added, updated, wrote, skipped };
 }
 
-// Remove todas as entradas nossas do alvo. Retorna {removed, wrote}.
+// Removes all our entries from the target. Returns {removed, wrote}.
 function remove(targetId) {
   const target = TARGETS[targetId];
   if (targetId === 'antigravity') {
@@ -221,7 +221,7 @@ function remove(targetId) {
       g.hooks = g.hooks.filter((h) => !(h && h.type === 'command' && String(h.command).includes(HOOK_MARKER)));
       removed += before - g.hooks.length;
     }
-    // poda grupos que ficaram vazios (só os que NÓS esvaziamos)
+    // prunes groups left empty (only the ones WE emptied)
     settings.hooks[evt] = settings.hooks[evt].filter((g) => (g.hooks || []).length > 0);
     if (settings.hooks[evt].length === 0) delete settings.hooks[evt];
   }
@@ -231,9 +231,9 @@ function remove(targetId) {
   return { removed, wrote };
 }
 
-// ---- Kiro CLI: adapter de watcher (não usa hooks de shell) ----
-// O Kiro não expõe hooks como o Claude Code. O adapter é um watcher JS que
-// monitora ~/.kiro/sessions/cli/ — copiado para <baseDir>/adapters/kiro/.
+// ---- Kiro CLI: watcher adapter (does not use shell hooks) ----
+// Kiro does not expose hooks like Claude Code. The adapter is a JS watcher
+// that monitors ~/.kiro/sessions/cli/ — copied to <baseDir>/adapters/kiro/.
 const KIRO = {
   label: 'Kiro CLI',
   detectDir: path.join(os.homedir(), '.kiro'),
@@ -243,9 +243,10 @@ const KIRO = {
 function kiroAdapterDir(baseDir) { return path.join(baseDir, 'adapters', 'kiro'); }
 function kiroAdapterPath(baseDir) { return path.join(kiroAdapterDir(baseDir), KIRO.adapterFile); }
 function kiroAvailable() {
-  // Paridade com o guard do start() do adapter (~/.kiro/sessions/cli): antes
-  // checava só ~/.kiro e a tray reportava "Kiro instalado/sucesso" mesmo com o
-  // watcher incapaz de observar nada (instalação nova sem nenhum chat aberto).
+  // Parity with the adapter's start() guard (~/.kiro/sessions/cli): it used
+  // to check only ~/.kiro and the tray reported "Kiro installed/success" even
+  // with the watcher unable to observe anything (fresh install with no chat
+  // opened yet).
   try { return fs.existsSync(KIRO.sessionsDir); } catch { return false; }
 }
 function kiroInstalled(baseDir) {

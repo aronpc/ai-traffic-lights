@@ -1,7 +1,7 @@
-// Regressão multi-conta Claude (#58): uma barra por conta, rótulo "Plano · conta"
-// no usageLabel e rename de apelido da conta (dblclick na barra) sobrevivendo a
-// re-renders. Mesma técnica do rename.test.js: scripts REAIS do renderer num
-// contexto vm com DOM mock, exercitando os handlers reais de dblclick/blur.
+// Claude multi-account regression (#58): one bar per account, "Plan · account"
+// label in usageLabel, and account label rename (dblclick on the bar) surviving
+// re-renders. Same technique as rename.test.js: REAL renderer scripts in a vm
+// context with mock DOM, exercising the real dblclick/blur handlers.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -36,8 +36,8 @@ function mkEl() {
   };
 }
 
-// Renderer isolado com o canal de uso (onUsage) capturável e o IPC de apelido
-// de conta (setAccountLabel) gravando as chamadas.
+// Isolated renderer with the usage channel (onUsage) capturable and the account
+// label IPC (setAccountLabel) recording calls.
 async function setup() {
   const els = {};
   for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
@@ -72,11 +72,11 @@ async function setup() {
   return { ctx, els, calls, pushUsage: (u) => usageCb(u) };
 }
 
-// Duas contas Claude multi-conta (shape que o collectUsage produz: id sufixado,
-// accountId = endereço do rename, account = rótulo). SEMPRE clonar ao usar: o
-// commit do rename muta otimisticamente u.account (como o push real do main
-// manda objetos frescos a cada coleta, objetos compartilhados entre testes
-// vazariam estado — o blur do teste seguinte via "nada mudou").
+// Two Claude multi-account accounts (the shape collectUsage produces: suffixed
+// id, accountId = rename address, account = label). ALWAYS clone when using:
+// the rename commit optimistically mutates u.account (since the real push from
+// main sends fresh objects on every collection, objects shared across tests
+// would leak state — the next test's blur would see "nothing changed").
 const ACCT_A = { id: 'claude-plan:aa11bb', agent: 'claude', plan: 'Claude Max 5×', title: null,
   usedPct: null, resetAt: null, resetInMin: null, account: 'Alpha Org', accountId: 'aa11bb' };
 const ACCT_B = { id: 'claude-plan:cc22dd', agent: 'claude', plan: 'Claude Max 5×', title: null,
@@ -87,7 +87,7 @@ test('#58 usageLabel: rótulo da conta compõe o nome — "Claude(Max 5× · con
   const { ctx } = await setup();
   assert.equal(ctx.usageLabel(ACCT_A), 'Claude(Max 5× · Alpha Org)');
   assert.equal(ctx.usageLabel(ACCT_B), 'Claude(Max 5× · beta)');
-  // sem conta (conta única) → formato de hoje, sem " · "
+  // no account (single account) → today's format, without " · "
   assert.equal(ctx.usageLabel({ agent: 'claude', plan: 'Claude Max 5×', title: null }), 'Claude(Max 5×)');
 });
 
@@ -102,13 +102,13 @@ test('#58 renderUsage: 2 contas → 2 barras com rótulos distintos', async () =
 test('#58 dblclick no nome da barra abre o rename; Enter persiste via set-account-label', async () => {
   const { els, calls, pushUsage } = await setup();
   pushUsage(fresh(ACCT_A, ACCT_B));
-  const name = els.usage.children[0].children[1];   // .urow__name da conta A
+  const name = els.usage.children[0].children[1];   // account A's .urow__name
   name.dispatch('dblclick', {});
   const input = name.children[0];
   assert.ok(input, 'input aberto no lugar do nome');
   input.value = 'Ghost';
   input.dispatch('keydown', { key: 'Enter', preventDefault() {}, stopPropagation() {} });
-  input.dispatch('blur', {});                       // blur pós-remoção não re-salva
+  input.dispatch('blur', {});                       // post-removal blur does not re-save
   assert.deepEqual(calls.setAccountLabel, [['aa11bb', 'Ghost']], 'salvou 1x, com o accountId da barra');
 });
 
@@ -118,7 +118,7 @@ test('#58 rename da conta sobrevive a re-render (guard compartilhado com o de se
   const name = els.usage.children[0].children[1];
   name.dispatch('dblclick', {});
   const input = name.children[0];
-  ctx.render();                                     // tick de 2s durante a edição
+  ctx.render();                                     // 2s tick during editing
   assert.equal(name.children[0], input, 'input não foi destruído');
   input.value = 'Ghost';
   input.dispatch('blur', {});
@@ -145,12 +145,13 @@ test('#58 sem accountId (conta única) o dblclick NÃO abre rename', async () =>
   assert.equal(name.children.length, 0, 'nenhum input — barra de conta única não renomeia');
 });
 
-// ================= review fix #9: rename do tile PROXY descartado =================
-// O main populava lastAccountIds com `if (!pc) continue`: conta proxy sem
-// .claude.json legível tinha TILE (sfx do dir, via claudeAccountKey) mas não
-// tinha entrada no mapa — o set-account-label dela caía no `if (!key) return`
-// e o apelido sumia em silêncio. O handler real (setupAccountLabelsIpc) com
-// getLastAccountIds mockado no formato novo: sfx → key=DIR da conta proxy.
+// ================= review fix #9: discarded PROXY tile rename =================
+// main populated lastAccountIds with `if (!pc) continue`: a proxy account
+// without a readable .claude.json had a TILE (dir sfx, via claudeAccountKey)
+// but no entry in the map — its set-account-label fell into `if (!key) return`
+// and the label silently vanished. The real handler (setupAccountLabelsIpc)
+// with getLastAccountIds mocked in the new format: sfx → key=DIR of the proxy
+// account.
 const { setupAccountLabelsIpc } = require('../src/ipc/account-labels.js');
 const usageMod = require('../src/usage.js');
 
@@ -174,7 +175,7 @@ function setupIpc(ids) {
 
 test('#9 rename do tile PROXY persiste — lastAccountIds leva key=dir p/ conta sem oauth', () => {
   const dir = '/home/u/.gh-claude';
-  const sfx = usageMod.claudeAccountSfx(usageMod.claudeAccountKey(null, dir)); // sfx do tile (sem .claude.json)
+  const sfx = usageMod.claudeAccountSfx(usageMod.claudeAccountKey(null, dir)); // tile's sfx (no .claude.json)
   const t = setupIpc({ [sfx]: dir });
   t.call({ accountId: sfx, label: 'Meu proxy' });
   assert.deepEqual(t.labels(), { [dir]: 'Meu proxy' }, 'apelido gravado sob a chave dir');
@@ -190,8 +191,8 @@ test('#9 sfx DESCONHECIDO (conta fechou desde o render) descarta sem gravar', ()
 
 test('#9 payload malformado é ignorado (nem lê o mapa)', () => {
   const t = setupIpc({});
-  t.call({ accountId: '../../etc', label: 'X' });   // fora do hex — rejeitado
-  t.call({ accountId: 'aa11bb' });                  // sem label (limpa) — ok abaixo
+  t.call({ accountId: '../../etc', label: 'X' });   // outside hex — rejected
+  t.call({ accountId: 'aa11bb' });                  // no label (clears) — ok below
   t.call(null);
   assert.deepEqual(t.labels(), {});
 });

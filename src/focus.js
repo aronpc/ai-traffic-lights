@@ -1,9 +1,9 @@
-// focus.js — lógica PURA do click-to-focus (issue #1). Sem I/O: recebe dados
-// já coletados (janelas, ancestrais, state) e decide o que fazer. main.js faz
-// o I/O (ler /proc, wmctrl/gdbus/xdg-open) e chama estas funções — assim a
-// decisão é testável sem Electron/X11.
+// focus.js — PURE click-to-focus logic (issue #1). No I/O: takes already
+// collected data (windows, ancestors, state) and decides what to do. main.js
+// does the I/O (reading /proc, wmctrl/gdbus/xdg-open) and calls these
+// functions — so the decision is testable without Electron/X11.
 
-// Normaliza um windowid (hex "0x…" ou decimal) para número. null se inválido.
+// Normalizes a windowid (hex "0x…" or decimal) to a number. null if invalid.
 function parseWindowId(windowid) {
   if (windowid == null) return null;
   const s = String(windowid).trim();
@@ -12,38 +12,42 @@ function parseWindowId(windowid) {
   return Number.isNaN(n) ? null : n;
 }
 
-// Escolhe QUAL janela ativar (issue #1, H2: valida o windowid antes de usar).
-//   windowid    — id gravado no state file (pode estar obsoleto/reciclado)
-//   wins        — [{id, idNum, pid}] de `wmctrl -l -p`
-//   ancestorPids— Set de pids na árvore de processos da sessão (o terminal
-//                 dono da janela está aí; no Warp/Tilix é o processo do app)
-// Regra: só confia no windowid se a janela AINDA existe E pertence à sessão
-// (pid ∈ ancestrais) — senão um id reciclado focaria a janela errada. Sem
-// windowid válido, cai na 1ª janela da sessão. null = nada a ativar.
+// Chooses WHICH window to activate (issue #1, H2: validate the windowid
+// before using it).
+//   windowid    — id recorded in the state file (may be stale/recycled)
+//   wins        — [{id, idNum, pid}] from `wmctrl -l -p`
+//   ancestorPids— Set of pids in the session's process tree (the window's
+//                 owning terminal is in there; in Warp/Tilix it is the app
+//                 process)
+// Rule: only trust the windowid if the window STILL exists AND belongs to the
+// session (pid ∈ ancestors) — otherwise a recycled id would focus the wrong
+// window. Without a valid windowid, fall back to the session's 1st window.
+// null = nothing to activate.
 function pickWindow(windowid, wins, ancestorPids) {
   const wid = parseWindowId(windowid);
   if (wid != null) {
     const exact = wins.find((w) => w.idNum === wid);
-    if (exact && ancestorPids.has(exact.pid)) return exact.id; // validado
+    if (exact && ancestorPids.has(exact.pid)) return exact.id; // validated
   }
   const owned = wins.find((w) => ancestorPids.has(w.pid));      // fallback
   return owned ? owned.id : null;
 }
 
-// Extrai os hints de foco de um /proc/<pid>/environ (Linux) ou da saída
-// normalizada de `ps -E` (macOS) — KEY=VAL separados por NUL. É a fonte VIVA:
-// usada no clique pra enriquecer sessões cujo state ainda não tem o hint
-// (evento anterior ao hook novo, ou sessão só-/proc) e pra RESSINCRONIZAR os
-// hints a partir do tmux client. No Windows não há equivalente (ler o environ
-// de outro processo exige código nativo) — lá o chamador passa ''.
-// ATENÇÃO: todo campo daqui é MACHINE-LOCAL — identifica uma janela/aba/painel
-// deste kernel. Ao adicionar um, inclua-o também em LOCAL_ONLY (src/net.js),
-// senão ele atravessa o sync e chega num peer apontando pra nada.
+// Extracts focus hints from a /proc/<pid>/environ (Linux) or from the
+// normalized output of `ps -E` (macOS) — NUL-separated KEY=VAL pairs. It is
+// the LIVE source: used on click to enrich sessions whose state does not yet
+// carry the hint (event older than the new hook, or /proc-only session) and to
+// RE-SYNC hints from the tmux client. On Windows there is no equivalent
+// (reading another process's environ requires native code) — there the caller
+// passes ''.
+// WARNING: every field here is MACHINE-LOCAL — it identifies a window/tab/pane
+// of this kernel. When adding one, also include it in LOCAL_ONLY (src/net.js),
+// otherwise it crosses the sync and reaches a peer pointing at nothing.
 const ENV_HINTS = {
   WARP_FOCUS_URL: 'focus_url',   // Warp (Linux/macOS) — warp://session/<uuid>
-  TILIX_ID: 'tilix_id',          // Tilix (Linux) — uuid do terminal
+  TILIX_ID: 'tilix_id',          // Tilix (Linux) — terminal uuid
   ITERM_SESSION_ID: 'iterm_id',  // iTerm2 (macOS) — "w0t0p0:<uuid>"
-  TMUX_PANE: 'tmux_pane',        // tmux — "%N", pane do agente
+  TMUX_PANE: 'tmux_pane',        // tmux — "%N", the agent's pane
 };
 
 function emptyHints() {
@@ -64,39 +68,42 @@ function parseEnviron(text) {
   return out;
 }
 
-// Canais nativos que focam a ABA exata dentro do terminal (a janela é do
-// gerenciador de janelas; a aba é interna ao terminal e só ele alcança).
+// Native channels that focus the exact TAB inside the terminal (the window
+// belongs to the window manager; the tab is internal to the terminal and only
+// it can reach it).
 //
-// `app` é a PROVA exigida. O hint sozinho NÃO basta: hint herdado sobrevive ao
-// app que o criou. Um WARP_FOCUS_URL congelado no environ de um tmux server
-// nascido dentro do Warp vaza pra todo pane novo, para sempre — e disparar
-// esse valor levanta o Warp por cima do terminal que está de fato na tela.
-// Ressincronizar o hint a partir do client não cobre isso: quando o client não
-// tem WARP_FOCUS_URL nenhum (tmux hoje rodando no Tilix), o fantasma do state
-// sobrevive a um `live.focus_url || t.focus_url`. Exigir prova cobre.
+// `app` is the required PROOF. The hint alone is NOT enough: an inherited hint
+// outlives the app that created it. A WARP_FOCUS_URL frozen in the environ of
+// a tmux server born inside Warp leaks into every new pane, forever — and
+// triggering that value raises Warp over the terminal that is actually on
+// screen. Re-syncing the hint from the client does not cover this: when the
+// client has no WARP_FOCUS_URL at all (tmux currently running in Tilix), the
+// state ghost survives a `live.focus_url || t.focus_url`. Requiring proof
+// covers it.
 //
-// Quem prova é o chamador (src/ipc/focus.js), varrendo a árvore de processos
-// do pid de âncora e preenchendo state.terminal. Sem prova → sem canal, e o
-// clique degrada pra só levantar a janela: jamais abre o app errado.
+// The prover is the caller (src/ipc/focus.js), sweeping the process tree of
+// the anchor pid and filling in state.terminal. No proof → no channel, and the
+// click degrades to just raising the window: it never opens the wrong app.
 //
-// ADICIONAR UM TERMINAL = uma linha aqui + o comm em TERMINALS (ipc/focus.js)
-// + o executor em focusTab. Nada mais.
-// `valid` roda DEPOIS de `map` e é a fronteira de confiança do canal: o valor
-// sai de um environ (ou, via IPC, de um campo mandado pelo renderer) e vira
-// argumento de um programa externo. Validar o FORMATO é mais seguro que
-// escapar, do mesmo jeito que tmuxTarget faz com o "%N" do pane.
+// ADDING A TERMINAL = one line here + the comm in TERMINALS (ipc/focus.js)
+// + the executor in focusTab. Nothing else.
+// `valid` runs AFTER `map` and is the channel's trust boundary: the value
+// comes out of an environ (or, via IPC, out of a field sent by the renderer)
+// and becomes an argument to an external program. Validating the FORMAT is
+// safer than escaping, the same way tmuxTarget does with the pane's "%N".
 const ID = /^[A-Za-z0-9-]{1,64}$/;
 const TAB_CHANNELS = [
   { kind: 'warp',  app: 'warp',  field: 'focus_url', valid: (v) => v.startsWith('warp://') },
-  // ITERM_SESSION_ID é "w0t0p0:<uuid>"; o AppleScript quer só o uuid. Esse uuid
-  // é INTERPOLADO no corpo do script — um valor com \n fecharia a linha do `if`
-  // e injetaria comandos executados pelo osascript na conta do usuário.
+  // ITERM_SESSION_ID is "w0t0p0:<uuid>"; AppleScript wants only the uuid. That
+  // uuid is INTERPOLATED into the script body — a value with \n would close
+  // the `if` line and inject commands executed by osascript under the user's
+  // account.
   { kind: 'iterm', app: 'iterm', field: 'iterm_id',
     map: (v) => (v.includes(':') ? v.slice(v.indexOf(':') + 1) : v),
     valid: (v) => ID.test(v) },
-  // O tilix_id vira uma variant D-Bus (`[<'…'>]`): uma aspa simples quebraria o
-  // parse do gvariant. Não é shell (execFileSync não passa por shell), mas o
-  // argumento malformado faz a chamada falhar em silêncio.
+  // The tilix_id becomes a D-Bus variant (`[<'…'>]`): a single quote would
+  // break gvariant's parse. It is not shell (execFileSync does not go through
+  // a shell), but the malformed argument makes the call fail silently.
   { kind: 'tilix', app: 'tilix', field: 'tilix_id', valid: (v) => ID.test(v) },
 ];
 
@@ -115,31 +122,32 @@ function tabChannel(state) {
   return null;
 }
 
-// tmux: foca o PAINEL do agente dentro do multiplexador. É COMPLEMENTAR ao
-// raise de janela e ao tabChannel — o agente pode estar num pane tmux dentro
-// do Warp/Tilix/qualquer terminal, então isto roda ALÉM deles. O pane id
-// ($TMUX_PANE, ex "%3") é global no server tmux; validamos o formato pra ele
-// nunca virar um argumento inesperado do `tmux`.
+// tmux: focuses the agent's PANE inside the multiplexer. It is COMPLEMENTARY
+// to the window raise and to tabChannel — the agent may be in a tmux pane
+// inside Warp/Tilix/any terminal, so this runs IN ADDITION to them. The pane
+// id ($TMUX_PANE, e.g. "%3") is global in the tmux server; we validate the
+// format so it never becomes an unexpected `tmux` argument.
 function tmuxTarget(state) {
   if (!state || !state.tmux_pane) return null;
   const p = String(state.tmux_pane);
   return /^%[0-9]+$/.test(p) ? p : null;
 }
 
-// Sob tmux, o PID do agente NÃO alcança o terminal: o tmux server é um daemon
-// reparentado pro init (systemd --user), então a cadeia de PPid do agente é
-// agente → zsh → tmux server → systemd — o emulador (Warp/Tilix/…) nunca
-// aparece. Quem É filho do terminal é o tmux CLIENT (um por aba anexada).
-// Esta função escolhe o client CERTO: o que está anexado à sessão do pane do
-// agente. Sem isso o pickWindow não acha janela nenhuma (raise falha) e o
-// focus_url do state vem do environ CONGELADO do server (o mesmo pra todas as
-// abas → xdg-open foca sempre a aba errada).
+// Under tmux, the agent's PID does NOT reach the terminal: the tmux server is
+// a daemon reparented to init (systemd --user), so the agent's PPid chain is
+// agent → zsh → tmux server → systemd — the emulator (Warp/Tilix/…) never
+// appears. What IS a child of the terminal is the tmux CLIENT (one per
+// attached tab). This function picks the RIGHT client: the one attached to the
+// agent's pane's session. Without this pickWindow finds no window at all
+// (raise fails) and the state's focus_url comes from the server's FROZEN
+// environ (the same for all tabs → xdg-open always focuses the wrong tab).
 //   pane    — "%41" (state.tmux_pane)
-//   panes   — [{pane, session}] de `tmux list-panes -a`
-//   clients — [{session, pid, activity}] de `tmux list-clients`
-// Retorna o pid do client, ou null (pane sem sessão/sem client anexado —
-// sessão detached é normal: o agente roda, só não tem janela pra focar).
-// Desempata pelo activity mais recente quando há N clients na mesma sessão.
+//   panes   — [{pane, session}] from `tmux list-panes -a`
+//   clients — [{session, pid, activity}] from `tmux list-clients`
+// Returns the client's pid, or null (pane without session/without an attached
+// client — a detached session is normal: the agent runs, there is just no
+// window to focus). Ties are broken by the most recent activity when there
+// are N clients on the same session.
 function tmuxClientPid(pane, panes, clients) {
   if (!pane || !Array.isArray(panes) || !Array.isArray(clients)) return null;
   const entry = panes.find((p) => p && p.pane === pane);
@@ -150,23 +158,26 @@ function tmuxClientPid(pane, panes, clients) {
   return best.pid;
 }
 
-// Sessão de OUTRA máquina (sync P2P): o `pid` dela é de outro kernel, e
-// interpretá-lo aqui focaria um processo local homônimo — a mesma classe de
-// erro do windowid reciclado, um nível acima. `origin` vem de identity.js
-// ('local' = esta máquina; nome do peer = remota).
+// Session from ANOTHER machine (P2P sync): its `pid` belongs to another
+// kernel, and interpreting it here would focus a local process with the same
+// id — the same class of error as the recycled windowid, one level up.
+// `origin` comes from identity.js ('local' = this machine; peer name =
+// remote).
 function isRemoteSession(state) {
   return !!state && !!state.origin && state.origin !== 'local';
 }
 
-// Desfecho do clique: null quando teve efeito, senão a RAZÃO do no-op, pro
-// chamador escolher a mensagem. Antes só o Wayland era reportado, mas o mesmo
-// silêncio acontece no X11/macOS quando a sessão está num tmux sem client
-// anexado, ou quando ela nem é desta máquina — "não fez nada, sem avisar" é o
-// pior desfecho possível. Ordem = do mais específico ao mais genérico.
-//   remote   — sessão de outro host: não há o que focar aqui
-//   detached — tmux sem client anexado: a sessão existe, janela não
-//   wayland  — Wayland nativo e o terminal não expõe canal de aba
-//   nowindow — nenhuma janela da sessão e nenhum canal
+// Click outcome: null when it had an effect, otherwise the REASON for the
+// no-op, so the caller can pick the message. Previously only Wayland was
+// reported, but the same silence happens on X11/macOS when the session is in
+// a tmux with no attached client, or when it is not even from this machine —
+// "did nothing, without warning" is the worst possible outcome. Order = from
+// most specific to most generic.
+//   remote   — session from another host: there is nothing to focus here
+//   detached — tmux with no attached client: the session exists, the window
+//              does not
+//   wayland  — native Wayland and the terminal exposes no tab channel
+//   nowindow — no window for the session and no channel
 function focusFailure(state) {
   if (!state) return null;
   if (isRemoteSession(state)) return 'remote';

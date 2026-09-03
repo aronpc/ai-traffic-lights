@@ -15,8 +15,8 @@ test('validSessionId: REJEITA path traversal e caracteres perigosos', () => {
   assert.equal(validSessionId('a/b'), false, 'barra =Traversal real');
   assert.equal(validSessionId('a b'), false, 'espaço');
   assert.equal(validSessionId('a;b'), false);
-  // ".." sozinho NÃO é traversal: vira o filename "..json" DENTRO do STATE_DIR
-  // (sem '/' não há escape de diretório). Permitir é inofensivo e útil p/ IDs.
+  // ".." alone is NOT traversal: it becomes the filename "..json" INSIDE STATE_DIR
+  // (without '/' there is no directory escape). Allowing it is harmless and useful for IDs.
   assert.equal(validSessionId('..'), true);
   assert.equal(validSessionId(''), false, 'vazio');
   assert.equal(validSessionId(null), false);
@@ -33,7 +33,7 @@ test('shellQuote: escapa aspas simples internas', () => {
 });
 
 test('shellQuote: path com espaço fica seguro p/ shell', () => {
-  // o resultado, avaliado por bash, expande p/ um único argumento
+  // the result, evaluated by bash, expands to a single argument
   assert.equal(shellQuote('/home/my dir/x'), "'/home/my dir/x'");
 });
 
@@ -47,14 +47,14 @@ test('desktopEscape: path sem reservados fica intacto', () => {
   assert.equal(desktopEscape('/usr/bin/electron'), '/usr/bin/electron');
 });
 
-// ---- boundsOnScreen: posição salva vs telas ativas (PR-32 #19) ----
-// Layout real de 3 monitores: [esq 0..1920] [primário 1920..4480] [dir 4480..6400].
-// Antes, a janela Terminal validava só contra o PRIMÁRIO e descartava em
-// silêncio a posição de quem estava nos laterais, a cada reabertura.
+// ---- boundsOnScreen: saved position vs active screens (PR-32 #19) ----
+// Real 3-monitor layout: [left 0..1920] [primary 1920..4480] [right 4480..6400].
+// Before, the Terminal window validated only against the PRIMARY and silently
+// discarded the position of whoever was on the side monitors, on every reopen.
 const DISPLAYS = [
-  { workArea: { x: 0,    y: 0, width: 1920, height: 1080 } },   // esquerdo
-  { workArea: { x: 1920, y: 0, width: 2560, height: 1080 } },   // primário
-  { workArea: { x: 4480, y: 0, width: 1920, height: 1080 } },   // direito
+  { workArea: { x: 0,    y: 0, width: 1920, height: 1080 } },   // left
+  { workArea: { x: 1920, y: 0, width: 2560, height: 1080 } },   // primary
+  { workArea: { x: 4480, y: 0, width: 1920, height: 1080 } },   // right
 ];
 
 test('boundsOnScreen: posição em QUALQUER monitor é preservada (multi-monitor)', () => {

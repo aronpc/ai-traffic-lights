@@ -1,5 +1,5 @@
-// Testes do leitor de transcripts (src/transcript.js): leitura reversa em chunks,
-// agregação por message.id (streaming multi-linha) e último-N mensagens.
+// Tests for the transcript reader (src/transcript.js): reverse chunked reading,
+// aggregation by message.id (multi-line streaming) and last-N messages.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -39,7 +39,7 @@ test('extractMessage: trunca mensagem enorme', () => {
   assert.ok(m.text.length < 5000 && m.text.endsWith('…'));
 });
 
-// ---- readTailLines: lê do fim, não o arquivo todo ----
+// ---- readTailLines: reads from the end, not the whole file ----
 test('readTailLines: devolve linhas em ordem cronológica', () => {
   const p = writeFile('a.jsonl', Array.from({ length: 10 }, (_, i) => `{"i":${i}}`).join('\n'));
   const lines = readTailLines(p, 4096);
@@ -48,7 +48,7 @@ test('readTailLines: devolve linhas em ordem cronológica', () => {
 
 test('readTailLines: respeita maxBytes (descarta linha parcial do corte)', () => {
   const p = writeFile('b.jsonl', Array.from({ length: 50 }, (_, i) => `{"i":${i}}`).join('\n'));
-  const lines = readTailLines(p, 30);   // pouquíssimos bytes → só o fim, sem linha partida
+  const lines = readTailLines(p, 30);   // very few bytes → just the tail, no split line
   for (const l of lines) assert.doesNotThrow(() => JSON.parse(l));
   assert.ok(JSON.parse(lines[lines.length - 1]).i === 49, 'última linha é a 49');
 });
@@ -59,9 +59,9 @@ test('readTailLines: arquivo inexistente/vazio → []', () => {
   assert.deepEqual(readTailLines(empty), []);
 });
 
-// ---- lastMessages: agregação por message.id (streaming) + último-N ----
+// ---- lastMessages: aggregation by message.id (streaming) + last-N ----
 test('lastMessages: agrega blocos do MESMO message.id numa mensagem', () => {
-  // Uma msg assistant "a1" streaming em 3 linhas + 1 user.
+  // One assistant msg "a1" streamed across 3 lines + 1 user.
   const p = writeFile('c.jsonl', [
     JSON.stringify({ message: { role: 'user', id: 'u1', content: 'pergunta' } }),
     JSON.stringify({ message: { role: 'assistant', id: 'a1', content: [{ type: 'text', text: 'r1 ' }] } }),
@@ -90,9 +90,9 @@ test('lastMessages: sem mensagens de chat → []', () => {
 });
 
 test('lastMessages: msgs de user SEM message.id viram itens separados (não colapsam)', () => {
-  // PR-32 #15: antes id=msg.id||role => user sem id virava 'user' e TODAS as
-  // mensagens de usuário concatenavam num único item gigante, quebrando o painel
-  // ver-prompt (o objetivo central da feature).
+  // PR-32 #15: previously id=msg.id||role => a user msg without an id became
+  // 'user' and ALL user messages concatenated into a single giant item, breaking
+  // the ver-prompt panel (the feature's central goal).
   const p = writeFile('f.jsonl', [
     '{"type":"user","message":{"role":"user","content":"primeiro prompt"}}',
     '{"type":"assistant","message":{"role":"assistant","content":"resposta 1","id":"a1"}}',

@@ -1,6 +1,6 @@
-// Escolha do .dmg no updater do macOS (achado 03 do review da PR #46).
-// Instalar o bundle da arquitetura errada não abre — um Mac Intel não roda um
-// .app arm64 e vice-versa —, então a seleção precisa ser explícita e testada.
+// .dmg selection in the macOS updater (finding 03 of the PR #46 review).
+// Installing the wrong architecture's bundle won't open — an Intel Mac can't
+// run an arm64 .app and vice-versa — so the selection must be explicit and tested.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { pickMacDmg, decidirIntegridade, releaseSemSidecar, fluxoUpdateMac } = require('../src/ipc/update.js');
@@ -24,7 +24,7 @@ test('pickMacDmg: sem o exato, usa o .dmg sem marca de arquitetura (universal)',
 });
 
 test('pickMacDmg: NÃO devolve o .dmg de outra arquitetura como consolo', () => {
-  // era o risco de um `|| dmgs[0]`: instalaria um bundle que não abre.
+  // this was the risk of a `|| dmgs[0]`: it would install a bundle that doesn't open.
   assert.equal(pickMacDmg([dmg('atl-arm64.dmg')], 'x64'), null);
 });
 
@@ -40,11 +40,12 @@ test('pickMacDmg: entrada degenerada → null, nunca lança', () => {
   }
 });
 
-// ---- integridade do auto-update (achado 03 + reviews do sidecar) ----
-// Este é o ÚNICO controle antes de um script substituir o .app inteiro, sem
-// ninguém olhando: não há electron-updater neste caminho e o build do macOS não
-// emite mais latest-mac.yml. A busca devolve {estado, corpo} porque distinguir
-// "não existe" de "não deu pra buscar" é o que impede instalar sem verificação.
+// ---- auto-update integrity (finding 03 + sidecar reviews) ----
+// This is the ONLY check before a script replaces the entire .app with nobody
+// watching: there is no electron-updater on this path and the macOS build no
+// longer emits latest-mac.yml. The fetch returns {estado, corpo} because
+// distinguishing "doesn't exist" from "couldn't fetch" is what prevents
+// installing without verification.
 const HASH = 'A'.repeat(86) + '==';
 const achou = (corpo) => ({ estado: 'ok', corpo });
 
@@ -69,16 +70,16 @@ test('decidirIntegridade: 404 só é aceito para release explicitamente legada',
 });
 
 test('decidirIntegridade: falha de rede NÃO vira "sem sidecar"', () => {
-  // o ponto do achado: timeout/TLS/5xx tratados como ausência instalariam sem
-  // verificação nenhuma.
+  // the point of the finding: timeout/TLS/5xx treated as absence would install
+  // with no verification at all.
   assert.equal(decidirIntegridade({ estado: 'falha', corpo: '' }, null), 'indisponivel');
   assert.equal(decidirIntegridade(null, null), 'indisponivel');
   assert.equal(decidirIntegridade(undefined, null), 'indisponivel');
 });
 
 test('decidirIntegridade: 200 com corpo VAZIO não é ausência — reprova', () => {
-  // um proxy transparente ou borda de CDN respondendo 200 sem conteúdo
-  // desligaria o controle inteiro se isso passasse por "sem sidecar".
+  // a transparent proxy or CDN edge answering 200 with no content would turn
+  // the whole check off if that passed as "no sidecar".
   assert.equal(decidirIntegridade(achou(''), HASH), 'malformado');
 });
 
@@ -88,14 +89,14 @@ test('decidirIntegridade: corpo fora do formato → recusa (portal cativo, trunc
   }
 });
 
-// ---- o FLUXO, não só a unidade (achado do 4º review) ----
-// Os testes acima passavam com o auto-update do macOS 100% quebrado: a
-// pré-validação chamava decidirIntegridade(busca, null) e todo sidecar válido
-// virava 'divergente', abortando antes do download. Testar a função isolada
-// não pega isso — o defeito estava na COMPOSIÇÃO das duas etapas.
+// ---- the FLOW, not just the unit (finding of the 4th review) ----
+// The tests above passed with the macOS auto-update 100% broken: the
+// pre-validation called decidirIntegridade(busca, null) and every valid sidecar
+// became 'divergente', aborting before the download. Testing the isolated
+// function doesn't catch this — the defect was in the COMPOSITION of the two steps.
 //
-// Os testes abaixo chamam o helper compartilhado pelo baixarUpdateMac real,
-// injetando apenas download e hash para não depender de Electron/rede.
+// The tests below call the helper shared with the real baixarUpdateMac,
+// injecting only download and hash to avoid depending on Electron/network.
 const rodarFluxo = (busca, hashDoArquivoBaixado, releaseLegada = false) => fluxoUpdateMac({
   busca,
   releaseLegada,
@@ -140,8 +141,8 @@ test('fluxo: release atual sem sidecar não baixa', async () => {
 });
 
 test('fluxo: nenhum veredito "pendente" escapa para a instalação', async () => {
-  // 'pendente' chegando ao fim significaria hash nunca comparado. O guard de
-  // baixarUpdateMac falha fechado; este teste garante que continue assim.
+  // 'pendente' reaching the end would mean the hash was never compared. The
+  // baixarUpdateMac guard fails closed; this test ensures it stays that way.
   for (const caso of [achou(HASH), achou(''), { estado: 'falha', corpo: '' }, { estado: 'ausente', corpo: '' }]) {
     assert.notEqual((await rodarFluxo(caso, HASH)).veredito, 'pendente');
   }

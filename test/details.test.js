@@ -1,8 +1,9 @@
-// Janela SOLTA de detalhes da sessão (#59): o ctx "Detalhes da sessão" pede
-// ao main (openDetails por sessionKey), o main empurra { s, readAt } à janela
-// a cada refresh (live — não mais snapshot congelado do modal bloqueante).
-// Aqui testamos o módulo src/details.js direto num vm: agents/identity/i18n +
-// details.js (mesma técnica dos outros vm-tests, sem o renderer do overlay).
+// Detached session details window (#59): the ctx "Session details" asks main
+// (openDetails by sessionKey), main pushes { s, readAt } to the window on
+// every refresh (live — no longer a frozen snapshot from the blocking modal).
+// Here we test src/details.js directly in a vm: agents/identity/i18n +
+// details.js (same technique as the other vm-tests, without the overlay
+// renderer).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -81,15 +82,15 @@ async function setup(aliases = {}, { noDrain = false } = {}) {
   vm.runInContext(CODE, ctx);
   ctx.api = api;
   vm.runInContext('initDetailsWindow(api);', ctx);
-  // drena getLang/getAliases (o teste de race segura isso de propósito)
+  // drains getLang/getAliases (the race test holds this on purpose)
   const drain = async () => { await Promise.resolve(); await Promise.resolve(); };
   if (!noDrain) await drain();
   const fire = (t, ev) => (winListeners[t] || []).forEach((f) => f(ev || {}));
   const push = (s, readAt = 0) => dataCb({ s, readAt });
-  // materializa .dt-body AGORA: com noDrain o card ainda não montou nada,
-  // e o mesmo objeto lazy precisa existir antes e depois do 1º push
+  // materialize .dt-body NOW: with noDrain the card hasn't mounted anything
+  // yet, and the same lazy object must exist before and after the 1st push
   const body = card.querySelector('.dt-body');
-  const kv = () => {                                        // Map label → valor das .dt-row
+  const kv = () => {                                        // Map label → value of .dt-row
     const m = new Map();
     for (const r of body.children) {
       if (r.className === 'dt-row') m.set(r.children[0].textContent, r.children[1].textContent);
@@ -119,7 +120,7 @@ test('1º push monta o card: título = pasta (sem alias), campos de identidade',
 });
 
 test('alias vence o cwd no título', async () => {
-  const { card, push } = await setup({ api: 'meu-robô' });   // aliasKey = session_id puro
+  const { card, push } = await setup({ api: 'meu-robô' });   // aliasKey = pure session_id
   push(mkSess('api', null, {}));
   assert.equal(card._q['.dt-title'].textContent, 'meu-robô');
 });
@@ -128,7 +129,7 @@ test('sessão local: contexto completo + conta + botão copiar session_id/cwd', 
   const { kv, push, body, calls } = await setup();
   push(mkSess('api', null, {
     model: 'glm-5.2', term_program: 'tilix', tmux_session: 'atl-api', windowid: '1234567',
-    account: 'ghost',   // rótulo anotado no main (CLAUDE_CONFIG_DIR do environ)
+    account: 'ghost',   // label annotated in main (CLAUDE_CONFIG_DIR from environ)
   }));
   const m = kv();
   assert.equal(m.get('Conta'), 'ghost', 'conta Claude da sessão (perfil dd-claude)');
@@ -136,8 +137,8 @@ test('sessão local: contexto completo + conta + botão copiar session_id/cwd', 
   assert.equal(m.get('Terminal'), 'tilix');
   assert.equal(m.get('sessão tmux'), 'atl-api');
   assert.equal(m.get('Janela (X11)'), '1234567', 'windowid é LOCAL_ONLY — na local aparece');
-  // botões copiar: session_id e cwd (o botão agora vive MONTADO e hidden —
-  // o filtro é por visibilidade, não por existência)
+  // copy buttons: session_id and cwd (the button now lives MOUNTED and
+  // hidden — the filter is by visibility, not existence)
   const copyBtns = body.children
     .filter((c) => c.className === 'dt-row' && c.children.length > 2 && !c.children[2].hidden);
   assert.equal(copyBtns.length, 2, 'session_id e cwd têm botão copiar');
@@ -211,16 +212,16 @@ test('Esc e × pedem o close (main destrói a janela)', async () => {
 });
 
 test('race do bootstrap: push antes do getLang resolver NÃO pinta "encerrada" sobre card vivo', async () => {
-  // main empurra details-data no did-finish-load; getLang/getAliases são
-  // invokes que podem resolver DEPOIS — o placeholder "encerrada" do then
-  // não pode sobrescrever um card que já montou (bug medido no review).
+  // main pushes details-data on did-finish-load; getLang/getAliases are
+  // invokes that can resolve AFTER — the "ended" placeholder from the then
+  // must not overwrite a card that already mounted (bug measured in review).
   const t = await setup({}, { noDrain: true });
   t.push(mkSess('api', null, { model: 'glm-5.3' }));
   await t.drain();
   assert.equal(t.card._q['.dt-title'].textContent, 'api', 'card vivo segue montado');
   assert.ok(t.body.children.some((c) => c.className === 'dt-row'), 'rows presentes');
-  // 1º push montou com T=en (default do bootstrap); o refresh seguinte já
-  // roda com getLang resolvido e migra os labels para pt NO MESMO node
+  // 1st push mounted with T=en (bootstrap default); the next refresh already
+  // runs with getLang resolved and migrates the labels to pt IN THE SAME node
   t.push(mkSess('api', null, { model: 'glm-5.3' }));
   assert.equal(t.kv().get('Modelo'), 'glm-5.3');
 });
@@ -233,7 +234,7 @@ test('refresh ao vivo é INCREMENTAL: mesmo node reusado e timeline expandida pe
     model: 'glm-5.2',
     events: [ev(now - 60, 'SessionStart'), ev(now - 30, 'Stop')],
   }));
-  timelineHead().dispatch('click', {});            // usuário expande a timeline
+  timelineHead().dispatch('click', {});            // user expands the timeline
   assert.equal(evsBox().hidden, false, 'expandida');
   const modelBefore = keyEl('model');
   assert.ok(modelBefore, 'row do modelo existe');
