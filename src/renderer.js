@@ -201,7 +201,7 @@ function ctxItem(label, fn) {
   it.addEventListener('click', (e) => { e.stopPropagation(); closeCtx(); fn(); });
   return it;
 }
-function openCtx(s, st, labelEl, ev) {
+function openCtx(s, st, ev) {
   if (!$ctx) return;
   closeCtx();
   const isLcl = isLocal(s);
@@ -225,7 +225,9 @@ function openCtx(s, st, labelEl, ev) {
   // Detalhes abre numa JANELA solta própria (#59) — o overlay não bloqueia e a
   // janela atualiza ao vivo. O main é quem empurra os dados da sessão por key.
   $ctx.append(ctxItem(T('ctx_details'), () => window.trafficLight.openDetails(key)));
-  if (canRename) $ctx.append(ctxItem(T('ctx_rename'), () => startRename(s, labelEl)));
+  // label resolvido NO CLIQUE: o labelEl vivo é o do último render (o node
+  // capturado ao abrir o menu pode ter sido substituído desde então)
+  if (canRename) $ctx.append(ctxItem(T('ctx_rename'), () => startRename(s, labelElFor(key))));
   if (canMark) $ctx.append(ctxItem(T('ctx_mark_read'), () => {
     const at = s.last_event_ts || Math.floor(Date.now() / 1000);
     readMarks.set(key, at);
@@ -263,10 +265,19 @@ function openCtx(s, st, labelEl, ev) {
 // Enquanto o input está aberto, `renaming` suspende render() — senão o
 // replaceChildren() de um tick de idle (2s) ou de um evento de sessão
 // arrancaria o input do DOM no meio da digitação (issue #2).
+//
+// O menu de contexto sobrevive a ticks de render: o labelEl capturado no
+// open-time pode estar DETACHED quando o usuário enfim clica "Renomear" — o
+// input montaria num nó fora da lista, `renaming` ligava para sempre e o
+// render() congelava. O menu resolve o label VIVO no clique: labelEls é
+// refeito a cada render com os nodes que estão na lista agora.
+const labelEls = new Map();                     // sessionKey → label node do último render
+function labelElFor(key) { return labelEls.get(key) || null; }
 function startRename(s, labelEl) {
   const key = aliasKey(s);
   if (!key || renaming) return;
   if (s.origin && s.origin !== 'local') return;   // linha remota: rename é local-only (não sincroniza)
+  if (!labelEl) return;                           // sessão saiu da lista entre abrir o menu e clicar
   renaming = true;
   const input = document.createElement('input');
   input.className = 'row-input';
@@ -418,6 +429,7 @@ function render() {
   const breakAt = new Map(grouped ? breaks.map((b) => [b.startIdx, b]) : []);
 
   // 3. monta as linhas na ordem ordenada.
+  labelEls.clear();                            // só nodes da lista VIVA (menu resolve por aqui)
   const rows = [];
   ordered.forEach(({ s, st }, idx) => {
     const brk = breakAt.get(idx);
@@ -475,7 +487,7 @@ function render() {
     // marcar como lida). preventDefault segura o menu nativo do Chromium.
     li.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      openCtx(s, st, labelEl, e);
+      openCtx(s, st, e);
     });
 
     // Colunas fixas (alinham entre linhas): [led] [motivo] [LLM] [nome…] [texto] [sino]
@@ -501,6 +513,7 @@ function render() {
     const labelEl = document.createElement('span');
     labelEl.className = 'row__label';
     labelEl.textContent = label;
+    labelEls.set(key, labelEl);               // vivo p/ o rename do menu de contexto
     labelEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; } // era clique simples pendente → cancela o foco

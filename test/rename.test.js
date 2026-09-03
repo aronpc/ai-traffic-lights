@@ -38,11 +38,11 @@ function mkEl() {
 // Monta um renderer isolado com uma sessão renomeável já na lista.
 async function setup() {
   const els = {};
-  for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay']) els[id] = mkEl();
+  for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay', 'ctxMenu']) els[id] = mkEl();
   const calls = { setAlias: [], notify: [], transcriptResolvers: [] };
   let sessionsCb = null;
   const window = {
-    addEventListener() {},
+    addEventListener() {}, removeEventListener() {},
     trafficLight: {
       onSessions: (cb) => { sessionsCb = cb; },
       requestSessions() {}, setExpanded() {}, autoHeight() {},
@@ -165,4 +165,53 @@ test('resposta antiga de transcript não sobrescreve a sessão mais recente', as
   calls.transcriptResolvers[0].resolve([]);
   await Promise.resolve();
   assert.equal(body.innerHTML, '', 'resposta antiga vazia foi descartada');
+});
+
+test('menu de contexto: rename usa o label VIVO mesmo com re-render no meio', async () => {
+  // O menu sobrevive a ticks de render; o labelEl capturado ao ABRIR o menu é
+  // detachado pelo replaceChildren do render. O clique tem que resolver o node
+  // da lista ATUAL — senão o input monta fora do DOM, `renaming` liga para
+  // sempre e o render() congela (achado do code review).
+  const { ctx, els, calls, noev } = await setup();
+  const li0 = els.list.children[0];
+  li0.dispatch('contextmenu', noev);
+  assert.equal(els.ctxMenu.hidden, false, 'menu aberto');
+
+  ctx.render();                                // tick de sessão/idle com o menu aberto
+  assert.notEqual(els.list.children[0], li0, 'lista re-renderizou (node antigo morreu)');
+
+  const item = els.ctxMenu.children.find(
+    (c) => c.className === 'ctx__item' && c.textContent === ctx.makeT('pt')('ctx_rename'),
+  );
+  assert.ok(item, 'item Renomear presente');
+  item.dispatch('click', noev);
+
+  const labelEl = els.list.children[0].children[3].children[0];
+  const input = labelEl.children[0];
+  assert.ok(input && input.className === 'row-input', 'input montou no label VIVO da lista atual');
+
+  ctx.render();                                // guard segue valendo durante a edição
+  assert.equal(els.list.children[0].children[3].children[0].children[0], input, 'render no-op');
+  input.value = 'Do Menu';
+  input.dispatch('blur', noev);
+  assert.deepEqual(calls.setAlias, [['s1', 'Do Menu']], 'commit salvou');
+  ctx.render();
+  assert.notEqual(els.list.children[0].children[3].children[0].children[0], input, 'render retomou após o commit');
+});
+
+test('menu aberto + sessão morre: rename aborta limpo sem travar o render', async () => {
+  const { ctx, els, noev, sessionsCb } = await setup();
+  els.list.children[0].dispatch('contextmenu', noev);
+  const item = els.ctxMenu.children.find(
+    (c) => c.className === 'ctx__item' && c.textContent === ctx.makeT('pt')('ctx_rename'),
+  );
+
+  sessionsCb([]);                              // sessão sumiu → lista vazia, sem label vivo
+  item.dispatch('click', noev);                // clique não pode ligar `renaming` sem alvo
+
+  const now = Math.floor(Date.now() / 1000);
+  sessionsCb([{ session_id: 's2', pid: 2, cwd: '/outro', agent: 'claude', last_event: 'Stop', last_event_ts: now }]);
+  assert.equal(els.list.children.length, 1, 'render segue vivo (não congelou)');
+  const input = els.list.children[0].children[3].children[0].children[0];
+  assert.ok(!input || input.className !== 'row-input', 'nenhum input fantasma montado');
 });
