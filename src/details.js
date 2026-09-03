@@ -1,21 +1,25 @@
-// details.js — montagem do card de detalhes da sessão + bootstrap da JANELA
-// solta (details.html). Extraído do renderer.js quando o painel deixou de ser
-// modal bloqueante do overlay (#59): agora vive numa BrowserWindow própria,
-// não bloqueia a lista e atualiza AO VIVO (o main empurra a sessão a cada
-// refresh). Módulo duplo browser/Node (padrão fuzzy.js) — os testes carregam
-// num vm com DOM mock, sem o renderer inteiro.
+// details.js — session details card + bootstrap for the standalone details
+// window (details.html). Extracted from renderer.js when the panel stopped
+// being a blocking modal of the overlay (#59): it now lives in its own
+// BrowserWindow, doesn't block the list and updates LIVE (main pushes the
+// session on every refresh). Dual browser/Node module (fuzzy.js pattern) —
+// tests load it in a vm with a DOM mock, without the whole renderer.
 //
-// Estrutura: mountDetails(root, s, ctx) preenche .dt-title e monta .dt-body
-// (mesma estrutura de seções/rows de antes); initDetailsWindow(api) é o
-// bootstrap da página: escuta o push 'details-data' do main, monta, e liga
-// Esc/× ao IPC 'details-close'.
+// Structure: mountDetails(root, s, ctx) fills .dt-title and .dt-body with the
+// same section/row layout as before — but INCREMENTALLY: every node carries a
+// stable key and is reused across pushes, so a live refresh updates values in
+// place instead of rebuilding the card. Rebuilding would reset transient UI
+// state the user just set (expanded timeline, text selection) every 2-5s,
+// which is exactly the state the window exists to monitor. initDetailsWindow
+// (api) is the page bootstrap: listens for the 'details-data' push from main,
+// mounts, and wires Esc/× to the 'details-close' IPC.
 
 function basename(p) {
   return String(p || '').replace(/\/+$/, '').split('/').pop() || '';
 }
 
-// Label da sessão (mesma lógica da linha do overlay: apelido > pasta > agente·pid).
-// Recebe o map de aliases — quem chama é dono do estado.
+// Session label (same logic as the overlay row: alias > folder > agent·pid).
+// Receives the aliases map — whoever calls owns the state.
 function labelFor(s, aliases) {
   const alias = aliases[aliasKey(s)];
   if (alias) return alias;
@@ -23,120 +27,219 @@ function labelFor(s, aliases) {
   return (AGENTS[agentOf(s)] || { label: agentOf(s) }).label.toLowerCase() + ' · ' + s.pid;
 }
 
-function dtSec(title) {
+// First direct child carrying the given data-key, or null.
+function findKeyed(parent, key) {
+  for (const c of parent.children) {
+    if (c.getAttribute && c.getAttribute('data-key') === key) return c;
+  }
+  return null;
+}
+
+// Reconciles `parent` children to exactly the ordered `specs` list
+// ({key, el}), reusing existing nodes by key: a child stays only when it IS
+// the spec's element for its key (identity, not just key — a rebuilt node
+// with a reused key must evict the old one), then the spec order is enforced
+// by moving/inserting only what is out of place.
+function syncChildren(parent, specs) {
+  const byKey = new Map(specs.map((sp) => [sp.key, sp.el]));
+  for (const child of [...parent.children]) {
+    const key = child.getAttribute && child.getAttribute('data-key');
+    if (byKey.get(key) !== child) child.remove();
+  }
+  specs.forEach((sp, i) => {
+    if (parent.children[i] !== sp.el) {
+      parent.insertBefore(sp.el, parent.children[i] || null);
+    }
+  });
+}
+
+function dtSec(key, title) {
   const h = document.createElement('div');
   h.className = 'dt-sec';
+  h.setAttribute('data-key', key);
   h.textContent = title;
+  h._kind = 'sec';
+  h._update = (t) => { if (h.textContent !== t) h.textContent = t; };
   return h;
 }
 
-function dtRow(label, value, copyText, T, copy) {
+function dtRow(key, label, value, copyText, T, copy) {
   const row = document.createElement('div');
   row.className = 'dt-row';
+  row.setAttribute('data-key', key);
   const k = document.createElement('span');
   k.className = 'dt-k';
   k.textContent = label;
   const v = document.createElement('span');
   v.className = 'dt-v';
   v.textContent = value;
-  row.append(k, v);
-  if (copyText && copy) {
-    const b = document.createElement('button');
-    b.className = 'dt-copy';
-    b.textContent = T('dt_copy');
-    b.addEventListener('click', (e) => { e.stopPropagation(); copy(copyText); });
-    row.append(b);
-  }
+  // Copy button stays mounted (hidden when this row has nothing to copy):
+  // toggling its existence would churn the DOM the incremental mount is
+  // here to avoid. Its target is read at click time so updates that change
+  // the value (e.g. a new cwd) copy the right thing.
+  const b = document.createElement('button');
+  b.className = 'dt-copy';
+  b.textContent = T('dt_copy');
+  b.hidden = !copyText;
+  row.append(k, v, b);
+  let currentCopy = copyText || null;
+  b.addEventListener('click', (e) => { e.stopPropagation(); if (currentCopy && copy) copy(currentCopy); });
+  row._update = (l, val, ct) => {
+    if (k.textContent !== l) k.textContent = l;
+    if (v.textContent !== val) v.textContent = val;
+    currentCopy = ct || null;
+    const hide = !ct;
+    if (b.hidden !== hide) b.hidden = hide;
+  };
   return row;
 }
 
-// Monta o card inteiro dentro de `root` (uma .dt-card com .dt-title/.dt-body —
-// o HTML da details.html traz o esqueleto). ctx = {T, copy, aliases, readAt,
-// agentLabel}: T/copy/aliases vêm da página; readAt (epoch s, ou 0) é a marca
-// de leitura vigente que o main manda junto no push; agentLabel resolve o nome
-// amigável do agente.
+// Mounts/refreshes the card inside `root` (a .dt-card with .dt-title/.dt-body
+// — details.html carries the skeleton). ctx = {T, copy, aliases, readAt,
+// agentLabel}: T/copy/aliases come from the page; readAt (epoch s, or 0) is
+// the read mark in force, sent by main with every push; agentLabel resolves
+// the friendly agent name.
 function mountDetails(root, s, ctx) {
   const T = ctx.T;
-  root.querySelector('.dt-title').textContent = labelFor(s, ctx.aliases);
+  const title = labelFor(s, ctx.aliases);
+  const titleEl = root.querySelector('.dt-title');
+  if (titleEl.textContent !== title) titleEl.textContent = title;
   const body = root.querySelector('.dt-body');
-  body.replaceChildren();
 
-  // — Sessão —
-  body.append(dtSec(T('dt_session')));
-  body.append(dtRow(T('dt_agent'), ctx.agentLabel ? ctx.agentLabel(s) : agentOf(s)));
-  body.append(dtRow(T('dt_sid'), s.session_id || '—', s.session_id, T, ctx.copy));
+  // Full card spec, in order. Existing keyed nodes are updated in place;
+  // missing ones are created — syncChildren below reconciles the DOM.
+  const specs = [];
+  const sec = (key, t) => {
+    let el = findKeyed(body, key);
+    if (!el) el = dtSec(key, t);
+    el._update(t);
+    specs.push({ key, el });
+  };
+  const row = (key, label, value, copyText) => {
+    let el = findKeyed(body, key);
+    if (el) el._update(label, value, copyText);
+    else el = dtRow(key, label, value, copyText, T, ctx.copy);
+    specs.push({ key, el });
+  };
+
+  // — Session —
+  sec('sec:session', T('dt_session'));
+  row('agent', T('dt_agent'), ctx.agentLabel ? ctx.agentLabel(s) : agentOf(s));
+  row('sid', T('dt_sid'), s.session_id || '—', s.session_id);
   const alias = ctx.aliases[aliasKey(s)];
-  if (alias) body.append(dtRow(T('dt_alias'), alias));
-  if (s.model) body.append(dtRow(T('dt_model'), s.model));
-  // Conta Claude da sessão (#58): rótulo anotado no main a partir do
-  // CLAUDE_CONFIG_DIR do environ do pid — distingue perfis dd-claude com
-  // autenticações diferentes rodando ao mesmo tempo. Remota traz o rótulo
-  // da conta DA ORIGEM. Sem rótulo resolvido = linha ausente.
-  if (s.account) body.append(dtRow(T('dt_account'), s.account));
-  if (s.pid) body.append(dtRow(T('dt_pid'), String(s.pid)));
+  if (alias) row('alias', T('dt_alias'), alias);
+  if (s.model) row('model', T('dt_model'), s.model);
+  // Claude account of the session (#58): label annotated in main from the
+  // pid's CLAUDE_CONFIG_DIR environ — tells apart dd-claude profiles with
+  // different logins running at once. Remote sessions carry the label of
+  // the ORIGIN's account. No resolved label → no row.
+  if (s.account) row('account', T('dt_account'), s.account);
+  if (s.pid) row('pid', T('dt_pid'), String(s.pid));
 
-  // — Contexto — (windowid é LOCAL_ONLY: na remota o campo nem existe)
-  body.append(dtSec(T('dt_context')));
-  if (s.cwd) body.append(dtRow(T('dt_cwd'), s.cwd, s.cwd, T, ctx.copy));
-  if (s.term_program && s.term_program !== 'terminal') body.append(dtRow(T('dt_term'), s.term_program));
-  if (s.tmux_session) body.append(dtRow(T('dt_tmux'), s.tmux_session));
-  body.append(dtRow(T('dt_origin'), s.origin || 'local'));
-  if (s.windowid) body.append(dtRow(T('dt_window'), String(s.windowid)));
+  // — Context — (windowid is LOCAL_ONLY: remote sessions don't even have it)
+  sec('sec:context', T('dt_context'));
+  if (s.cwd) row('cwd', T('dt_cwd'), s.cwd, s.cwd);
+  if (s.term_program && s.term_program !== 'terminal') row('term', T('dt_term'), s.term_program);
+  if (s.tmux_session) row('tmux', T('dt_tmux'), s.tmux_session);
+  row('origin', T('dt_origin'), s.origin || 'local');
+  if (s.windowid) row('window', T('dt_window'), String(s.windowid));
 
-  // — Atividade —
-  body.append(dtSec(T('dt_activity')));
+  // — Activity —
+  sec('sec:activity', T('dt_activity'));
   const age = ageText(Math.floor(Date.now() / 1000), s.last_event_ts);
-  body.append(dtRow(T('dt_last_event'), (s.last_event || '—') + (age ? ' · ' + age : '')));
-  if (s.last_tool) body.append(dtRow(T('dt_last_tool'), s.last_tool));
-  if (s.notification_type) body.append(dtRow(T('dt_notification'), s.notification_type));
-  if (ctx.readAt) body.append(dtRow(T('dt_read_until'), new Date(ctx.readAt * 1000).toLocaleTimeString()));
+  row('last_event', T('dt_last_event'), (s.last_event || '—') + (age ? ' · ' + age : ''));
+  if (s.last_tool) row('last_tool', T('dt_last_tool'), s.last_tool);
+  if (s.notification_type) row('notification', T('dt_notification'), s.notification_type);
+  if (ctx.readAt) row('read_until', T('dt_read_until'), new Date(ctx.readAt * 1000).toLocaleTimeString());
 
-  // — Linha do tempo — events[] rolling de 50 do hook; COLAPSADA por padrão
-  // (50 linhas despejadas empurrariam os campos de cima pra fora da dobra).
-  // Header mostra a contagem; expandir é explícito.
+  // — Timeline — rolling events[] (50) from the hook; COLLAPSED by default
+  // (50 dumped rows would push the fields above the fold). The header shows
+  // the count; expanding is explicit. Both header and box are keyed and
+  // REUSED, so the expanded/collapsed choice survives every live refresh;
+  // only the event rows inside are reconciled when the list itself changes.
   const evs = Array.isArray(s.events) ? [...s.events].reverse() : [];
+  const headKey = 'sec:timeline';
   if (!evs.length) {
-    body.append(dtSec(T('dt_timeline')));
-    const e = document.createElement('div');
-    e.className = 'dt-v';
-    e.textContent = T('dt_no_events');
-    body.append(e);
-  } else {
-    const head = document.createElement('div');
-    head.className = 'dt-sec dt-toggle';
-    const lbl = document.createElement('span');
-    lbl.textContent = `${T('dt_timeline')} (${evs.length})`;
-    const caret = document.createElement('span');
-    caret.className = 'dt-caret';
-    caret.textContent = '▸';
-    head.append(lbl, caret);
-    body.append(head);
-    const evsBox = document.createElement('div');
-    evsBox.className = 'dt-evs';
-    evsBox.hidden = true;
-    for (const ev of evs) {
-      const row = document.createElement('div');
-      row.className = 'dt-ev';
-      const t = document.createElement('time');
-      t.textContent = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '—';
-      const x = document.createElement('span');
-      x.textContent = ev.event + (ev.tool ? ' · ' + ev.tool : '');
-      row.append(t, x);
-      evsBox.append(row);
+    let head = findKeyed(body, headKey);
+    if (head && head._kind !== 'sec') head = null;   // was a toggle: rebuild plain
+    if (!head) head = dtSec(headKey, T('dt_timeline'));
+    head._update(T('dt_timeline'));
+    specs.push({ key: headKey, el: head });
+    let note = findKeyed(body, 'evs-empty');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'dt-v';
+      note.setAttribute('data-key', 'evs-empty');
+      note._update = (t) => { if (note.textContent !== t) note.textContent = t; };
     }
-    body.append(evsBox);
-    head.addEventListener('click', () => {
-      evsBox.hidden = !evsBox.hidden;
-      caret.textContent = evsBox.hidden ? '▸' : '▾';
+    note._update(T('dt_no_events'));
+    specs.push({ key: 'evs-empty', el: note });
+  } else {
+    let head = findKeyed(body, headKey);
+    if (head && head._kind !== 'toggle') head = null;   // was plain: rebuild toggle
+    if (!head) {
+      head = document.createElement('div');
+      head._kind = 'toggle';
+      head.className = 'dt-sec dt-toggle';
+      head.setAttribute('data-key', headKey);
+      const lbl = document.createElement('span');
+      const caret = document.createElement('span');
+      caret.className = 'dt-caret';
+      head.append(lbl, caret);
+      head._update = (t, count) => {
+        const txt = `${t} (${count})`;
+        if (lbl.textContent !== txt) lbl.textContent = txt;
+        const box = findKeyed(body, 'evs');
+        caret.textContent = box && !box.hidden ? '▾' : '▸';
+      };
+      head.addEventListener('click', () => {
+        const box = findKeyed(body, 'evs');
+        if (!box) return;
+        box.hidden = !box.hidden;
+        caret.textContent = box.hidden ? '▸' : '▾';
+      });
+    }
+    head._update(T('dt_timeline'), evs.length);
+    specs.push({ key: headKey, el: head });
+
+    let box = findKeyed(body, 'evs');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'dt-evs';
+      box.setAttribute('data-key', 'evs');
+      box.hidden = true;                    // collapsed by default, then KEPT
+    }
+    const evSpecs = evs.map((ev, i) => {
+      const key = `${ev.ts}|${ev.event}|${ev.tool || ''}|${i}`;
+      let el = findKeyed(box, key);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'dt-ev';
+        el.setAttribute('data-key', key);
+        const t = document.createElement('time');
+        const x = document.createElement('span');
+        el.append(t, x);
+        el._update = () => {
+          t.textContent = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '—';
+          x.textContent = ev.event + (ev.tool ? ' · ' + ev.tool : '');
+        };
+        el._update();
+      }
+      return { key, el };
     });
+    syncChildren(box, evSpecs);
+    specs.push({ key: 'evs', el: box });
   }
+
+  syncChildren(body, specs);
 }
 
-// Sessão sumiu do refresh (morreu enquanto a janela estava aberta): mantém o
-// card com um aviso — a janela não pode ficar mostrando o último snapshot
-// como se ainda fosse verdade.
+// Session gone from the refresh (died while the window was open): keeps the
+// card with a notice — the window must not keep showing the last snapshot as
+// if it were still true. Title uses ctx_details (same string as the menu item
+// that opens the window).
 function mountDetailsGone(root, T) {
-  root.querySelector('.dt-title').textContent = T('dt_title');
+  root.querySelector('.dt-title').textContent = T('ctx_details');
   const body = root.querySelector('.dt-body');
   body.replaceChildren();
   const e = document.createElement('div');
@@ -145,22 +248,28 @@ function mountDetailsGone(root, T) {
   body.append(e);
 }
 
-// Bootstrap da JANELA (details.html). api = window.trafficLight do preload:
-// onDetailsData(cb), closeDetails(), copyText(t), getLang(), getAliases().
-// O main empurra { s, readAt } a cada refresh de sessões — s === null quando a
-// sessão encerrou. Esc e × fecham (destrói a janela no main).
+// Standalone window bootstrap (details.html). api = the preload's
+// window.trafficLight: onDetailsData(cb), closeDetails(), copyText(t),
+// getLang(), getAliases(). Main pushes { s, readAt } on every session refresh
+// — s === null once the session has ended. Esc and × close (main destroys
+// the window).
 function initDetailsWindow(api) {
   const card = document.querySelector('.dt-card');
   let T = makeT('en');
   let aliases = {};
+  let mounted = false;        // a details-data push already built the card
   Promise.all([api.getLang(), api.getAliases()])
     .then(([lang, a]) => {
       T = makeT(lang || 'en');
       aliases = a || {};
-      mountDetailsGone(card, T);   // estado inicial até o 1º push chegar
+      // Placeholder only while NO push has arrived: main pushes at
+      // did-finish-load, which can beat this invoke round-trip — painting
+      // "Session ended" over a just-mounted live card would be a lie.
+      if (!mounted) mountDetailsGone(card, T);
     })
-    .catch(() => { mountDetailsGone(card, T); });
+    .catch(() => { if (!mounted) mountDetailsGone(card, T); });
   api.onDetailsData(({ s, readAt }) => {
+    mounted = true;
     if (!s) { mountDetailsGone(card, T); return; }
     mountDetails(card, s, {
       T,
@@ -177,14 +286,15 @@ function initDetailsWindow(api) {
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.closeDetails(); }, true);
 }
 
-// Auto-init no browser. A CSP da página (script-src 'self') BLOQUEIA <script>
-// inline — a chamada não pode viver no details.html; o módulo se inicializa
-// sozinho quando a bridge do preload existe (padrão dos scripts clássicos).
-// No vm dos testes window.trafficLight não existe: o init fica a cargo do
-// próprio teste (initDetailsWindow(api) explícito).
+// Browser auto-init. The page CSP (script-src 'self') BLOCKS inline <script>
+// — the call can't live in details.html; the module initializes itself when
+// the preload bridge exists (same pattern as the other classic scripts). In
+// the test vm window.trafficLight doesn't exist: the test calls
+// initDetailsWindow(api) explicitly.
 if (typeof window !== 'undefined' && window.trafficLight) initDetailsWindow(window.trafficLight);
 
-// Export Node (testes) — no browser vira global via <script>.
+// Node export (tests) — becomes a global via <script> in the browser.
 if (typeof module !== 'undefined') module.exports = {
-  basename, labelFor, dtSec, dtRow, mountDetails, mountDetailsGone, initDetailsWindow,
+  basename, labelFor, findKeyed, syncChildren, dtSec, dtRow,
+  mountDetails, mountDetailsGone, initDetailsWindow,
 };

@@ -20,12 +20,30 @@ function mkEl() {
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
     addEventListener(t, f) { (this._l[t] = this._l[t] || []).push(f); },
     dispatch(t, ev) { (this._l[t] || []).forEach((f) => f(ev || {})); },
-    append(...e) { this.children.push(...e); },
-    appendChild(e) { e.removed = false; this.children.push(e); return e; },
-    replaceChildren(...e) { this.children = e; },
+    parentNode: null,
+    append(...e) { for (const x of e) { x.parentNode = this; this.children.push(x); } },
+    appendChild(e) { e.removed = false; e.parentNode = this; this.children.push(e); return e; },
+    insertBefore(el, ref) {
+      if (el.parentNode) {
+        const i = el.parentNode.children.indexOf(el);
+        if (i >= 0) el.parentNode.children.splice(i, 1);
+      }
+      const j = ref ? this.children.indexOf(ref) : -1;
+      if (j >= 0) this.children.splice(j, 0, el); else this.children.push(el);
+      el.parentNode = this;
+      return el;
+    },
+    replaceChildren(...e) { this.children = e; for (const x of e) x.parentNode = this; },
     querySelector(s) { return this._q[s] || (this._q[s] = mkEl()); },
     querySelectorAll() { return []; },
-    remove() { this.removed = true; },
+    remove() {
+      if (this.parentNode) {
+        const i = this.parentNode.children.indexOf(this);
+        if (i >= 0) this.parentNode.children.splice(i, 1);
+        this.parentNode = null;
+      }
+      this.removed = true;
+    },
     setAttribute(k, v) { this._attr[k] = String(v); },
     removeAttribute(k) { delete this._attr[k]; },
     getAttribute(k) { return this._attr[k] != null ? this._attr[k] : null; },
@@ -37,7 +55,7 @@ function mkEl() {
   };
 }
 
-async function setup(aliases = {}) {
+async function setup(aliases = {}, { noDrain = false } = {}) {
   const card = mkEl();
   const closeBtn = mkEl();
   const document = {
@@ -63,10 +81,14 @@ async function setup(aliases = {}) {
   vm.runInContext(CODE, ctx);
   ctx.api = api;
   vm.runInContext('initDetailsWindow(api);', ctx);
-  await Promise.resolve(); await Promise.resolve();          // drena getLang/getAliases
+  // drena getLang/getAliases (o teste de race segura isso de propósito)
+  const drain = async () => { await Promise.resolve(); await Promise.resolve(); };
+  if (!noDrain) await drain();
   const fire = (t, ev) => (winListeners[t] || []).forEach((f) => f(ev || {}));
   const push = (s, readAt = 0) => dataCb({ s, readAt });
-  const body = card._q['.dt-body'];
+  // materializa .dt-body AGORA: com noDrain o card ainda não montou nada,
+  // e o mesmo objeto lazy precisa existir antes e depois do 1º push
+  const body = card.querySelector('.dt-body');
   const kv = () => {                                        // Map label → valor das .dt-row
     const m = new Map();
     for (const r of body.children) {
@@ -77,7 +99,7 @@ async function setup(aliases = {}) {
   const evsBox = () => body.children.find((c) => c.className === 'dt-evs');
   const timeline = () => (evsBox() ? evsBox().children : []);
   const timelineHead = () => body.children.find((c) => String(c.className).includes('dt-toggle'));
-  return { card, body, closeBtn, calls, fire, push, kv, evsBox, timeline, timelineHead };
+  return { card, body, closeBtn, calls, fire, push, kv, evsBox, timeline, timelineHead, drain };
 }
 
 const now = Math.floor(Date.now() / 1000);
@@ -114,9 +136,10 @@ test('sessão local: contexto completo + conta + botão copiar session_id/cwd', 
   assert.equal(m.get('Terminal'), 'tilix');
   assert.equal(m.get('sessão tmux'), 'atl-api');
   assert.equal(m.get('Janela (X11)'), '1234567', 'windowid é LOCAL_ONLY — na local aparece');
-  // botões copiar: session_id e cwd
+  // botões copiar: session_id e cwd (o botão agora vive MONTADO e hidden —
+  // o filtro é por visibilidade, não por existência)
   const copyBtns = body.children
-    .filter((c) => c.className === 'dt-row' && c.children.length > 2);
+    .filter((c) => c.className === 'dt-row' && c.children.length > 2 && !c.children[2].hidden);
   assert.equal(copyBtns.length, 2, 'session_id e cwd têm botão copiar');
   copyBtns[0].children[2].dispatch('click', { stopPropagation() {} });
   assert.deepEqual(calls.copy, ['api'], 'copiou o session_id');
@@ -185,4 +208,44 @@ test('Esc e × pedem o close (main destrói a janela)', async () => {
   fire('keydown', { key: 'Escape' });
   closeBtn.dispatch('click', { stopPropagation() {} });
   assert.equal(calls.close, 2, 'Esc + botão ×');
+});
+
+test('race do bootstrap: push antes do getLang resolver NÃO pinta "encerrada" sobre card vivo', async () => {
+  // main empurra details-data no did-finish-load; getLang/getAliases são
+  // invokes que podem resolver DEPOIS — o placeholder "encerrada" do then
+  // não pode sobrescrever um card que já montou (bug medido no review).
+  const t = await setup({}, { noDrain: true });
+  t.push(mkSess('api', null, { model: 'glm-5.3' }));
+  await t.drain();
+  assert.equal(t.card._q['.dt-title'].textContent, 'api', 'card vivo segue montado');
+  assert.ok(t.body.children.some((c) => c.className === 'dt-row'), 'rows presentes');
+  // 1º push montou com T=en (default do bootstrap); o refresh seguinte já
+  // roda com getLang resolvido e migra os labels para pt NO MESMO node
+  t.push(mkSess('api', null, { model: 'glm-5.3' }));
+  assert.equal(t.kv().get('Modelo'), 'glm-5.3');
+});
+
+test('refresh ao vivo é INCREMENTAL: mesmo node reusado e timeline expandida persiste', async () => {
+  const { body, push, evsBox, timeline, timelineHead } = await setup();
+  const ev = (ts, event, tool) => ({ ts, event, tool });
+  const keyEl = (k) => body.children.find((c) => c.getAttribute && c.getAttribute('data-key') === k);
+  push(mkSess('api', null, {
+    model: 'glm-5.2',
+    events: [ev(now - 60, 'SessionStart'), ev(now - 30, 'Stop')],
+  }));
+  timelineHead().dispatch('click', {});            // usuário expande a timeline
+  assert.equal(evsBox().hidden, false, 'expandida');
+  const modelBefore = keyEl('model');
+  assert.ok(modelBefore, 'row do modelo existe');
+
+  push(mkSess('api', null, {
+    model: 'glm-5.3',
+    events: [ev(now - 60, 'SessionStart'), ev(now - 30, 'Stop'), ev(now - 5, 'Notification')],
+  }));
+  assert.ok(keyEl('model') === modelBefore, 'row do modelo é o MESMO node (update in place)');
+  assert.equal(keyEl('model').children[1].textContent, 'glm-5.3', 'valor atualizou');
+  assert.equal(evsBox().hidden, false, 'timeline CONTINUA expandida após o refresh');
+  assert.equal(evsBox() === body.children.find((c) => c.getAttribute && c.getAttribute('data-key') === 'evs'), true, 'box da timeline é o MESMO node');
+  assert.equal(timeline().length, 3, '3 eventos após o refresh');
+  assert.ok(timelineHead().children[0].textContent.includes('(3)'), 'contagem atualizou');
 });

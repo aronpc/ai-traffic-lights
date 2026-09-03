@@ -69,6 +69,7 @@ const STRINGS = {
     doc_sessions: 'sessions',
     // tray
     tray_show_hide: 'Show/Hide',
+    launch_section: 'Quick launch',
     tray_autostart: 'Start with the system',
     tray_install_hooks: 'Install/update hooks',
     tray_remove_hooks: 'Remove hooks',
@@ -252,6 +253,7 @@ const STRINGS = {
     doc_sessions: 'sessões',
     // tray
     tray_show_hide: 'Mostrar/Ocultar',
+    launch_section: 'Início rápido',
     tray_autostart: 'Iniciar com o sistema',
     tray_install_hooks: 'Instalar/atualizar hooks',
     tray_remove_hooks: 'Remover hooks',
