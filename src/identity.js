@@ -18,6 +18,17 @@ function originOf(s) {
   return (s && s.origin) || 'local';
 }
 
+// Sessão DESTA máquina? Locais do collect vêm SEM origin (undefined) ou com
+// 'local' (state file); remotas chegam do pollPeers com o NOME DO PEER. Quem
+// lê o /proc LOCAL (environ/cwd do pid) PRECISA deste filtro: o pid de uma
+// sessão remota é um processo na OUTRA máquina — probeá-lo aqui pode colidir
+// com um processo local sem relação e fabricar conta/barra fantasma (review:
+// claudeAccountsFromSessions, glmCredsFromSessions e codexCwdsFromSessions
+// liam pids de peers). Pura e tolerante: null/undefined NÃO é local.
+function isLocalSession(s) {
+  return !!s && (!s.origin || s.origin === 'local');
+}
+
 // Chave da LINHA — nunca o cwd, nunca o pid/session_id isolados. String estavel
 // p/ usar em Map/Set e em JSON. Vazia só se a sessão vier sem pid E sem session_id.
 function sessionKey(s) {
@@ -49,4 +60,4 @@ function aliasKey(s) {
   return String((s && (s.session_id || s.pid)) || '');
 }
 
-if (typeof module !== 'undefined') module.exports = { originOf, sessionKey, rewriteKeyOrigin, aliasKey };
+if (typeof module !== 'undefined') module.exports = { originOf, isLocalSession, sessionKey, rewriteKeyOrigin, aliasKey };

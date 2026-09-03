@@ -4,7 +4,7 @@
 // lido postada precisa chegar no namespace de quem aplica.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { originOf, sessionKey, rewriteKeyOrigin } = require('../src/identity.js');
+const { originOf, sessionKey, rewriteKeyOrigin, isLocalSession } = require('../src/identity.js');
 
 test('rewriteKeyOrigin: peer→local (o caso do POST /read — quem clica postà na origem)', () => {
   assert.equal(rewriteKeyOrigin('peer:1234', 'peer', 'local'), 'local:1234');
@@ -49,4 +49,20 @@ test('sessionKey/originOf continuam íntegros', () => {
   assert.equal(sessionKey({ pid: 42 }), 'local:42');
   assert.equal(sessionKey({ origin: 'p', session_id: 'abc' }), 'p:abc');
   assert.equal(sessionKey(null), '');
+});
+
+// ================= review fix #7: pid de sessão REMOTA no /proc local =================
+// claudeAccountsFromSessions / glmCredsFromSessions / codexCwdsFromSessions
+// liam o environ/cwd do pid de TODA sessão — inclusive as vindas do sync, cujo
+// pid é um processo NO PEER. Colisão de pid com um processo local sem relação
+// fabricava conta/barra fantasma. isLocalSession é o filtro.
+test('isLocalSession: local é sem origin OU origin "local"; peer NÃO é', () => {
+  assert.equal(isLocalSession({ pid: 123 }), true, 'collect não seta origin');
+  assert.equal(isLocalSession({ pid: 123, origin: 'local' }), true, 'state file grava local');
+  assert.equal(isLocalSession({ pid: 123, origin: 'notebook-hg' }), false, 'pollPeers seta o nome do peer');
+});
+
+test('isLocalSession: null/undefined NÃO é local (call sites fazem skip)', () => {
+  assert.equal(isLocalSession(null), false);
+  assert.equal(isLocalSession(undefined), false);
 });

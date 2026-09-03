@@ -23,7 +23,7 @@ const launcher = require('./src/launcher');
 const usage = require('./src/usage');
 const claudePaths = require('./src/claude-config');
 const readMarksLib = require('./src/read-marks');
-const { sessionKey, rewriteKeyOrigin } = require('./src/identity');
+const { sessionKey, rewriteKeyOrigin, isLocalSession } = require('./src/identity');
 const { spawn } = require('child_process');
 const { desktopEscape, shellQuote, boundsOnScreen } = require('./src/validate');
 
@@ -1613,7 +1613,10 @@ function glmCredsFromSessions() {
   try { sessions = readSessions(); } catch { return []; }
   const byToken = new Map(); // token → { env, label, suffix }
   for (const s of sessions) {
-    if (!s.pid || !/^glm/i.test(s.model || '')) continue;
+    // Só sessão LOCAL: o pid de sessão remota é processo no PEER — probeá-lo
+    // no /proc daqui pode colidir com um processo local sem relação que tenha
+    // as envs GLM e fabricar credencial fantasma (review fix #7).
+    if (!isLocalSession(s) || !s.pid || !/^glm/i.test(s.model || '')) continue;
     let env;
     try {
       const raw = getProcessEnviron(s.pid);
@@ -1774,7 +1777,8 @@ function codexCwdsFromSessions() {
   try { sessions = readSessions(); } catch { return []; }
   const cwds = new Set();
   for (const s of sessions) {
-    if (!s.pid || agentOf(s) !== 'codex') continue;
+    // Só sessão LOCAL (review fix #7): pid do peer no /proc local é fantasma.
+    if (!isLocalSession(s) || !s.pid || agentOf(s) !== 'codex') continue;
     try {
       const cwd = getProcessCwd(s.pid);
       if (cwd) cwds.add(cwd);
@@ -1808,7 +1812,10 @@ function claudeAccountsFromSessions() {
   try { defReal = fs.realpathSync(claudePaths.configDir({ home: app.getPath('home') })); } catch {}
   let hasDefault = false;
   for (const s of sessionsList) {
-    if (!s.pid || agentOf(s) !== 'claude') continue;
+    // Só sessão LOCAL (review fix #7): o pid de sessão remota é processo no
+    // PEER; probeá-lo no /proc daqui pode colidir com processo local sem
+    // relação e criar conta fantasma (ou marcar a default errada).
+    if (!isLocalSession(s) || !s.pid || agentOf(s) !== 'claude') continue;
     let env;
     try { env = usage.parseEnviron(getProcessEnviron(s.pid), ['CLAUDE_CONFIG_DIR']); }
     catch { continue; } // processo morreu entre readSessions e a leitura

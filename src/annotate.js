@@ -17,6 +17,8 @@
 // origin) já chega anotada pelo peer — o rótulo é inofensivo (apelido/org/
 // local-part, nunca email completo/uuid) e NÃO é LOCAL_ONLY.
 
+const { isLocalSession } = require('./identity.js');
+
 function makeAnnotator({
   getEnviron,                      // (pid) → raw do environ ('' = ilegível)
   parseEnviron,                    // usage.parseEnviron
@@ -33,9 +35,10 @@ function makeAnnotator({
     const alive = new Set();
     let labels;                    // lazy: labelsFile 1x por ciclo (arquivo pequeno)
     for (const s of sessions) {
-      // origin 'local' É truthy: o state file grava origin:'local' nas sessões
-      // locais (o startRename do renderer usa o mesmo predicado).
-      if (!s || (s.origin && s.origin !== 'local') || agentOf(s) !== 'claude' || !s.pid) continue;
+      // Só sessão LOCAL: o pid de sessão remota é processo na outra máquina —
+      // probeá-lo no /proc daqui pode colidir com processo local sem relação.
+      // Locais vêm sem origin (collect) ou com 'local' (state file).
+      if (!isLocalSession(s) || agentOf(s) !== 'claude' || !s.pid) continue;
       alive.add(s.pid);
       const sid = s.session_id || '';
       let dir;
