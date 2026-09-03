@@ -970,15 +970,27 @@ async function collectUsage(opts = {}) {
   // cada API tem schema/mock próprio; em teste sem claudeFetcher e sem token, o
   // Claude cai no plano-só).
   const results = await Promise.all([
-    ...claudeAccounts.map((acc) => readClaudeUsage({
-      home: opts.home, dir: acc.dir, now: opts.now, fetcher: opts.claudeFetcher,
-      cooldownUntil: opts.claudeCooldownUntil, cooldownFails: opts.claudeCooldownFails,
-      setCooldown: opts.claudeSetCooldown,
-      // Lazy: só bate na API do Claude quando o caller pede (gatilho de UI). O
-      // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
-      // omite → false. Default true preserva o contrato dos testes/uso direto.
-      allowFetch: opts.claudeAllowFetch !== false,
-    }).catch(() => null)),
+    ...claudeAccounts.map((acc) => {
+      // Cooldown do 429 é POR CONTA (opts.claudeCooldowns = { key: {until, fails} },
+      // persistido pelo main). O cooldown GLOBAL antigo silenciava as contas
+      // saudáveis junto: um 429 da conta A fazia a B devolver stale/planOnly
+      // pela janela toda — e um restart no meio (cache por token vazio) deixava
+      // a B plan-only sem nunca ter levado 429. A chave é a identidade da conta
+      // (org/account uuid — a mesma do dedup), com fallback no dir.
+      const cdKey = acc.key || acc.dir || 'default';
+      const cd = (opts.claudeCooldowns && opts.claudeCooldowns[cdKey]) || { until: 0, fails: 0 };
+      return readClaudeUsage({
+        home: opts.home, dir: acc.dir, now: opts.now, fetcher: opts.claudeFetcher,
+        cooldownUntil: cd.until, cooldownFails: cd.fails,
+        setCooldown: (v) => {
+          if (typeof opts.claudeSetCooldown === 'function') { try { opts.claudeSetCooldown(cdKey, v); } catch { /* nunca quebra a coleta */ } }
+        },
+        // Lazy: só bate na API do Claude quando o caller pede (gatilho de UI). O
+        // main.js passa true ao abrir/revelar o overlay e no ⟳; o loop de fundo
+        // omite → false. Default true preserva o contrato dos testes/uso direto.
+        allowFetch: opts.claudeAllowFetch !== false,
+      }).catch(() => null);
+    }),
     Promise.resolve().then(() => readAntigravityUsage({ home: opts.home })).catch(() => null),
     readOpencodeUsage({
       env: opts.opencodeEnv, now: opts.now, fetcher: opts.fetcher,

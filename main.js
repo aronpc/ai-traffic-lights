@@ -1580,23 +1580,44 @@ let lastUsage = loadUsage();
 // Cooldown do 429 da API de uso do Claude, PERSISTIDO em disco (com o contador
 // de falhas p/ o backoff exponencial). Sem isto, rodar em dev (`bun start`/
 // restarts) perde o estado a cada reinício, re-bate no boot e RE-ESCALA o rate
-// limit. Grava só {until, fails} — NUNCA o token. Nunca lança.
+// limit. Grava só {until, fails} por conta — NUNCA o token. Nunca lança.
+function saveClaudeCooldown(key, { until, fails } = {}) {
+  if (!key) return;
+  claudeCooldowns[key] = { until: until || 0, fails: fails || 0 };
+  // só entries vigentes no disco — arquivo não cresce com contas mortas
+  const live = {};
+  for (const [k, v] of Object.entries(claudeCooldowns)) {
+    if (v && v.until > Date.now()) live[k] = v;
+  }
+  try { fs.writeFileSync(CLAUDE_COOLDOWN_FILE, JSON.stringify(live)); } catch { /* ignore */ }
+}
+// Formato: { "<accountKey>": { until, fails } } — cooldown POR CONTA (429 de
+// uma conta não silencia as outras). Aceita o legado { until, fails } raiz
+// (global) como entrada 'default' p/ não perder a janela vigente no upgrade.
 function loadClaudeCooldown() {
-  try {
-    const o = JSON.parse(fs.readFileSync(CLAUDE_COOLDOWN_FILE, 'utf8'));
-    const until = (o && typeof o.until === 'number' && o.until > Date.now()) ? o.until : 0;
-    const fails = (o && typeof o.fails === 'number' && o.fails > 0) ? o.fails : 0;
-    return { until, fails };
-  } catch { return { until: 0, fails: 0 }; }
+  let o;
+  try { o = JSON.parse(fs.readFileSync(CLAUDE_COOLDOWN_FILE, 'utf8')); } catch { return {}; }
+  if (!o || typeof o !== 'object') return {};
+  if (typeof o.until === 'number' && o.until > Date.now()) {
+    return { default: { until: o.until, fails: (typeof o.fails === 'number' && o.fails > 0) ? o.fails : 0 } };
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (v && typeof v.until === 'number' && v.until > Date.now()) {
+      out[k] = { until: v.until, fails: (typeof v.fails === 'number' && v.fails > 0) ? v.fails : 0 };
+    }
+  }
+  return out;
 }
-function saveClaudeCooldown({ until, fails } = {}) {
-  claudeCooldownUntil = until || 0;
-  claudeCooldownFails = fails || 0;
-  try { fs.writeFileSync(CLAUDE_COOLDOWN_FILE, JSON.stringify({ until: claudeCooldownUntil, fails: claudeCooldownFails })); } catch { /* ignore */ }
+const claudeCooldowns = loadClaudeCooldown();
+// p/ a UI (tooltip do ⟳): o MAIOR cooldown vigente entre as contas
+function activeCooldownMeta() {
+  let best = { until: 0, fails: 0 };
+  for (const c of Object.values(claudeCooldowns)) {
+    if (c && c.until > Date.now() && c.until > best.until) best = c;
+  }
+  return best;
 }
-const _cd0 = loadClaudeCooldown();
-let claudeCooldownUntil = _cd0.until;
-let claudeCooldownFails = _cd0.fails;
 
 // Credenciais do GLM vivem no AMBIENTE DE CADA TERMINAL (o usuário tem terminais
 // Claude/Anthropic e terminais Claude/GLM — z.ai), possivelmente com CONTAS
@@ -1881,10 +1902,10 @@ async function collectAndSendUsage({ claudeFetch = false } = {}) {
       // os gatilhos de UI (abrir/revelar overlay, ⟳) e o boot passam true. Tira o
       // app do limite agregado do 429 (compartilhado com o /status do Claude Code).
       claudeAllowFetch: claudeFetch,
-      // cooldown do 429 persistido: não rebate na API enquanto vigente; o coletor
-      // chama de volta setCooldown quando leva um 429 novo (grava {until, fails}).
-      claudeCooldownUntil: claudeCooldownUntil,
-      claudeCooldownFails: claudeCooldownFails,
+      // cooldown do 429 persistido POR CONTA: não rebate na API enquanto vigente;
+      // o coletor chama de volta claudeSetCooldown(key, {until, fails}) quando
+      // leva um 429 novo (grava só a entrada daquela conta).
+      claudeCooldowns,
       claudeSetCooldown: saveClaudeCooldown,
     });
     // Funde com o último estado: mantém o valor bom de cada linha se a coleta
@@ -1894,7 +1915,8 @@ async function collectAndSendUsage({ claudeFetch = false } = {}) {
   } catch { /* collectUsage já engole erros internamente; defeção dupla */ }
   sendToRenderer('usage', lastUsage);
   // meta p/ a UI: o cooldown do 429 (se vigente) alimenta o tooltip do botão ⟳.
-  sendToRenderer('usage-meta', { claudeCooldownUntil: claudeCooldownUntil > Date.now() ? claudeCooldownUntil : 0, claudeCooldownFails: claudeCooldownUntil > Date.now() ? claudeCooldownFails : 0 });
+  const _cdMeta = activeCooldownMeta();
+  sendToRenderer('usage-meta', { claudeCooldownUntil: _cdMeta.until, claudeCooldownFails: _cdMeta.fails });
 }
 
 // Estado (por id) que detectReset usa entre coletas p/ achar a transição
@@ -1921,7 +1943,8 @@ function maybeNotifyReset() {
 }
 ipcMain.on('request-usage', () => {
   sendToRenderer('usage', lastUsage);
-  sendToRenderer('usage-meta', { claudeCooldownUntil: claudeCooldownUntil > Date.now() ? claudeCooldownUntil : 0, claudeCooldownFails: claudeCooldownUntil > Date.now() ? claudeCooldownFails : 0 });
+  const _cdMeta = activeCooldownMeta();
+  sendToRenderer('usage-meta', { claudeCooldownUntil: _cdMeta.until, claudeCooldownFails: _cdMeta.fails });
 });
 
 // Force (botão ⟳): fura o cache de CONVENIÊNCIA (5min Claude / 30s GLM) e
@@ -1934,7 +1957,7 @@ ipcMain.on('force-usage', () => {
     // valor bom que readClaudeUsage usa como fallback. Limpá-lo faria o tile
     // regredir p/ plano-só (perder o %) só porque o usuário clicou ⟳ no rate
     // limit. Fora do cooldown, limpa normalmente p/ forçar recoleta real.
-    if (!(claudeCooldownUntil > Date.now())) usage._clearClaudeCache();
+    if (!activeCooldownMeta().until) usage._clearClaudeCache();
     usage._clearGlmCache();
     usage._clearCodexCache();
   } catch { /* ignore */ }

@@ -1505,3 +1505,34 @@ test('collectUsage: 2 rodadas multi com cache quente → sufixo NÃO acumula', a
   assert.ok(r2.every((e) => String(e.id).split(':').length <= 2), 'sufixo não acumulou entre rodadas');
   fs.rmSync(tmp, { recursive: true, force: true });
 });
+
+// O cooldown do 429 era GLOBAL: um 429 da conta A injetava o mesmo
+// cooldownUntil em TODAS as contas — a sadia B devolvia stale/planOnly pela
+// janela toda (e pós-restart, cache por token vazio, ficava plan-only sem
+// nunca ter levado 429). Pós-fix o cooldown é POR CONTA: só quem levou o 429
+// espera, as demais batem na API normalmente.
+test('collectUsage: cooldown 429 é POR CONTA — conta sadia bate na API com a outra em cooldown', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const mkAcc = (uuid, tok) => {
+    const d = path.join(tmp, 'prof-' + uuid);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x', accountUuid: uuid } }));
+    fs.writeFileSync(path.join(d, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+    return d;
+  };
+  const dirA = mkAcc('uuid-A', 'tokA'), dirB = mkAcc('uuid-B', 'tokB');
+  const f = mockFetcher({ five_hour: { utilization: 22, resets_at: '2026-07-07T17:00:00Z' } });
+  const out = await collectUsage({
+    home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW, claudeFetcher: f,
+    claudeCooldowns: { 'uuid-A': { until: NOW + 10 * 60_000, fails: 1 } },
+  });
+  assert.equal(f.calls.length, 1, 'só a conta sadia (B) bateu na API');
+  assert.equal(f.calls[0].headers.Authorization, 'Bearer tokB', 'a call foi da conta B');
+  const planA = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A'));
+  const fiveB = out.find((e) => e.id === 'claude-5h:' + claudeAccountSfx('uuid-B'));
+  assert.ok(planA && planA.usedPct == null, 'A em cooldown → plano-só dela (sem rede)');
+  assert.ok(fiveB && fiveB.usedPct === 22, 'B sadia → % real da API');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
