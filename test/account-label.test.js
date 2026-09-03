@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const vm = require('node:vm');
 const path = require('node:path');
 
@@ -142,4 +143,55 @@ test('#58 sem accountId (conta única) o dblclick NÃO abre rename', async () =>
   const name = els.usage.children[0].children[1];
   name.dispatch('dblclick', {});
   assert.equal(name.children.length, 0, 'nenhum input — barra de conta única não renomeia');
+});
+
+// ================= review fix #9: rename do tile PROXY descartado =================
+// O main populava lastAccountIds com `if (!pc) continue`: conta proxy sem
+// .claude.json legível tinha TILE (sfx do dir, via claudeAccountKey) mas não
+// tinha entrada no mapa — o set-account-label dela caía no `if (!key) return`
+// e o apelido sumia em silêncio. O handler real (setupAccountLabelsIpc) com
+// getLastAccountIds mockado no formato novo: sfx → key=DIR da conta proxy.
+const { setupAccountLabelsIpc } = require('../src/ipc/account-labels.js');
+const usageMod = require('../src/usage.js');
+
+function setupIpc(ids) {
+  const handlers = {};
+  const ipcMain = { on: (ch, f) => { handlers[ch] = f; } };
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-albl-'));
+  const file = path.join(tmpdir, 'account-labels.json');
+  let recollects = 0;
+  setupAccountLabelsIpc({
+    ipcMain, ACCOUNT_LABELS_FILE: file,
+    getLastAccountIds: () => ids,
+    recollect: () => { recollects++; },
+  });
+  return {
+    call: (payload) => handlers['set-account-label'](null, payload),
+    labels: () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; } },
+    recollects: () => recollects,
+  };
+}
+
+test('#9 rename do tile PROXY persiste — lastAccountIds leva key=dir p/ conta sem oauth', () => {
+  const dir = '/home/u/.gh-claude';
+  const sfx = usageMod.claudeAccountSfx(usageMod.claudeAccountKey(null, dir)); // sfx do tile (sem .claude.json)
+  const t = setupIpc({ [sfx]: dir });
+  t.call({ accountId: sfx, label: 'Meu proxy' });
+  assert.deepEqual(t.labels(), { [dir]: 'Meu proxy' }, 'apelido gravado sob a chave dir');
+  assert.equal(t.recollects(), 1, 're-coleta disparou pra barra refletir na hora');
+});
+
+test('#9 sfx DESCONHECIDO (conta fechou desde o render) descarta sem gravar', () => {
+  const t = setupIpc({ aa11bb: 'uuid-A' });
+  t.call({ accountId: 'zz9999', label: 'X' });
+  assert.deepEqual(t.labels(), {}, 'nada gravado');
+  assert.equal(t.recollects(), 0);
+});
+
+test('#9 payload malformado é ignorado (nem lê o mapa)', () => {
+  const t = setupIpc({});
+  t.call({ accountId: '../../etc', label: 'X' });   // fora do hex — rejeitado
+  t.call({ accountId: 'aa11bb' });                  // sem label (limpa) — ok abaixo
+  t.call(null);
+  assert.deepEqual(t.labels(), {});
 });

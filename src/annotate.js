@@ -23,6 +23,7 @@ function makeAnnotator({
   getEnviron,                      // (pid) → raw do environ ('' = ilegível)
   parseEnviron,                    // usage.parseEnviron
   readClaudeConfig,                // (dir) → config do perfil (cache mtime no usage)
+  claudeAccountKey,                // usage.claudeAccountKey (review #9: MESMA chave do tile/rename)
   accountLabel,                    // usage.accountLabel
   apiProviderFromSettings,         // usage.apiProviderFromSettings
   agentOf,                         // agents.agentOf
@@ -62,11 +63,10 @@ function makeAnnotator({
         if (labels === undefined) {
           try { labels = JSON.parse(fs.readFileSync(labelsFile, 'utf8')) || {}; } catch { labels = {}; }
         }
-        // Chave de identidade: ORG primeiro (#60 — mesmo login em duas orgs
-        // Team são contas com limite/billing independentes), accountUuid só p/
-        // contas pessoais. Fallback labels[accountUuid]: apelido gravado antes
-        // da chave de org continuar funcionando.
-        const key = (pc && (pc.accountOrgUuid || pc.accountUuid)) || dir || 'default';
+        // Chave de identidade UMA definição (claudeAccountKey injetada — a
+        // MESMA do tile/rename/dedup, review #9). Fallback labels[accountUuid]:
+        // apelido gravado antes da chave de org continuar funcionando.
+        const key = claudeAccountKey(pc, dir);
         const manual = labels[key] || (pc && pc.accountUuid && labels[pc.accountUuid]) || null;
         label = accountLabel(pc, dir, manual);
       } catch {}

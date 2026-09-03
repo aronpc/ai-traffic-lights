@@ -24,7 +24,10 @@ function setupAccountLabelsIpc({ ipcMain, ACCOUNT_LABELS_FILE, getLastAccountIds
   }
 
   // Apelido da CONTA (multi-conta #58 — dblclick no nome da barra).
-  ipcMain.on('set-account-label', (_e, { accountId, label } = {}) => {
+  // `payload || {}`: default de desestructuring não cobre null (só undefined)
+  // — payload nulo do renderer malformado é ignorado, não exceção.
+  ipcMain.on('set-account-label', (_e, payload) => {
+    const { accountId, label } = payload || {};
     // Valida no limite IPC: accountId é o sfx da barra (hex-6), label é string
     // curta. Payload malformado é ignorado, não gravado.
     if (typeof accountId !== 'string' || !/^[0-9a-f]{1,64}$/.test(accountId)) return;

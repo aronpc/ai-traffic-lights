@@ -24,6 +24,7 @@ function setup({ labels = {}, configs = {}, apis = {} } = {}) {
     getEnviron: (pid) => { state.reads++; return state.environ[pid] !== undefined ? state.environ[pid] : ''; },
     parseEnviron: usage.parseEnviron,
     readClaudeConfig: (d) => configs[d] || null,          // dir → .claude.json parseado
+    claudeAccountKey: usage.claudeAccountKey,
     accountLabel: usage.accountLabel,
     apiProviderFromSettings: (d) => apis[d] || null,
     agentOf,

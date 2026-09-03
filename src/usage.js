@@ -887,6 +887,18 @@ function claudeAccountSfx(src) {
   catch { return String(src).slice(0, 6); }
 }
 
+// Chave de IDENTIDADE de conta Claude — UMA definição (review fix #9: eram 4
+// expressões iguais-a-mas-não-idênticas espalhadas por collectUsage,
+// claudeAccountsFromSessions, annotate e o sfx do tile; divergência = dedup
+// que não dedupa ou rename gravado sob chave que nenhuma leitura casa).
+// Precedência: orgUuid (billing/limite por org, #60) > accountUuid (contas
+// pessoais) > dir (perfil SEM oauth — proxy/API key, .claude.json sem
+// oauthAccount: identidade local, e o tile dele precisa ser renomeável) >
+// 'default' (conta do symlink). Pura e exportada.
+function claudeAccountKey(pc, dir) {
+  return (pc && (pc.accountOrgUuid || pc.accountUuid)) || dir || 'default';
+}
+
 // Rótulo de uma conta Claude (#58): apelido manual > nome da org >
 // local-part do email (email COMPLETO nunca aparece; o corte é aqui) >
 // basename do dir do perfil (sem o ponto: ~/.gh-claude → 'gh-claude').
@@ -956,11 +968,11 @@ async function collectUsage(opts = {}) {
   for (const a of accountsIn) {
     if (!a) continue;
     const pc = readClaudeConfig({ home: opts.home, now: opts.now, dir: a.dir });
-    const key = (pc && (pc.accountOrgUuid || pc.accountUuid)) || null;
-    if (key) {
-      if (seenKey.has(key)) continue;           // mesma org/login noutro perfil → 1 barra
-      seenKey.add(key);
-    }
+    // claudeAccountKey (uma definição, review #9): key nunca é null — conta
+    // sem oauth dedupa pelo dir (perfis distintos continuam 2 barras).
+    const key = claudeAccountKey(pc, a.dir);
+    if (seenKey.has(key)) continue;             // mesma org/login noutro perfil → 1 barra
+    seenKey.add(key);
     claudeAccounts.push({ dir: a.dir, label: a.label, pc, key });
   }
   const multiClaude = claudeAccounts.length > 1;
@@ -1031,7 +1043,10 @@ async function collectUsage(opts = {}) {
     if (!Array.isArray(entries)) return;
     const acc = claudeAccounts[i];
     if (!multiClaude) { out.push(...entries); return; }
-    const sfx = claudeAccountSfx(acc.key || acc.dir || 'default');
+    // sfx da chave ÚNICA (review #9): acc.key já carrega os fallbacks — o
+    // accountId do tile bate com o lastAccountIds do rename em TODA conta,
+    // inclusive proxy sem oauth (key = dir).
+    const sfx = claudeAccountSfx(acc.key);
     const label = claudeAccountLabel(acc);
     for (const e of entries) {
       // Cópia obrigatória: `entries` pode ser O array vivo do cache por token
@@ -1321,5 +1336,5 @@ if (typeof module !== 'undefined') module.exports = {
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
-  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, accountLabel, apiProviderFromSettings,
+  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
 };

@@ -9,7 +9,7 @@ const {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits,
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
-  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, accountLabel, apiProviderFromSettings,
+  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
@@ -1206,6 +1206,18 @@ test('claudeAccountSfx: sha256-6 estável e distinto por fonte', () => {
   assert.match(claudeAccountSfx('uuid-A'), /^[0-9a-f]{6}$/);
   assert.equal(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-A'));
   assert.notEqual(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-B'));
+});
+
+// claudeAccountKey (review fix #9): a chave de identidade era 4 expressões
+// quase-iguais espalhadas (dedup do collectUsage, sfx do tile, lastAccountIds
+// do rename, annotator) — divergência = rename gravado que nenhuma leitura
+// casa. Uma definição só, com a precedência completa.
+test('claudeAccountKey: org > accountUuid > dir > default (uma definição, review #9)', () => {
+  assert.equal(claudeAccountKey({ accountOrgUuid: 'org-1', accountUuid: 'acc-1' }, '/d'), 'org-1', 'org vence (#60: billing por org)');
+  assert.equal(claudeAccountKey({ accountUuid: 'acc-1' }, '/d'), 'acc-1', 'conta pessoal pelo uuid');
+  assert.equal(claudeAccountKey({ accountName: 'sem uuid' }, '/.gh-claude'), '/.gh-claude', 'perfil proxy sem oauth → dir (tile renomeável)');
+  assert.equal(claudeAccountKey(null, '/.gh-claude'), '/.gh-claude', 'sem .claude.json → dir também');
+  assert.equal(claudeAccountKey(null, null), 'default', 'conta do symlink → default');
 });
 
 // accountLabel: precedência do rótulo da conta (#58, modal de detalhes):

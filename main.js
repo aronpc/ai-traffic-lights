@@ -147,6 +147,7 @@ const annotateClaudeAccounts = require('./src/annotate').makeAnnotator({
   getEnviron: getProcessEnviron,
   parseEnviron: usage.parseEnviron,
   readClaudeConfig: (dir) => usage.readClaudeConfig({ home: app.getPath('home'), dir }), // cache mtime
+  claudeAccountKey: usage.claudeAccountKey,
   accountLabel: usage.accountLabel,
   apiProviderFromSettings: usage.apiProviderFromSettings,
   agentOf,
@@ -1844,16 +1845,20 @@ function claudeAccountsFromSessions() {
   try { labels = JSON.parse(fs.readFileSync(ACCOUNT_LABELS_FILE, 'utf8')) || {}; } catch {}
   lastAccountIds = {};
   for (const a of accounts) {
-    // home injetado = conta do symlink ~/.claude, não a var ambiente do ATL
+    // home injetado = conta do symlink ~/.claude, não a var ambiente do ATL.
+    // Sem .claude.json legível (perfil proxy criado na mão) a conta AINDA tem
+    // tile — pc null NÃO a descarta: a chave cai no dir e o rename dela
+    // funciona (review fix #9: o `if (!pc) continue` deixava o sfx fora do
+    // lastAccountIds e o apelido era descartado em silêncio).
     const pc = usage.readClaudeConfig({ home: app.getPath('home'), dir: a.dir });
-    if (!pc) continue;
-    // Chave de identidade: ORG primeiro (limite/billing por org — #60),
-    // accountUuid só p/ contas pessoais. Fallback labels[accountUuid]:
+    // Chave de identidade UMA definição (usage.claudeAccountKey): org primeiro
+    // (limite/billing por org — #60), accountUuid p/ pessoais, dir p/ sem
+    // oauth, 'default' p/ conta do symlink. Fallback labels[accountUuid]:
     // apelido gravado antes da chave de org continuar funcionando.
-    const key = (pc.accountOrgUuid || pc.accountUuid) || a.dir || 'default';
+    const key = usage.claudeAccountKey(pc, a.dir);
     const sfx = usage.claudeAccountSfx(key);
     lastAccountIds[sfx] = key;
-    const manual = labels[key] || (pc.accountUuid && labels[pc.accountUuid]);
+    const manual = labels[key] || (pc && pc.accountUuid && labels[pc.accountUuid]);
     if (manual) a.label = manual;
   }
   return accounts;
