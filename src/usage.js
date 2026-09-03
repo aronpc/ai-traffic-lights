@@ -373,11 +373,20 @@ async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldow
   // aqui enganava ("3d" logo após a janela ter resetado). O reset REAL das
   // janelas só existe no runtime da API (resets_at) → sem API, honestamente sem
   // reset. `passes` (free passes do plano) é info local legítima, fica.
-  const planOnly = plan
-    ? [{ id: 'claude-plan', agent: 'claude', plan, title: null, usedPct: null,
+  //
+  // Conta SEM oauth e SEM plano = perfil técnico de PROXY (ex. gh-claude →
+  // vm-contabo, que roteia GLM): sem isto a conta não gerava barra NENHUMA —
+  // invisível na lista de uso. Ganha um tile plano-só "API <host>" (o proxy
+  // não expõe quota Anthropic → sem %, honesto). Só conta NAMED (dir
+  // explícito): a default é o symlink de org, settings.json dela não diz
+  // nada de API alternativa. Perfis sem base_url seguem sem barra.
+  const api = !plan && dir ? apiProviderFromSettings(dir) : null;
+  const planLabel = plan || (api ? 'API ' + api : null);
+  const planOnly = planLabel
+    ? [{ id: 'claude-plan', agent: 'claude', plan: planLabel, title: null, usedPct: null,
         resetAt: null, resetInMin: null,
-        extra: (pc.passes != null ? pc.passes + ' passes' : null),
-        source: 'claude.json', error: null }]
+        extra: (!api && pc && pc.passes != null ? pc.passes + ' passes' : null),
+        source: api ? 'settings.json' : 'claude.json', error: null }]
     : null;
   if (!token) return planOnly;
 

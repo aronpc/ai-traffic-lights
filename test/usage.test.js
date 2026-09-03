@@ -1243,6 +1243,34 @@ test('apiProviderFromSettings: host[:porta] do base_url; null quando API oficial
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+// Perfil técnico de PROXY (sem oauth, com env.ANTHROPIC_BASE_URL no
+// settings.json do dir): antes não gerava barra NENHUMA — invisível na lista
+// de uso. Agora vira tile plano-só "API <host>" rotulado pelo perfil, sem %
+// (o proxy não expõe quota Anthropic). Sem base_url → segue sem barra.
+test('collectUsage: conta gh (proxy, sem oauth) vira barra API <host> na lista de uso', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirGh = path.join(tmp, 'gh'), dirBare = path.join(tmp, 'bare');
+  for (const d of [dirA, dirGh, dirBare]) fs.mkdirSync(d);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-A', organizationName: 'Alpha Org' } }));
+  // gh: .claude.json vivo mas SEM oauthAccount (perfil técnico) + settings com proxy
+  fs.writeFileSync(path.join(dirGh, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  fs.writeFileSync(path.join(dirGh, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://vm-contabo:20128/v1' } }));
+  // bare: sem oauth E sem base_url → sem barra
+  fs.writeFileSync(path.join(dirBare, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirGh }, { dir: dirBare }], now: NOW });
+  const gh = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx(dirGh));
+  assert.ok(gh, 'conta gh gera tile claude-plan:<sfx> mesmo sem oauth');
+  assert.equal(gh.plan, 'API vm-contabo:20128', 'plan = API + host do proxy');
+  assert.equal(gh.account, 'gh', 'rótulo da conta = basename do dir');
+  assert.equal(gh.usedPct, null, 'sem % — proxy não expõe quota Anthropic');
+  assert.equal(gh.source, 'settings.json', 'fonte é o settings.json do perfil');
+  assert.ok(!out.some((e) => String(e.id).startsWith('claude') && /bare/.test(String(e.id))), 'sem base_url → sem barra');
+  assert.ok(out.some((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A')), 'conta oauth normal intacta');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('parseClaudeConfig: extrai identidade da conta (uuid/org/email) p/ multi-conta', () => {
   const r = parseClaudeConfig({ oauthAccount: {
     organizationRateLimitTier: 'default_claude_max_5x',
