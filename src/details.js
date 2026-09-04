@@ -139,7 +139,10 @@ function mountDetails(root, s, ctx) {
   // — Context — (windowid is LOCAL_ONLY: remote sessions don't even have it)
   sec('sec:context', T('dt_context'));
   if (s.cwd) row('cwd', T('dt_cwd'), s.cwd, s.cwd);
-  if (s.term_program && s.term_program !== 'terminal') row('term', T('dt_term'), s.term_program);
+  // Headless: no terminal attached at all — says so explicitly instead of
+  // silently omitting the row (the session IS running, just without a window).
+  if (s.headless) row('term', T('dt_term'), T('dt_headless'));
+  else if (s.term_program && s.term_program !== 'terminal') row('term', T('dt_term'), s.term_program);
   if (s.tmux_session) row('tmux', T('dt_tmux'), s.tmux_session);
   row('origin', T('dt_origin'), s.origin || 'local');
   if (s.windowid) row('window', T('dt_window'), String(s.windowid));

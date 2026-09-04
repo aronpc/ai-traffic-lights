@@ -124,7 +124,8 @@ A real file (trimmed):
 | `cwd` | string \| null | Optional | Project directory. Its basename is the default session label. |
 | `transcript_path` | string \| null | Optional | Path to the agent's transcript (`.jsonl`). Used to backfill `model`. |
 | `model` | string \| null | Optional | Model name (e.g. `gpt-5.5`, `glm-5.2`). Drives the usage strip and per-line label. |
-| `term_program` | string \| null | Optional | Source terminal (`$TERM_PROGRAM`), e.g. `WarpTerminal`. |
+| `term_program` | string \| null | Optional | Source terminal (`$TERM_PROGRAM`), e.g. `WarpTerminal`. Headless sessions set it to `null`. |
+| `headless` | boolean | Optional | Set when the process has **no controlling terminal** (`tty_nr=0` / `ps -o tty=` → `??`): `nohup`, SDK, `claude -p` spawned by another tool. Shows the ⌨ glyph in the overlay's terminal column, "none (headless)" in details, and a dedicated focus-failure reason. Travels in the sync payload (it's a session property, not a machine-local pointer). |
 | `windowid` | string \| null | Optional | X11 window id (decimal or `0x…` hex; app normalizes) for click-to-focus. |
 | `focus_url` | string \| null | Optional | Warp tab focus URI (`warp://session/<uuid>`), opened via `xdg-open`. |
 | `tilix_id` | string \| null | Optional | Tilix terminal id for exact-tab focus via D-Bus `activate-terminal`. |
@@ -357,7 +358,7 @@ flowchart TD
         PP["/proc probe<br/>discoverAgentProcs()"]
     end
     SF -->|"chokidar watch + readdir"| M["readSessions()"]
-    PP -->|"comm / argv match,<br/>parent process = shell"| M
+    PP -->|"comm / argv match,<br/>parent = shell OR no tty (headless)"| M
     M -->|"mergeSessions() dedup"| RS["session list → renderer (IPC)"]
     RD["reapDead() every 5s"] -.->|"PID dead → unlink"| SF
 ```
@@ -366,9 +367,13 @@ flowchart TD
   triggers `sendSessions()`, which re-reads every `*.json`.
 - **`/proc` probe** — `discoverAgentProcs()` scans `/proc`, matching each
   process's `comm` (or, for Node CLIs, the script basename in `cmdline`) against
-  the registry, and keeps only those whose **parent is a shell**
-  (`zsh`/`bash`/`sh`/`fish`/`dash`) — i.e. real interactive terminal sessions.
-  Cached for 4s.
+  the registry, and keeps it when the **parent is a shell**
+  (`zsh`/`bash`/`sh`/`fish`/`dash` — an interactive terminal session) **or the
+  process has no controlling terminal** (`tty_nr=0` from `/proc/<pid>/stat`;
+  `??` from `ps -o tty=` on macOS) — a **headless** session (`nohup`, SDK,
+  tool-spawned `claude -p`), flagged with `headless: true`. The tty signal wins
+  over the parent: a `claude -p` run by another agent's Bash tool has a shell
+  parent but no tty, and is headless. Cached for 4s.
 - **Reaping** — every 5s `reapDead()` removes state files whose `pid` no longer
   exists, so crashed/killed sessions don't linger as zombie lights.
 
@@ -449,7 +454,7 @@ here ever throws.
 | | Linux | macOS | Windows |
 |---|---|---|---|
 | read another process's env | `/proc/<pid>/environ` | `ps -p <pid> -E` | **not possible** without native code |
-| ancestor chain | `/proc/<pid>/status` | `ps -o ppid=` | not implemented |
+| ancestor chain | `/proc/<pid>/stat` (ppid + tty_nr) | `ps -o ppid=,tty=` | not implemented |
 | raise a window | `wmctrl` (X11 only — blind to native Wayland) | `osascript` by pid, app name as fallback | not implemented |
 | tab channel | Tilix (D-Bus), Warp (`xdg-open`) | Warp (`open`), iTerm2 (AppleScript) | none known |
 | tmux anchor | `tmux list-panes/list-clients` | same | n/a |

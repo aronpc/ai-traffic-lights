@@ -86,6 +86,7 @@ function openExternal(s) {
   window.trafficLight.focus({
     pid: s.pid, origin: s.origin, windowid: s.windowid,
     focus_url: s.focus_url, tilix_id: s.tilix_id, iterm_id: s.iterm_id, tmux_pane: s.tmux_pane,
+    headless: !!s.headless,   // main needs it for the focus-failure reason (no window exists)
   });
 }
 
@@ -507,6 +508,16 @@ function render() {
       llm.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + agent.mark + '</svg>';
     }
 
+    // Terminal column (⌨): ALWAYS-present cell — attached rows leave it empty,
+    // headless ones (nohup, SDK, spawned by another tool) carry the glyph. A
+    // table without gridlines: every column keeps its width on every row.
+    const ttyCol = document.createElement('span');
+    ttyCol.className = 'row__tty';
+    if (s.headless) {
+      ttyCol.textContent = '⌨';
+      ttyCol.title = T('headless_tip');
+    }
+
     const main = document.createElement('span');
     main.className = 'row__main';
 
@@ -543,7 +554,7 @@ function render() {
       main.append(badge);
     }
     main.append(labelEl, subInline);
-    li.append(led, reason, llm, main);
+    li.append(led, reason, llm, ttyCol, main);
 
     // Actions column: ONLY the path the row click doesn't take. The click already
     // opens the default for each session type (external for local, embedded for

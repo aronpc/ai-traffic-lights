@@ -293,3 +293,11 @@ test('chrome da janela é localizado: <html lang>, <title> e aria-label do ×', 
   assert.equal(document.title, 'Detalhes da sessão', '<title> em pt');
   assert.equal(closeBtn.getAttribute('aria-label'), 'Fechar', 'aria-label do × em pt');
 });
+
+test('sessão headless: Terminal = "nenhum (headless)" em vez de linha oculta', async () => {
+  // A sessão EXISTE, só não tem janela — ocultar a linha Terminal passaria a
+  // mensagem errada; o rótulo explícito diz o que está acontecendo.
+  const { kv, push } = await setup();
+  push(mkSess('api', null, { headless: true }));
+  assert.equal(kv().get('Terminal'), 'nenhum (headless)');
+});

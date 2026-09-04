@@ -6,7 +6,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { findTranscript } = require('../src/collect.js');
+const { spawn } = require('child_process');
+const { findTranscript, parseStatFields, acceptedProc, psTtyHeadless, flagHeadless } = require('../src/collect.js');
 
 const realHome = process.env.HOME;
 function withHome(h, fn) { process.env.HOME = h; try { return fn(); } finally { process.env.HOME = realHome; } }
@@ -64,4 +65,54 @@ test('findTranscript: extraConfigDirs não duplica nem quebra com dirs inexisten
     null,                          // junk entry → skipped
   ]));
   assert.equal(got, path.join(proj, sid + '.jsonl'), 'standard root still wins with junk extras');
+});
+
+// ---- headless discovery: the controlling-terminal signal (pure gates) ----
+test('parseStatFields: ppid e tty_nr corretos mesmo com comm exótico (espaço/parêntese)', () => {
+  // /proc stat: "pid (comm) state ppid pgrp session tty_nr …". comm pode ter
+  // espaço E parêntese — os campos só são confiáveis depois do ÚLTIMO ')'.
+  // Medido ao vivo: headless real (tty_nr=0) e sessão attachada (tty_nr=34818).
+  assert.deepEqual(
+    parseStatFields('1483 (cla (de)) S 1245 1483 1483 0 -1 4194560 12345 0 0 0 1 2 3'),
+    { ppid: 1245, ttyNr: 0 },
+  );
+  assert.deepEqual(
+    parseStatFields('1026 (claude) S 1026 1026 1026 34818 -1 4194560 999 0 0 0 1 2 3'),
+    { ppid: 1026, ttyNr: 34818 },
+  );
+  assert.equal(parseStatFields('junk sem parenteses'), null);
+  assert.equal(parseStatFields(null), null);
+});
+
+test('acceptedProc: tty_nr=0 é headless (tty vence sobre o pai); pai shell+tty = attached; resto fora', () => {
+  assert.deepEqual(acceptedProc('zsh', 34818), { headless: false }, 'attachado clássico (pai shell, com tty)');
+  assert.deepEqual(acceptedProc('zsh', 0), { headless: true }, 'claude -p via Bash tool: pai é shell, mas sem tty');
+  assert.deepEqual(acceptedProc('bakeoff', 0), { headless: true }, 'SDK/nhup: sem pai shell e sem tty');
+  assert.equal(acceptedProc('node', 1), null, 'pai não-shell com tty segue fora (daemon/MCP — comportamento preservado)');
+});
+
+test('psTtyHeadless: macOS devolve ?? (dois caracteres) sem tty — qualquer prefixo ? conta', () => {
+  // Medido no Darwin: `ps -o tty=` imprime '??' (não '?') quando o processo
+  // não tem terminal controlador. Casar só '?' deixava TODO headless do
+  // macOS indetectável (achado da review do PR #65).
+  assert.equal(psTtyHeadless('??'), true, 'macOS real: sem tty = ??');
+  assert.equal(psTtyHeadless('?'), true, 'dialeto do ps do Linux (defensivo)');
+  assert.equal(psTtyHeadless('ttys001'), false, 'tty real');
+  assert.equal(psTtyHeadless(''), false);
+  assert.equal(psTtyHeadless(null), false, 'ps falhou/vazio → não afirma nada');
+});
+
+test('flagHeadless: pid vivo sem tty ganha headless=true E term_program=null (contrato)', { skip: process.platform !== 'linux' }, async () => {
+  // detached + stdio ignore → setsid → controlling tty = 0 no /proc stat: um
+  // headless de verdade, sem gastar API. O kill é pelo PID exato do filho.
+  const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+  child.unref();
+  await new Promise((resolve) => child.once('spawn', resolve));
+  try {
+    const out = flagHeadless([{ session_id: 'x', pid: child.pid, term_program: 'tilix', last_event: 'Stop', last_event_ts: 1 }]);
+    assert.equal(out[0].headless, true, 'tty_nr=0 → headless');
+    assert.equal(out[0].term_program, null, 'schema: sessão headless não nomeia terminal');
+  } finally {
+    try { process.kill(child.pid, 9); } catch {}
+  }
 });

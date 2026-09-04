@@ -221,6 +221,14 @@ test('focusFailure: tmux sem client anexado → detached (mais específico que o
   assert.equal(focusFailure({ wayland: true, raised: false, hasTab: false, detached: true }), 'detached');
 });
 
+test('focusFailure: sessão headless → headless (não há janela NENHUMA para focar)', () => {
+  // Ordem do gate: remote → raised/hasTab → detached → headless → wayland →
+  // nowindow. Headless vem antes de wayland/nowindow porque explica o motivo
+  // real (nohup/SDK — não é limitação do compositor).
+  assert.equal(focusFailure({ wayland: true, raised: false, hasTab: false, headless: true }), 'headless');
+  assert.equal(focusFailure({ wayland: false, raised: false, hasTab: false, headless: true }), 'headless');
+});
+
 test('focusFailure: Wayland sem canal → wayland', () => {
   assert.equal(focusFailure({ wayland: true, raised: false, hasTab: false }), 'wayland');
 });

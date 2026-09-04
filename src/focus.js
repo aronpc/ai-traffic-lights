@@ -176,6 +176,8 @@ function isRemoteSession(state) {
 //   remote   — session from another host: there is nothing to focus here
 //   detached — tmux with no attached client: the session exists, the window
 //              does not
+//   headless — no controlling terminal AT ALL (nohup/SDK/claude -p spawned by
+//              another tool): there is no window, and never was
 //   wayland  — native Wayland and the terminal exposes no tab channel
 //   nowindow — no window for the session and no channel
 function focusFailure(state) {
@@ -183,6 +185,7 @@ function focusFailure(state) {
   if (isRemoteSession(state)) return 'remote';
   if (state.raised || state.hasTab) return null;
   if (state.detached) return 'detached';
+  if (state.headless) return 'headless';
   if (state.wayland) return 'wayland';
   return 'nowindow';
 }
