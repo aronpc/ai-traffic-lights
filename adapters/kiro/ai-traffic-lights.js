@@ -90,7 +90,11 @@ function dropState(sid) {
 // ---- reading Kiro files ----
 
 // Reads the session .json and enriches the state file with cwd / pid.
+// The sid guard is local on purpose (callers already validate): this function
+// COMPOSES a path from the sid, and a future caller must not be able to turn
+// it into a traversal (CWE-22) by skipping the check upstream.
 function enrichFromSessionJson(sid) {
+  if (!validSessionId(sid)) return;
   const jsonFile = path.join(KIRO_SESSIONS_DIR, `${sid}.json`);
   try {
     const meta = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));

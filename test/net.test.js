@@ -274,12 +274,16 @@ test('server: /sessions com readAtFor → payload inclui readIdleSec da marca vi
 });
 
 // ---- postReadToPeer (#56): fire-and-forget client that posts the mark ----
+// onlineSet gates the send (review PR #63): the bearer token goes only to a
+// host the caller confirms online — the tests pass the host in the set.
+const ONLINE_LOCAL = new Set(['127.0.0.1']);
+
 test('postReadToPeer: servidor real recebe marks saneadas + now', async () => {
   let body = null;
   const { server, port } = await up({ onReadMarks: (m) => { body = m; return m.length; } });
   try {
     const ok = await postReadToPeer({
-      host: '127.0.0.1', port, token: 'tok',
+      host: '127.0.0.1', port, token: 'tok', onlineSet: ONLINE_LOCAL,
       now: 1730000000, marks: [{ key: 'local:1234', readAt: 1729999000 }],
     });
     assert.equal(ok, true, 'POST aceito');
@@ -292,23 +296,40 @@ test('postReadToPeer: servidor real recebe marks saneadas + now', async () => {
 test('postReadToPeer: token errado → false (sem throw)', async () => {
   const { server, port } = await up({ onReadMarks: () => 0 });
   try {
-    const ok = await postReadToPeer({ host: '127.0.0.1', port, token: 'wrong', marks: [{ key: 'x', readAt: 1 }] });
+    const ok = await postReadToPeer({ host: '127.0.0.1', port, token: 'wrong', onlineSet: ONLINE_LOCAL, marks: [{ key: 'x', readAt: 1 }] });
     assert.equal(ok, false, '401 vira false, caller segue vivo');
+  } finally { server.close(); }
+});
+
+test('postReadToPeer: host FORA do onlineSet → false sem enviar (bearer nunca a peer não confirmado)', async () => {
+  const { server, port } = await up({ onReadMarks: () => { throw new Error('não deve chegar aqui'); } });
+  try {
+    // online, reachable server — but the host is NOT in the set: the guard
+    // must return false BEFORE the fetch (stale peer entry / IP reassigned
+    // inside the tailnet must not receive the token).
+    const ok = await postReadToPeer({
+      host: '127.0.0.1', port, token: 'tok', onlineSet: new Set(['outra-maquina']),
+      now: 1, marks: [{ key: 'x', readAt: 1 }],
+    });
+    assert.equal(ok, false, 'host não confirmado → false');
+    // sem onlineSet nenhum: fail-closed, idem
+    const ok2 = await postReadToPeer({ host: '127.0.0.1', port, token: 'tok', now: 1, marks: [{ key: 'x', readAt: 1 }] });
+    assert.equal(ok2, false, 'sem onlineSet → false (fail-closed)');
   } finally { server.close(); }
 });
 
 test('postReadToPeer: host inalcançável → false rápido (timeout, sem throw)', async () => {
   const ok = await postReadToPeer({
-    host: '127.0.0.1', port: 1, token: 'tok',   // port 1: nothing listening
+    host: '127.0.0.1', port: 1, token: 'tok', onlineSet: ONLINE_LOCAL,   // port 1: nothing listening
     now: 1, marks: [{ key: 'x', readAt: 1 }],
   });
   assert.equal(ok, false, 'ECONNREFUSED vira false');
 });
 
 test('postReadToPeer: guard — sem host ou sem marks → false sem rede', async () => {
-  assert.equal(await postReadToPeer({ port: 1, token: 't', marks: [{ key: 'x', readAt: 1 }] }), false, 'sem host');
-  assert.equal(await postReadToPeer({ host: '127.0.0.1', port: 1, token: 't', marks: [] }), false, 'marks vazio');
-  assert.equal(await postReadToPeer({ host: '127.0.0.1', port: 1, token: 't' }), false, 'sem marks');
+  assert.equal(await postReadToPeer({ port: 1, token: 't', onlineSet: ONLINE_LOCAL, marks: [{ key: 'x', readAt: 1 }] }), false, 'sem host');
+  assert.equal(await postReadToPeer({ host: '127.0.0.1', port: 1, token: 't', onlineSet: ONLINE_LOCAL, marks: [] }), false, 'marks vazio');
+  assert.equal(await postReadToPeer({ host: '127.0.0.1', port: 1, token: 't', onlineSet: ONLINE_LOCAL }), false, 'sem marks');
 });
 
 test('server: EADDRINUSE (porta em uso) → chama onError, não crasha o processo', async () => {

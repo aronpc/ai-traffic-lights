@@ -60,4 +60,14 @@ function aliasKey(s) {
   return String((s && (s.session_id || s.pid)) || '');
 }
 
-if (typeof module !== 'undefined') module.exports = { originOf, isLocalSession, sessionKey, rewriteKeyOrigin, aliasKey };
+// SYNTHETIC session_id: the /proc discovery fallback (`proc-<pid>`,
+// sessions.js) for processes that never fired the hook. It is NOT a stable
+// identity — it is derived from the pid, so a RECYCLED pid regenerates the
+// SAME synthetic sid while being a DIFFERENT process (e.g. another Claude
+// profile). Caches keyed by session_id must NOT trust it (annotate.js's
+// pid→dir cache reads the environ again instead of reusing the entry).
+function isSyntheticSessionId(sid) {
+  return typeof sid === 'string' && /^proc-\d+$/.test(sid);
+}
+
+if (typeof module !== 'undefined') module.exports = { originOf, isLocalSession, sessionKey, rewriteKeyOrigin, aliasKey, isSyntheticSessionId };

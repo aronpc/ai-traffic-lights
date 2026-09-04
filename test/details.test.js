@@ -62,6 +62,8 @@ async function setup(aliases = {}, { noDrain = false } = {}) {
   const document = {
     querySelector: (sel) => (sel === '.dt-card' ? card : sel === '.ts-close' ? closeBtn : mkEl()),
     createElement: () => mkEl(), querySelectorAll: () => [],
+    documentElement: mkEl(),   // chrome i18n: <html lang> is set by details.js
+    title: '',
   };
   const winListeners = {};
   const window = {
@@ -100,7 +102,7 @@ async function setup(aliases = {}, { noDrain = false } = {}) {
   const evsBox = () => body.children.find((c) => c.className === 'dt-evs');
   const timeline = () => (evsBox() ? evsBox().children : []);
   const timelineHead = () => body.children.find((c) => String(c.className).includes('dt-toggle'));
-  return { card, body, closeBtn, calls, fire, push, kv, evsBox, timeline, timelineHead, drain };
+  return { card, body, closeBtn, document, calls, fire, push, kv, evsBox, timeline, timelineHead, drain };
 }
 
 const now = Math.floor(Date.now() / 1000);
@@ -249,4 +251,40 @@ test('refresh ao vivo é INCREMENTAL: mesmo node reusado e timeline expandida pe
   assert.equal(evsBox() === body.children.find((c) => c.getAttribute && c.getAttribute('data-key') === 'evs'), true, 'box da timeline é o MESMO node');
   assert.equal(timeline().length, 3, '3 eventos após o refresh');
   assert.ok(timelineHead().children[0].textContent.includes('(3)'), 'contagem atualizou');
+});
+
+test('timeline: append de evento NOVO não recria as linhas existentes (chave estável)', async () => {
+  // CodeRabbit PR #63: keying the rows by the REVERSED array index shifted
+  // every key by 1 on each append — syncChildren evicted and recreated ALL
+  // the rows on every refresh that brought a new event. The key is now
+  // signature + chronological ordinal: an append reuses every existing node
+  // and creates only the new one.
+  const { push, timeline, timelineHead } = await setup();
+  const ev = (ts, event, tool) => ({ ts, event, tool });
+  push(mkSess('api', null, {
+    events: [ev(now - 60, 'SessionStart'), ev(now - 30, 'PermissionRequest', 'Bash'), ev(now - 5, 'Stop')],
+  }));
+  timelineHead().dispatch('click', {});            // expande (para ver as linhas)
+  const before = timeline().slice();               // mais recente primeiro
+  assert.equal(before.length, 3);
+
+  push(mkSess('api', null, {
+    events: [ev(now - 60, 'SessionStart'), ev(now - 30, 'PermissionRequest', 'Bash'), ev(now - 5, 'Stop'), ev(now - 1, 'Notification')],
+  }));
+  const after = timeline();
+  assert.equal(after.length, 4, '4 eventos → 4 linhas');
+  assert.equal(after[0].children[1].textContent, 'Notification', 'novo evento no topo');
+  assert.ok(after[1] === before[0] && after[2] === before[1] && after[3] === before[2],
+    'os 3 nodes antigos são os MESMOS objetos — nenhum recriado pelo append');
+  for (const el of before) assert.ok(!el.removed, 'nenhum node antigo saiu do DOM');
+});
+
+test('chrome da janela é localizado: <html lang>, <title> e aria-label do ×', async () => {
+  // CodeRabbit PR #63: details.html shipped static lang="en" + hardcoded pt
+  // title/aria-label. initDetailsWindow localizes the chrome with the
+  // resolved language (same keys the overlay uses).
+  const { document, closeBtn } = await setup();
+  assert.equal(document.documentElement.lang, 'pt', '<html lang> no idioma resolvido');
+  assert.equal(document.title, 'Detalhes da sessão', '<title> em pt');
+  assert.equal(closeBtn.getAttribute('aria-label'), 'Fechar', 'aria-label do × em pt');
 });

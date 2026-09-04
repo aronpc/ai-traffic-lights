@@ -63,13 +63,26 @@ function readSessions() {
 
 // Finds a session's transcript by session_id (searches the project roots
 // from claude-config.js: config dir — incl. profile/dd-claude symlink — and the
-// ~/.claude and ~/.zclaude histories).
-function findTranscript(sid) {
+// ~/.claude and ~/.zclaude histories). `extraConfigDirs` (CodeRabbit PR #63):
+// CLAUDE_CONFIG_DIR of NAMED profiles, discovered from the live sessions'
+// environ by the caller — projectsRoots() only knows THIS process's config
+// dir, so a named-profile session would never find its transcript (no model
+// backfill, no prompt view). Headless (agent.js) passes nothing: without a
+// GUI there is no environ sweep — degrades to the standard roots.
+function findTranscript(sid, extraConfigDirs = []) {
   // sid arrives from the peer via /transcript?key= (network-controlled). Without validation,
   // "../foo" becomes path traversal (path.join) and reads any .jsonl on the host.
   // Rejects before it becomes a path — same validator as the adapters (validate.js).
   if (!validate.validSessionId(sid)) return null;
-  for (const root of claudePaths.projectsRoots()) {
+  const roots = [];
+  const add = (r) => { if (r && !roots.includes(r)) roots.push(r); };
+  for (const r of claudePaths.projectsRoots()) add(r);
+  // junk entries (null/undefined/non-string) are skipped BEFORE path.join —
+  // join(null, …) throws (measured by the junk-extras test).
+  for (const d of Array.isArray(extraConfigDirs) ? extraConfigDirs : []) {
+    if (typeof d === 'string' && d) add(path.join(d, 'projects'));
+  }
+  for (const root of roots) {
     try {
       for (const proj of fs.readdirSync(root)) {
         const p = path.join(root, proj, sid + '.jsonl');
@@ -93,7 +106,8 @@ function lastModel(tp) {
 }
 
 // Backfill: sessions with model=null pick up the model from the transcript (right away, at startup).
-function backfillModels() {
+// `extraConfigDirs` feeds findTranscript (named profiles — see there).
+function backfillModels(extraConfigDirs = []) {
   let changed = false;
   try {
     for (const f of fs.readdirSync(STATE_DIR).filter((x) => x.endsWith('.json'))) {
@@ -101,7 +115,7 @@ function backfillModels() {
         const p = path.join(STATE_DIR, f);
         const s = JSON.parse(fs.readFileSync(p, 'utf8'));
         if (s.model) continue;
-        const tp = s.transcript_path || findTranscript(s.session_id);
+        const tp = s.transcript_path || findTranscript(s.session_id, extraConfigDirs);
         const m = tp && lastModel(tp);
         if (m) {
           s.transcript_path = tp; s.model = m;

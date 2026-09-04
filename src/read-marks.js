@@ -32,8 +32,19 @@ function loadReadMarks(file) {
 
 // Saves the state. Marks are RARE events (a click or a peer's POST), so a direct
 // write without debounce — unlike usage.json (60s cycle), there's no churn.
+// tmp+rename (same pattern as state-writer.atomicWrite): a truncated file would
+// be silently swallowed by loadReadMarks's catch and ALL marks would be lost —
+// the reader must never see a half-written JSON.
 function saveReadMarks(file, state) {
-  try { fs.writeFileSync(file, JSON.stringify(state || {})); return true; } catch { return false; }
+  const tmp = `${file}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(state || {}));
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}   // no orphaned .tmp
+    return false;
+  }
 }
 
 // LWW merge of marks: [{key, readAt}] (already sanitized by the network — net.js

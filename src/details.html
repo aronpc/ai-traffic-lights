@@ -11,7 +11,9 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
-  <title>Detalhes da sessão</title>
+  <!-- Static chrome is the EN default; details.js localizes lang/title/aria
+       with the resolved language (ctx_details/btn_close keys) at load. -->
+  <title>Session details</title>
   <link rel="stylesheet" href="styles.css">
   <style>
     /* Overrides da JANELA (o CSS dt-* nasceu para o modal do overlay): sem
@@ -31,7 +33,7 @@
     <div class="dt-card">
       <div class="dt-head">
         <span class="dt-title"></span>
-        <button class="ts-close" aria-label="fechar">×</button>
+        <button class="ts-close" aria-label="close">×</button>
       </div>
       <div class="dt-body"></div>
     </div>

@@ -11,14 +11,16 @@
 //    '' on a dead pid/exec race → do NOT cache (the label would be frozen on
 //    the default account forever), retry on the next cycle;
 //  • a hit only counts with the SAME session_id — a pid reused by another
-//    process arrives with a different sid and the environ is re-read;
+//    process arrives with a different sid and the environ is re-read; a
+//    SYNTHETIC sid (`proc-<pid>`) regenerates itself on a recycled pid and
+//    therefore never enters the cache (identity.js isSyntheticSessionId);
 //  • pids outside the live set are pruned at the end of the call.
 // In-memory annotation: none of this is written to the state file. Remote
 // sessions (with origin) already arrive annotated by the peer — the label is
 // harmless (nickname/org/local-part, never full email/uuid) and is NOT
 // LOCAL_ONLY.
 
-const { isLocalSession } = require('./identity.js');
+const { isLocalSession, isSyntheticSessionId } = require('./identity.js');
 
 function makeAnnotator({
   getEnviron,                      // (pid) → raw environ ('' = unreadable)
@@ -44,9 +46,16 @@ function makeAnnotator({
       if (!isLocalSession(s) || agentOf(s) !== 'claude' || !s.pid) continue;
       alive.add(s.pid);
       const sid = s.session_id || '';
+      // SYNTHETIC sid (`proc-<pid>`, /proc discovery): derived from the pid, so
+      // a recycled pid regenerates the SAME sid while being ANOTHER process —
+      // `hit.sid === sid` would hand the cache entry (and the label) of the
+      // PREVIOUS process's account to the new one. A synthetic sid never
+      // counts as a hit and never enters the cache (the environ re-read on
+      // every cycle is one /proc open per discovered session — cheap).
+      const synthetic = isSyntheticSessionId(sid);
       let dir;
       const hit = pidDir.get(s.pid);
-      if (hit && hit.sid === sid) {
+      if (hit && hit.sid === sid && !synthetic) {
         dir = hit.dir;             // environ does not change: cache valid for the same process
       } else {
         // '' = unreadable (pid died / fork-exec race / ps failed): do NOT
@@ -55,7 +64,7 @@ function makeAnnotator({
         if (!raw) continue;
         try { dir = parseEnviron(raw, ['CLAUDE_CONFIG_DIR']).CLAUDE_CONFIG_DIR || null; }
         catch { continue; }
-        pidDir.set(s.pid, { sid, dir });
+        if (!synthetic) pidDir.set(s.pid, { sid, dir });
       }
       // Label resolves on EVERY call (only the dir is cached): a rename in the
       // tile changes account-labels.json and the details modal sees it on the

@@ -885,7 +885,7 @@ ipcMain.handle('fetch-transcript', async (_e, { origin, key, n }) => {
   const p = parseInt(n || 20, 10);
   const N = Math.max(1, Math.min(50, Number.isFinite(p) ? p : 20));
   if (!origin || origin === 'local') {
-    try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, N) : []; }
+    try { const tp = collect.findTranscript(key, namedConfigDirs()); return tp ? transcript.lastMessages(tp, N) : []; }
     catch { return []; }
   }
   const s = (settingsCfg && settingsCfg.sync) || {};
@@ -919,6 +919,7 @@ ipcMain.on('mark-read', (_e, { key, readAt, origin } = {}) => {
         host, port: s.port, token: s.token,
         now: Math.floor(Date.now() / 1000),
         marks: [{ key: rewriteKeyOrigin(key, origin, 'local'), readAt: at }],
+        onlineSet,   // bearer only to a host Tailscale confirms online (stale entry → no send)
       }).catch(() => {});   // fire-and-forget: a failure loses nothing (the local state is already persisted)
     }
   }
@@ -1011,7 +1012,7 @@ function applySync() {
         // and exportSession would overwrite `origin` with OUR name.
         getSessions: () => annotateClaudeAccounts(collect.readSessions()),
         getTranscript: (key, n) => {
-          try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
+          try { const tp = collect.findTranscript(key, namedConfigDirs()); return tp ? transcript.lastMessages(tp, n) : []; }
           catch { return []; }
         },
         onReadMarks: applyReadMarks,   // POST /read (#56): mark coming from a peer → merge+persist+push
@@ -1467,7 +1468,7 @@ app.whenReady().then(() => {
     _kiroPrecisaInstalar = true;   // notified later, once notifyUser exists
   }
   applyShortcut();                                   // uses settingsCfg.shortcut (+ legacy)
-  if (collect.backfillModels()) sendSessions(); // fills in model on existing sessions right away
+  if (collect.backfillModels(namedConfigDirs())) sendSessions(); // fills in model on existing sessions right away (named profiles included)
   _stateWatcher = chokidar
     .watch(STATE_DIR, { ignoreInitial: false, awaitWriteFinish: { stabilityThreshold: 60, pollInterval: 20 } })
     .on('all', () => sendSessions());
@@ -1895,6 +1896,15 @@ function claudeAccountsFromSessions() {
     if (manual) a.label = manual;
   }
   return accounts;
+}
+// Config dirs of the NAMED profiles with a live session (CodeRabbit PR #63):
+// feeds findTranscript/backfillModels — claudePaths.projectsRoots() only knows
+// THIS process's config dir, so a named-profile session's transcript would
+// never be found (no model backfill, no prompt view). Called on rare paths
+// (boot backfill, transcript view) — the environ sweep cost is fine there.
+function namedConfigDirs() {
+  try { return claudeAccountsFromSessions().map((a) => a.dir).filter(Boolean); }
+  catch { return []; }
 }
 
 async function collectAndSendUsage({ claudeFetch = false } = {}) {

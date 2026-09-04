@@ -96,6 +96,27 @@ test('review: pid REUSADO por outro processo re-lê o environ (guard por session
   assert.equal(s2.account, 'Conta B', 'pid reusado resolve a conta do processo novo');
 });
 
+test('review: sid SINTÉTICO (proc-<pid>) NÃO vale como cache hit — pid reciclado re-lê', () => {
+  // The bug (CodeRabbit PR #63): the /proc discovery fabricates the sid as
+  // `proc-<pid>`; a RECYCLED pid regenerates the SAME synthetic sid while
+  // being ANOTHER process → `hit.sid === sid` served the previous process's
+  // account. A synthetic sid never validates a hit (and never enters the
+  // cache), so the environ is re-read every cycle.
+  const t = setup({
+    configs: {
+      '/home/u/.prof-a': { accountName: 'Conta A' },
+      '/home/u/.prof-b': { accountName: 'Conta B' },
+    },
+  });
+  t.env(100, RAW_A);
+  t.annotate([t.sess(100, 'proc-100')]);
+  t.env(100, 'CLAUDE_CONFIG_DIR=/home/u/.prof-b\0');
+  const s2 = t.sess(100, 'proc-100');              // recycled pid, SAME synthetic sid
+  t.annotate([s2]);
+  assert.equal(s2.account, 'Conta B', 'o sintético não autentica o processo: label do environ NOVO');
+  assert.equal(t.state.reads, 2, 'cache não valeu — re-leu o environ');
+});
+
 test('cache do dir: mesma sessão NÃO re-lê o environ (1 leitura por sessão nova)', () => {
   const t = setup({ configs: { '/home/u/.prof-a': { accountName: 'Org Alpha' } } });
   t.env(100, RAW_A);

@@ -14,6 +14,10 @@
 
 function setupAccountLabelsIpc({ ipcMain, ACCOUNT_LABELS_FILE, getLastAccountIds, recollect }) {
   const fs = require('fs');
+  // tmp+rename (state-writer pattern): an interrupted writeFileSync leaves a
+  // half-written JSON and every reader silently falls back to {} — ALL
+  // nicknames gone. atomicWrite already cleans up its .tmp on failure.
+  const { atomicWrite } = require('../state-writer.js');
 
   function loadLabels() {
     try { return JSON.parse(fs.readFileSync(ACCOUNT_LABELS_FILE, 'utf8')) || {}; } catch { return {}; }
@@ -22,7 +26,7 @@ function setupAccountLabelsIpc({ ipcMain, ACCOUNT_LABELS_FILE, getLastAccountIds
     const all = loadLabels();
     if (label && label.trim()) all[key] = label.trim();
     else delete all[key];
-    try { fs.writeFileSync(ACCOUNT_LABELS_FILE, JSON.stringify(all)); } catch {}
+    atomicWrite(ACCOUNT_LABELS_FILE, all, fs);
   }
 
   // Label of the ACCOUNT (multi-account #58 — dblclick on the bar's name).

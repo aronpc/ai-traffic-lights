@@ -157,7 +157,19 @@ function mountDetails(root, s, ctx) {
   // the count; expanding is explicit. Both header and box are keyed and
   // REUSED, so the expanded/collapsed choice survives every live refresh;
   // only the event rows inside are reconciled when the list itself changes.
-  const evs = Array.isArray(s.events) ? [...s.events].reverse() : [];
+  // Event keys must be STABLE under append (CodeRabbit PR #63): keying by the
+  // REVERSED array index shifted every key by 1 on each new event, recreating
+  // all the rows. Key = event signature + occurrence ordinal counted in
+  // CHRONOLOGICAL order: an append keeps every existing key unchanged, and the
+  // 50-cap rollover only re-keys AMBIGUOUS duplicates (identical ts+event+tool
+  // — indistinguishable anyway).
+  const seenSig = new Map();
+  const evs = (Array.isArray(s.events) ? s.events : []).map((ev) => {
+    const sig = `${(ev && ev.ts) || ''}|${(ev && ev.event) || ''}|${(ev && ev.tool) || ''}`;
+    const n = (seenSig.get(sig) || 0) + 1;
+    seenSig.set(sig, n);
+    return { ev, key: sig + '|#' + n };
+  }).reverse();   // newest first for display
   const headKey = 'sec:timeline';
   if (!evs.length) {
     let head = findKeyed(body, headKey);
@@ -209,8 +221,7 @@ function mountDetails(root, s, ctx) {
       box.setAttribute('data-key', 'evs');
       box.hidden = true;                    // collapsed by default, then KEPT
     }
-    const evSpecs = evs.map((ev, i) => {
-      const key = `${ev.ts}|${ev.event}|${ev.tool || ''}|${i}`;
+    const evSpecs = evs.map(({ ev, key }) => {
       let el = findKeyed(box, key);
       if (!el) {
         el = document.createElement('div');
@@ -255,6 +266,7 @@ function mountDetailsGone(root, T) {
 // the window).
 function initDetailsWindow(api) {
   const card = document.querySelector('.dt-card');
+  const closeBtn = document.querySelector('.ts-close');
   let T = makeT('en');
   let aliases = {};
   let mounted = false;        // a details-data push already built the card
@@ -262,6 +274,12 @@ function initDetailsWindow(api) {
     .then(([lang, a]) => {
       T = makeT(lang || 'en');
       aliases = a || {};
+      // Window-chrome i18n (CodeRabbit PR #63): details.html ships with static
+      // lang="en"/title/aria-label; the resolved language localizes them here,
+      // with the same keys the overlay uses (ctx_details / btn_close).
+      try { document.documentElement.lang = lang || 'en'; } catch {}
+      try { document.title = T('ctx_details'); } catch {}
+      try { closeBtn.setAttribute('aria-label', T('btn_close')); } catch {}
       // Placeholder only while NO push has arrived: main pushes at
       // did-finish-load, which can beat this invoke round-trip — painting
       // "Session ended" over a just-mounted live card would be a lie.
@@ -282,7 +300,7 @@ function initDetailsWindow(api) {
       },
     });
   });
-  document.querySelector('.ts-close').addEventListener('click', () => api.closeDetails());
+  closeBtn.addEventListener('click', () => api.closeDetails());
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.closeDetails(); }, true);
 }
 

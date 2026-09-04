@@ -25,9 +25,15 @@ const collect = require('./src/collect');
 const net = require('./src/net');
 const transcript = require('./src/transcript');
 const settingsLib = require('./src/settings');
+const readMarksLib = require('./src/read-marks');
+const { sessionKey } = require('./src/identity');
 
 const DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share');
 const SETTINGS_FILE = path.join(DATA_HOME, 'ai-traffic-lights', 'settings.json');
+// Same file the GUI main uses (same DATA_HOME): on a machine that runs BOTH,
+// a mark received by either side converges in one state. On a headless
+// server it simply lives alone.
+const READ_MARKS_FILE = path.join(DATA_HOME, 'ai-traffic-lights', 'read-marks.json');
 
 // Same beta gate as the GUI (main.js: SYNC_AVAILABLE = isPrerelease(APP_VERSION)).
 // Sync is a pre-release feature: a headless agent installed from a STABLE
@@ -81,6 +87,21 @@ const sync = applyEnvOverrides({ ...(cfg.sync || {}) });
 const nodeName = sync.node || os.hostname() || 'local';
 
 let server = null;
+// Read marks (#56), headless side: without these callbacks the agent's
+// POST /read answered applied=0 forever and /sessions never exported
+// readIdleSec — a session read on ANOTHER machine came back red on the next
+// poll (CodeRabbit PR #63: read marks didn't synchronize in headless mode).
+// Same LWW semantics as the GUI main: per-key highest readAt wins, persisted
+// on every applied batch. No renderer to push — the peers re-read /sessions.
+let readMarksState = readMarksLib.loadReadMarks(READ_MARKS_FILE);
+function applyReadMarks(marks) {
+  const { state, applied } = readMarksLib.applyMarks(readMarksState, marks);
+  if (!applied.length) return 0;
+  readMarksState = state;
+  readMarksLib.saveReadMarks(READ_MARKS_FILE, readMarksState);
+  return applied.length;
+}
+
 function start() {
   // Check order: config FIRST (the more specific "don't start" reason wins),
   // beta gate after — a disabled agent is disabled on any release channel.
@@ -97,6 +118,8 @@ function start() {
         try { const tp = collect.findTranscript(key); return tp ? transcript.lastMessages(tp, n) : []; }
         catch { return []; }
       },
+      onReadMarks: applyReadMarks,                              // POST /read → LWW merge + persist
+      readAtFor: (s) => readMarksState[sessionKey(s)],          // mark becomes readIdleSec in /sessions
     });
     log('servidor UP %s:%d (%s) shareTranscripts=%s', bindHost || '127.0.0.1', sync.port, nodeName, !!sync.shareTranscripts);
     // Keeps the /proc discovery cache fresh (same as the GUI's 5s loop).

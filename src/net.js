@@ -451,13 +451,18 @@ async function fetchTranscriptFromPeer({ host, port, token, key, n = 20, onlineS
 // client). The key must already be REWRITTEN into the origin's namespace
 // (rewriteKeyOrigin: 'peer:1234' → 'local:1234') and `now` is THIS
 // client's epoch, so the origin can convert readAt to its own clock (see drift in the
-// POST handler). The caller treats it as fire-and-forget: on failure the
+// POST handler). `onlineSet` gates the send (same rule as
+// fetchTranscriptFromPeer): the bearer token goes ONLY to a host Tailscale
+// currently confirms — a stale peer entry (IP reassigned inside the tailnet)
+// must not receive it; fail-closed (no set → don't send).
+// The caller treats it as fire-and-forget: on failure the
 // optimistic local mark stays valid and the poll re-exports readIdleSec on the next
 // cycle — convergence via /sessions, not via retry.
-async function postReadToPeer({ host, port, token, marks, now }) {
+async function postReadToPeer({ host, port, token, marks, now, onlineSet }) {
   if (!host || !Array.isArray(marks) || !marks.length) return false;
   const hostPort = peerAuthority(host, port);
   if (!hostPort) return false;
+  if (!peerOnline(onlineSet, host)) return false;
   try {
     const r = await fetch(`http://${hostPort}/read`, {
       method: 'POST',
