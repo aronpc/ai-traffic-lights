@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sessões headless na descoberta (sem terminal attachado).** O sinal é o
+  terminal controlador do kernel (`tty_nr=0` no `/proc/<pid>/stat` no Linux;
+  `??` no `ps -o tty=` no macOS), não o processo pai — um `claude -p`
+  disparado pela Bash tool de outro agente tem pai shell mas não tem janela
+  para focar. Sessões headless ganham o glifo ⌨ na coluna do terminal, o
+  clique explica que não existe janela (motivo `headless` no foco) e o campo
+  `term_program` vai nulo, como o contrato do schema.
+
 ## [0.9.0] - 2026-09-02
 
 ### Added
