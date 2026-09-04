@@ -176,7 +176,12 @@ test('timeline: colapsada por padrão; clique no header expande em ordem recente
   assert.equal(evs[0].children[1].textContent, 'Stop', 'mais recente primeiro');
   assert.equal(evs[1].children[1].textContent, 'PermissionRequest · Bash', 'evento + tool');
   assert.equal(evs[2].children[1].textContent, 'SessionStart');
-  assert.ok(evs[0].children[0].textContent.match(/^\d{2}:\d{2}/), 'hora local no time');
+  // deterministic across locales/runner hours: match the string the SAME
+  // environment produces (en-US 12h clock renders 13:52 as "1:52:28 PM" —
+  // the old ^\d{2}:\d{2} regex failed on CI whenever the run hit a 1-digit
+  // hour; measured on the post-merge run of PR #63).
+  assert.equal(evs[0].children[0].textContent, new Date((now - 5) * 1000).toLocaleTimeString(),
+    'hora local no time');
   timelineHead().dispatch('click', {});
   assert.equal(evsBox().hidden, true, 'segundo clique recolapsa');
 });
