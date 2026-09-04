@@ -285,3 +285,22 @@ test('clique numa headless local: payload do IPC leva headless=true (motivo do f
   assert.equal(calls.focus.length, 1, 'sessão local → foco externo');
   assert.equal(calls.focus[0].headless, true, 'flag viajou no payload do IPC');
 });
+
+test('coluna ⌨: tmux detached ganha o glifo com tooltip PRÓPRIO; headless vence no empate', async () => {
+  // Mesmo glifo do headless, dica diferente: o detached TEM terminal — só não
+  // há cliente anexado à sessão tmux. O glifo aparece na lista ANTES do
+  // clique, que é onde o usuário decide se a row é focável.
+  const { els, sessionsCb } = await setup();
+  const now = Math.floor(Date.now() / 1000);
+  sessionsCb([
+    { session_id: 'td', pid: 81, cwd: '/p/t', agent: 'claude', tmux_detached: true, last_event: 'Stop', last_event_ts: now },
+    { session_id: 'ta', pid: 82, cwd: '/p/a', agent: 'claude', last_event: 'Stop', last_event_ts: now }, // tmux attached
+  ]);
+  const rows = els.list.children.filter((li) => li.className === 'row');
+  const ttys = rows.map((li) => li.children[3]);
+  const marked = ttys.filter((c) => c.textContent === '⌨');
+  assert.equal(marked.length, 1, 'só a detached carrega o glifo');
+  assert.ok(marked[0].title.includes('tmux'), 'tooltip fala de tmux/attach');
+  assert.ok(!marked[0].title.includes('headless'), 'não é o tooltip do headless');
+  assert.ok(ttys.some((c) => c.textContent === ''), 'attached: célula vazia');
+});

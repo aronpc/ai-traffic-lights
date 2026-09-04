@@ -98,7 +98,12 @@ há terminal controlando o processo (`tty_nr = 0` no `/proc/<pid>/stat`;
 `claude -p` spawnado por outra ferramenta. Essas ganham a flag `headless`,
 aparecem com o glifo ⌨ na coluna fixa do terminal do overlay (célula vazia
 quando attachada), mostram "nenhum (headless)" na linha Terminal dos detalhes
-e, no clique, explicam que não há janela para focar. O merge produz uma linha
+e, no clique, explicam que não há janela para focar. O mesmo glifo marca a
+sessão em **tmux sem cliente anexado** (flag `tmux_detached`, sonda própria no
+coletor — uma chamada `list-panes -a` por ciclo responde todos os panes; sem
+tmux na máquina, nenhuma linha é marcada): o tooltip distingue os dois casos,
+porque o detached TEM terminal — só não há janela para focar até o attach.
+O merge produz uma linha
 por processo/sessão e, na branch P2P, usa `origin:pid||session_id` para impedir
 colisões entre máquinas.
 

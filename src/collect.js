@@ -56,7 +56,9 @@ function readSessions() {
     // Merge + dedup (pure logic in sessions.js). No term_program filter:
     // Tilix doesn't export TERM_PROGRAM and would vanish from the overlay. The "interactive" gate
     // is the /proc probe (parent=shell OR no controlling tty) and the state file itself.
-    return flagHeadless(sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids)));
+    // flagTmuxDetached runs AFTER flagHeadless: a headless process has no tmux pane to probe,
+    // and the detached flag must not shadow the headless one.
+    return flagTmuxDetached(flagHeadless(sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids))));
   } catch { return []; }
 }
 
@@ -78,6 +80,68 @@ function flagHeadless(list) {
         if (f && f.ttyNr === 0) { s.headless = true; s.term_program = null; }
       }
     } catch {}
+  }
+  return list;
+}
+
+// tmux probe: flags LOCAL sessions whose tmux session has NO attached client.
+// Before this, `detached` was only learned ON CLICK (src/ipc/focus.js asks
+// list-clients and the notification explains) — the list itself couldn't tell
+// a focusable row from one that would only say "attach it first". One
+// `list-panes -a` answers for EVERY pane at once; `session_attached` is the
+// number of clients attached to the pane's session (0 = detached). Cached 4s
+// like the /proc probe — readSessions runs on every render tick.
+//
+// tmux missing / server down → null, which asserts NOTHING (same contract as
+// the focus flow's `asked=false`): no tmux on the machine must not paint
+// rows as detached.
+const TMUX_PANE_RE = /^%[0-9]+$/;
+
+// Pure parser: output of `tmux list-panes -a -F '#{pane_id} #{session_attached}'`
+// → Map(pane_id → attached client count). Malformed lines are skipped, not fatal.
+function parsePanesAttached(out) {
+  const m = new Map();
+  if (typeof out !== 'string') return m;
+  for (const line of out.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const sp = t.lastIndexOf(' ');
+    const pane = t.slice(0, sp);
+    const n = parseInt(t.slice(sp + 1), 10);
+    if (TMUX_PANE_RE.test(pane) && Number.isFinite(n)) m.set(pane, n);
+  }
+  return m;
+}
+
+// One tmux call, cached 4s (positive AND negative — a missing tmux binary
+// must not retry the execFileSync on every tick; same seal as the Kiro lock).
+let _tmuxMap = null, _tmuxAt = 0;
+function tmuxPanesAttached() {
+  if (Date.now() - _tmuxAt < 4000) return _tmuxMap;
+  try {
+    _tmuxMap = parsePanesAttached(execFileSync('tmux',
+      ['list-panes', '-a', '-F', '#{pane_id} #{session_attached}'],
+      { encoding: 'utf8', timeout: 2000 }));
+  } catch { _tmuxMap = null; }   // no tmux / server down → no claim
+  _tmuxAt = Date.now();
+  return _tmuxMap;
+}
+
+// `panesAttached` is injectable (tests pass a Map); default = the live probe.
+// Gate: LOCAL sessions only (the origin owns the tmux its pane lives in),
+// a VALID pane id (`tmuxTarget`'s rule), never on top of headless. A pane
+// ABSENT from the map (tmux restarted, pane destroyed) asserts nothing — the
+// click flow re-derives the truth live anyway. Objects are freshly parsed
+// from the state files every tick, so only the `true` case needs writing.
+// The flag travels in the sync payload like `headless`: a session property
+// the origin is authoritative about, not a machine-local pointer.
+function flagTmuxDetached(list, panesAttached) {
+  const panes = panesAttached !== undefined ? panesAttached : tmuxPanesAttached();
+  if (!panes) return list;
+  for (const s of list) {
+    if (!s.pid || s.headless || (s.origin || 'local') !== 'local') continue;
+    if (typeof s.tmux_pane !== 'string' || !TMUX_PANE_RE.test(s.tmux_pane)) continue;
+    if (panes.get(s.tmux_pane) === 0) s.tmux_detached = true;
   }
   return list;
 }
@@ -318,5 +382,6 @@ module.exports = {
   readSessions, findTranscript, backfillModels,
   discoveredTerminalAgents, invalidateDiscovery,
   parseStatFields, acceptedProc, psTtyHeadless, flagHeadless,
+  parsePanesAttached, flagTmuxDetached,
   STATE_DIR,
 };
