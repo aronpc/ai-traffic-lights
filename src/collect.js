@@ -68,13 +68,14 @@ function flagHeadless(list) {
   for (const s of list) {
     if (!s.pid || s.headless || (s.origin || 'local') !== 'local') continue;
     try {
+      // When the flag lands, term_program follows it to null — the schema
+      // contract for headless sessions (there IS no terminal to name).
       if (process.platform === 'darwin') {
-        // '?' = no controlling terminal on macOS ps
         const tty = execFileSync('ps', ['-p', String(s.pid), '-o', 'tty='], { encoding: 'utf8', timeout: 1000 }).trim();
-        if (tty === '?') s.headless = true;
+        if (psTtyHeadless(tty)) { s.headless = true; s.term_program = null; }
       } else {
         const f = parseStatFields(fs.readFileSync(`/proc/${s.pid}/stat`, 'utf8'));
-        if (f && f.ttyNr === 0) s.headless = true;
+        if (f && f.ttyNr === 0) { s.headless = true; s.term_program = null; }
       }
     } catch {}
   }
@@ -226,6 +227,13 @@ function acceptedProc(pcomm, ttyNr) {
   return null;
 }
 
+// macOS `ps -o tty=` prints `??` (TWO chars) when no controlling terminal
+// exists — not Linux ps's single `?`. Any '?'-prefixed value is "no tty";
+// anything else ('ttys001') is a real terminal. One matcher for both dialects.
+function psTtyHeadless(tty) {
+  return typeof tty === 'string' && tty.trim().startsWith('?');
+}
+
 function discoverAgentProcs(existingAgentPids) {
   const found = [];
   const kiroLockPid = getKiroLockPid();
@@ -239,8 +247,8 @@ function discoverAgentProcs(existingAgentPids) {
         if (!m) continue;
         const pid = parseInt(m[1], 10);
         const ppid = parseInt(m[2], 10);
-        // '?' = no controlling terminal (headless); anything else ('ttys001') has one.
-        const ttyNr = m[3] === '?' ? 0 : 1;
+        // '?'/'??' = no controlling terminal (headless); 'ttys001' has one.
+        const ttyNr = psTtyHeadless(m[3]) ? 0 : 1;
         const argv = m[4].split(/\s+/);
         const comm = path.basename(argv[0] || '');
 
@@ -309,6 +317,6 @@ function invalidateDiscovery() { _discAt = 0; }
 module.exports = {
   readSessions, findTranscript, backfillModels,
   discoveredTerminalAgents, invalidateDiscovery,
-  parseStatFields, acceptedProc,
+  parseStatFields, acceptedProc, psTtyHeadless, flagHeadless,
   STATE_DIR,
 };

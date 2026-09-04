@@ -94,7 +94,7 @@ Há duas fontes que são combinadas:
 A sonda reconhece `comm` ou o basename do script no `argv` para CLIs Node e
 aceita o processo quando o pai é um shell (sessão interativa) **ou** quando não
 há terminal controlando o processo (`tty_nr = 0` no `/proc/<pid>/stat`;
-`?` no `ps -o tty=` do macOS) — sessão **headless**: `nohup`, SDK,
+`??` no `ps -o tty=` do macOS) — sessão **headless**: `nohup`, SDK,
 `claude -p` spawnado por outra ferramenta. Essas ganham a flag `headless`,
 aparecem com o glifo ⌨ na coluna fixa do terminal do overlay (célula vazia
 quando attachada), mostram "nenhum (headless)" na linha Terminal dos detalhes

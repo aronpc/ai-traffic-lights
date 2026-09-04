@@ -39,7 +39,8 @@ function mkEl() {
 async function setup() {
   const els = {};
   for (const id of ['list', 'empty', 'counts', 'usage', 'launcher', 'verBtn', 'summaryLed', 'expandBtn', 'quitBtn', 'grip', 'settingsBtn', 'overlay', 'ctxMenu']) els[id] = mkEl();
-  const calls = { setAlias: [], notify: [], transcriptResolvers: [] };
+  const calls = { setAlias: [], notify: [], transcriptResolvers: [], focus: [] };
+  const timers = [];                         // setTimeout is stubbed — kept here to fire the click debounce
   let sessionsCb = null;
   let marksCb = null;                        // onReadMarks (#56 re-seeding)
   const window = {
@@ -49,7 +50,7 @@ async function setup() {
       onReadMarks: (cb) => { marksCb = cb; },
       requestSessions() {}, setExpanded() {}, autoHeight() {},
       onUsage() {}, requestUsage() {}, onUsageMeta() {}, forceUsage() {},
-      resizeStart() {}, resizeMove() {}, focus() {},
+      resizeStart() {}, resizeMove() {}, focus: (p) => calls.focus.push(p),
       getAliases: () => Promise.resolve({}), setAlias: (cwd, v) => calls.setAlias.push([cwd, v]),
       notify: (...args) => calls.notify.push(args), toggleVisibility() {}, setTrayLevel() {},
       getLaunchers: () => Promise.resolve([]), launchAgent() {},
@@ -63,7 +64,7 @@ async function setup() {
     },
   };
   const document = { getElementById: (id) => els[id], createElement: () => mkEl(), querySelectorAll: () => [], title: '', documentElement: { style: { setProperty() {} } } };
-  const ctx = { document, window, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date, Math, console };
+  const ctx = { document, window, setInterval: () => 0, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {}, Date, Math, console };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
 
@@ -76,7 +77,9 @@ async function setup() {
   const openRename = () => { labelEl().dispatch('dblclick', noev); return labelEl().children[0]; };
   const key = (input, k) => input.dispatch('keydown', { key: k, ...noev });
   const marks = (state) => marksCb(state);
-  return { ctx, els, calls, noev, openRename, key, marks, sessionsCb: (list) => sessionsCb(list) };
+  // fires the timers scheduled with the given delay (the row click debounces at 220ms)
+  const flushTimers = (ms) => timers.filter((t) => t.ms === ms).forEach((t) => t.fn());
+  return { ctx, els, calls, noev, openRename, key, marks, flushTimers, sessionsCb: (list) => sessionsCb(list) };
 }
 
 test('#2 guard: render() durante a edição não destrói o input', async () => {
@@ -267,4 +270,18 @@ test('coluna ⌨ (headless): célula em TODAS as rows; glifo só na headless', a
   assert.equal(marked.length, 1, 'exatamente a headless carrega o glifo');
   assert.ok(marked[0].title, 'tooltip explica o que o ⌨ significa');
   assert.ok(ttys.some((c) => c.textContent === ''), 'attachada: célula vazia, espaço preservado');
+});
+
+test('clique numa headless local: payload do IPC leva headless=true (motivo do foco)', async () => {
+  // main builds the focus state from THIS payload — without the flag the
+  // click on a headless session reported the generic "nowindow" instead of
+  // the honest "no window exists" (PR #65 review).
+  const { els, calls, noev, sessionsCb, flushTimers } = await setup();
+  const now = Math.floor(Date.now() / 1000);
+  sessionsCb([{ session_id: 'hh', pid: 71, cwd: '/p/h', agent: 'claude', headless: true, last_event: 'Stop', last_event_ts: now }]);
+  const row = els.list.children.find((li) => li.className === 'row');
+  row.dispatch('click', noev);
+  flushTimers(220);                          // click debounce elapses
+  assert.equal(calls.focus.length, 1, 'sessão local → foco externo');
+  assert.equal(calls.focus[0].headless, true, 'flag viajou no payload do IPC');
 });
