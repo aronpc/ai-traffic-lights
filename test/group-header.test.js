@@ -93,7 +93,7 @@ test('#54 2 origens → headers "origem · N dot" por bloco e badge de origem so
   assert.equal(kids[3].textContent, 'notebook-hg · 1 🔴', 'worst do bloco = awaiting');
   assert.equal(kids[4].className, 'row');
   // origin badge is gone: main.children[0] is the label, not the badge
-  const main = kids[4].children[3];
+  const main = kids[4].children[4];
   assert.equal(main.children[0].className, 'row__label', 'sem badge — o header já diz a origem');
   // button visible (there is a remote session)
   assert.equal(els.groupBtn.hidden, false);
@@ -114,7 +114,7 @@ test('#54 toggle desligado → sem headers e badge de origem volta na remota', a
   const kids = els.list.children;
   assert.equal(kids.length, 2);
   assert.ok(kids.every((k) => k.className === 'row'), 'sem header com o toggle off');
-  const main = kids[1].children[3];      // remote row → main
+  const main = kids[1].children[4];      // remote row → main (led,reason,llm,tty,main)
   assert.equal(main.children[0].className, 'row__origin', 'badge presente (comportamento pré-#54)');
   assert.equal(main.children[0].textContent, 'notebook-hg');
 });

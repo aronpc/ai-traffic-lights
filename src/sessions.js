@@ -6,8 +6,9 @@
 // `.filter(s => s.term_program)` deleted those sessions along with headless
 // processes. The correct "interactive" gate already exists in another layer:
 //   • state file → the hook only fires in an interactive session (SessionStart etc.)
-//   • /proc probe → already filters parent = shell (zsh/bash/...), which excludes
-//     daemons/MCP servers whose parent is node/claude.
+//   • /proc probe → gate is parent = shell (zsh/bash/...) OR no controlling tty
+//     (headless: nohup/SDK/tool-spawned). Daemons/MCP servers whose parent is
+//     node/claude WITH a tty stay excluded.
 // Hence no extra filtering by term_program is necessary.
 
 const { sessionKey } = require('./identity.js');
@@ -20,11 +21,15 @@ const { sessionKey } = require('./identity.js');
 // 'local' when the session comes without origin (legacy state file / /proc probe).
 function mergeSessions(stateFileSessions, discovered) {
   const sessions = (stateFileSessions || []).map((s) => (s.origin ? s : { ...s, origin: 'local' }));
-  for (const { pid, agent } of discovered || []) {
+  for (const { pid, agent, headless } of discovered || []) {
     if (pid && !sessions.some((s) => s.pid === pid && originOfLocal(s))) {
       sessions.push({
         session_id: `proc-${pid}`, pid, agent, origin: 'local',
-        cwd: null, term_program: 'terminal',
+        cwd: null,
+        // 'terminal' claims a shell under it — a headless agent has none, and
+        // carries the flag instead (the overlay draws ⌨ in its own column).
+        term_program: headless ? null : 'terminal',
+        ...(headless ? { headless: true } : {}),
         last_event: 'ativo', last_event_ts: 0,
       });
     }

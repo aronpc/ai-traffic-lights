@@ -55,10 +55,30 @@ function readSessions() {
     }
     // Merge + dedup (pure logic in sessions.js). No term_program filter:
     // Tilix doesn't export TERM_PROGRAM and would vanish from the overlay. The "interactive" gate
-    // is parent=shell (/proc probe) and the state file itself (the hook only fires
-    // in an interactive session).
-    return sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids));
+    // is the /proc probe (parent=shell OR no controlling tty) and the state file itself.
+    return flagHeadless(sessions.mergeSessions(stateFileSessions, discoveredTerminalAgents(existingAgentPids)));
   } catch { return []; }
+}
+
+// State-file sessions can ALSO be headless: `claude -p` in a project with the hook
+// installed fires SessionStart WITHOUT a terminal. Same kernel signal as discovery —
+// probe the live pid's controlling tty and flag it. Dead/unreadable pid → flag
+// untouched (a stale state file isn't proof of anything).
+function flagHeadless(list) {
+  for (const s of list) {
+    if (!s.pid || s.headless || (s.origin || 'local') !== 'local') continue;
+    try {
+      if (process.platform === 'darwin') {
+        // '?' = no controlling terminal on macOS ps
+        const tty = execFileSync('ps', ['-p', String(s.pid), '-o', 'tty='], { encoding: 'utf8', timeout: 1000 }).trim();
+        if (tty === '?') s.headless = true;
+      } else {
+        const f = parseStatFields(fs.readFileSync(`/proc/${s.pid}/stat`, 'utf8'));
+        if (f && f.ttyNr === 0) s.headless = true;
+      }
+    } catch {}
+  }
+  return list;
 }
 
 // Finds a session's transcript by session_id (searches the project roots
@@ -128,10 +148,13 @@ function backfillModels(extraConfigDirs = []) {
   return changed;
 }
 
-// Probes /proc: discovers agents running in a terminal (parent = shell) that still
-// DON'T have a state file — idle sessions or ones started before the adapter. Process
-// names come from the registry (agents.js). (cwd unreadable due to ptrace_scope → these
-// enter with the fallback label "<agent> · PID".)
+// Probes /proc: discovers agents running in a terminal that still DON'T have a state
+// file — idle sessions or ones started before the adapter. Two ways IN (see
+// acceptedProc): the classic parent=shell (attached), and a controlling tty of 0 —
+// HEADLESS agents (nohup, SDK, claude -p spawned by another tool), invisible before:
+// no shell parent AND no state file. Process names come from the registry (agents.js).
+// (cwd unreadable due to ptrace_scope → these enter with the fallback label
+// "<agent> · PID".)
 // ---- Kiro: LOCK FILE discovery (ported from PR #46) ----
 // Kiro leaves a .lock with the pid of the active session. It's the only kiro pid
 // "authorized" to enter discovery without a state file — the other kiro
@@ -176,20 +199,49 @@ function kiroRejeitado(agent, pid, kiroLockPid, existingAgentPids) {
   return !statePids || !statePids.has(pid);
 }
 
+// /proc/<pid>/stat line → { ppid, ttyNr }. The line is "pid (comm) state ppid pgrp
+// session tty_nr …"; comm can hold spaces AND parens, so fields are only trustworthy
+// AFTER the last ')'. tty_nr (field 7) is the CONTROLLING terminal: 0 = no terminal
+// owns the process (nohup, SDK, cron, a claude -p spawned by a tool) — a kernel fact,
+// immune to whoever the parent happens to be.
+function parseStatFields(stat) {
+  if (typeof stat !== 'string') return null;
+  const i = stat.lastIndexOf(')');
+  if (i < 0) return null;
+  const f = stat.slice(i + 2).split(/\s+/);
+  const ppid = parseInt(f[1], 10);
+  const ttyNr = parseInt(f[4], 10);
+  if (Number.isNaN(ppid) || Number.isNaN(ttyNr)) return null;
+  return { ppid, ttyNr };
+}
+
+// Discovery gate (pure): a shell parent with a tty is the classic ATTACHED session;
+// tty_nr=0 is a HEADLESS one. The tty WINS over the parent: a claude -p run from
+// another agent's Bash tool has a shell parent but no controlling tty — there is no
+// window to focus, so it is headless. A non-shell parent WITH a tty stays out, as
+// before (daemons, MCP servers).
+function acceptedProc(pcomm, ttyNr) {
+  if (ttyNr === 0) return { headless: true };
+  if (SHELLS.has(pcomm)) return { headless: false };
+  return null;
+}
+
 function discoverAgentProcs(existingAgentPids) {
   const found = [];
   const kiroLockPid = getKiroLockPid();
   if (process.platform === 'darwin') {
     try {
-      const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 2000 });
+      const output = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,tty=,args='], { encoding: 'utf8', timeout: 2000 });
       for (const line of output.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const m = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/);
+        const m = trimmed.match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
         if (!m) continue;
         const pid = parseInt(m[1], 10);
         const ppid = parseInt(m[2], 10);
-        const argv = m[3].split(/\s+/);
+        // '?' = no controlling terminal (headless); anything else ('ttys001') has one.
+        const ttyNr = m[3] === '?' ? 0 : 1;
+        const argv = m[4].split(/\s+/);
         const comm = path.basename(argv[0] || '');
 
         let agent = COMM_TO_AGENT.get(comm);
@@ -208,7 +260,8 @@ function discoverAgentProcs(existingAgentPids) {
         } catch {}
         if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
 
-        if (SHELLS.has(pcomm)) found.push({ pid, agent });
+        const acc = acceptedProc(pcomm, ttyNr);
+        if (acc) found.push({ pid, agent, ...(acc.headless ? { headless: true } : {}) });
       }
     } catch {}
   } else {
@@ -227,13 +280,14 @@ function discoverAgentProcs(existingAgentPids) {
           }
           if (!agent) continue;
           if (kiroRejeitado(agent, pid, kiroLockPid, existingAgentPids)) continue;
-          const status = fs.readFileSync(`/proc/${ent}/status`, 'utf8');
-          const m = status.match(/^PPid:\s+(\d+)/m);
-          if (!m) continue;
+          // one read carries BOTH gates: ppid (for the parent comm) and tty_nr
+          const f = parseStatFields(fs.readFileSync(`/proc/${ent}/stat`, 'utf8'));
+          if (!f) continue;
           let pcomm = '';
-          try { pcomm = fs.readFileSync(`/proc/${m[1]}/comm`, 'utf8').trim(); } catch {}
+          try { pcomm = fs.readFileSync(`/proc/${f.ppid}/comm`, 'utf8').trim(); } catch {}
           if (pcomm.startsWith('-')) pcomm = pcomm.slice(1);
-          if (SHELLS.has(pcomm)) found.push({ pid, agent });
+          const acc = acceptedProc(pcomm, f.ttyNr);
+          if (acc) found.push({ pid, agent, ...(acc.headless ? { headless: true } : {}) });
         } catch {}
       }
     } catch {}
@@ -255,5 +309,6 @@ function invalidateDiscovery() { _discAt = 0; }
 module.exports = {
   readSessions, findTranscript, backfillModels,
   discoveredTerminalAgents, invalidateDiscovery,
+  parseStatFields, acceptedProc,
   STATE_DIR,
 };
