@@ -14,7 +14,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const sessions = require('./sessions.js');
 const { AGENTS } = require('./agents.js');
 const validate = require('./validate.js');
@@ -113,18 +113,25 @@ function parsePanesAttached(out) {
   return m;
 }
 
-// One tmux call, cached 4s (positive AND negative — a missing tmux binary
-// must not retry the execFileSync on every tick; same seal as the Kiro lock).
-let _tmuxMap = null, _tmuxAt = 0;
+// One tmux probe, ASYNC and fire-and-forget: the tick never waits for it. A
+// hung tmux server (socket alive, server unresponsive) would stall a
+// synchronous exec for the full timeout — and with it the Electron event
+// loop, the UI and the IPC (review finding on PR #66). The tick reads the
+// LAST resolved map; until one lands the probe is `null` and asserts
+// nothing. Cache 4s, positive AND negative (a missing tmux binary must not
+// re-fork the probe on every tick; same seal as the Kiro lock), one probe
+// in flight at a time.
+let _tmuxMap = null, _tmuxAt = 0, _tmuxInflight = false;
 function tmuxPanesAttached() {
-  if (Date.now() - _tmuxAt < 4000) return _tmuxMap;
-  try {
-    _tmuxMap = parsePanesAttached(execFileSync('tmux',
-      ['list-panes', '-a', '-F', '#{pane_id} #{session_attached}'],
-      { encoding: 'utf8', timeout: 2000 }));
-  } catch { _tmuxMap = null; }   // no tmux / server down → no claim
-  _tmuxAt = Date.now();
-  return _tmuxMap;
+  if (_tmuxInflight || Date.now() - _tmuxAt < 4000) return _tmuxMap;
+  _tmuxInflight = true;
+  execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{session_attached}'],
+    { encoding: 'utf8', timeout: 2000 }, (err, out) => {
+      _tmuxMap = err ? null : parsePanesAttached(out);   // no tmux / server down → no claim
+      _tmuxAt = Date.now();
+      _tmuxInflight = false;
+    });
+  return _tmuxMap;   // previous snapshot — null until the first one lands
 }
 
 // `panesAttached` is injectable (tests pass a Map); default = the live probe.
