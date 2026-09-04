@@ -102,6 +102,36 @@ html, body {
   text-overflow: ellipsis;
 }
 .spacer { flex: 1; }
+/* Busca (#55): input compacto que ocupa o espaço do spacer quando aberto.
+   O header é drag-region — sem no-drag o mousedown iniciaria o arrasto da
+   janela em vez de posicionar o cursor do texto. */
+.search {
+  -webkit-app-region: no-drag;
+  flex: 1;
+  min-width: 60px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+}
+.search:focus { border-color: var(--border-bright); }
+.search::placeholder { color: var(--ink-dim); opacity: 0.7; }
+.search[hidden] { display: none; }
+/* Modo busca (#55): abrir a lupa recolhe o ruído do header — divider, counts
+   e os botões do meio somem e o input (flex:1) expande pelo header inteiro.
+   Ficam de fora a própria lupa (fecha, já acesa via .is-on) e o × de ocultar. */
+.bar--searching .bar-divider,
+.bar--searching .counts,
+.bar--searching .btn-ver,
+.bar--searching #groupBtn,
+.bar--searching #forceUsageBtn,
+.bar--searching #toggleFooterBtn,
+.bar--searching #settingsBtn,
+.bar--searching #expandBtn { display: none; }
 .btn {
   -webkit-app-region: no-drag;
   background: transparent;
@@ -121,6 +151,7 @@ html, body {
   line-height: 1;
 }
 .btn:hover { background: rgba(255,255,255,0.10); color: var(--ink); }
+.btn.is-on { background: rgba(255,255,255,0.12); color: var(--ink); }   /* toggle ativo (agrupar por host, modo launcher) */
 .btn-close:hover { background: rgba(224,86,63,0.22); color: var(--red); }
 /* Force (⟳): gira o ícone enquanto recoleta (feedback de "atualizando"). */
 .btn.is-spinning svg { animation: spin 0.6s linear; transform-origin: center; }
@@ -362,6 +393,20 @@ html, body {
   cursor: pointer;
   transition: background 0.12s;
 }
+/* Header de grupo por máquina (#54): abre cada bloco de host na lista. */
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 2px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  user-select: none;
+  cursor: default;
+}
 .row + .row { margin-top: 1px; } /* respiro entre linhas */
 .row:hover { background: var(--row-hover); }
 .row .led { width: 11px; height: 11px; flex: none; }
@@ -555,3 +600,101 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .tt { transition: opacity 0.1s linear; transform: none !important; }
 }
+
+/* ---------- menu de contexto da linha ----------
+   Menu próprio em HTML, não o popup nativo do Electron: em janela frameless
+   (X11/Wayland) o Menu.buildTemplate não recebe os cliques de forma
+   confiável. Irmão da lista — o replaceChildren() do re-render de 2s não o
+   destrói; a sessão-alvo vive na closure dos handlers dos itens. Mesma
+   linguagem visual do tooltip (.tt): painel escuro, borda bright, sombra. */
+.ctx {
+  position: absolute;
+  left: 0; top: 0;
+  z-index: 999;
+  min-width: 170px;
+  max-width: 280px;
+  padding: 4px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(38, 43, 54, 0.98), rgba(24, 28, 36, 0.98));
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+  -webkit-app-region: no-drag;          /* clicar num item não arrasta a janela */
+}
+.ctx__item {
+  display: block;
+  padding: 5px 9px;
+  border-radius: 5px;
+  color: var(--ink);
+  font-size: 12px; font-weight: 500; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: default;
+  user-select: none;
+}
+.ctx__item:hover { background: rgba(255, 255, 255, 0.08); }
+.ctx__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* ---------- detalhes da sessão ----------
+   Bloco compartilhado entre a JANELA solta de detalhes (details.html — uso
+   primário desde #59: card ocupa a janela inteira, sem backdrop) e o
+   modal .ts-panel de onde o layout nasceu (z-index 55 > 50 do transcript,
+   mantido caso volte a ser embutido). Conteúdo selecionável — é um card de
+   DADOS, o overlay é user-select:none. */
+.dt-panel {
+  position: absolute; inset: 0; z-index: 55;
+  display: flex; align-items: flex-start; justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(3px);
+}
+.dt-card {
+  width: calc(100% - 20px); max-width: 380px;
+  max-height: calc(100% - 16px); margin-top: 8px;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border-bright);
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.dt-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.dt-title { flex: 1; font-size: 13px; color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.dt-sec {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ink-dim);
+  margin: 10px 0 4px;
+}
+.dt-body .dt-sec:first-child { margin-top: 0; }
+/* Timeline colapsável: header clicável com contagem; ▸/▾ gira no toggle */
+.dt-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; border-radius: 4px;
+}
+.dt-toggle:hover { color: var(--ink); }
+.dt-caret { color: var(--ink-dim); }
+.dt-row { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; line-height: 1.4; }
+.dt-k { flex: none; width: 96px; color: var(--ink-dim); }
+.dt-v {
+  flex: 1; color: var(--ink);
+  word-break: break-all;
+  user-select: text;                      /* dado é pra ler E copiar */
+  -webkit-user-select: text;
+}
+.dt-copy {
+  flex: none; align-self: flex-start;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--ink-dim); font-size: 10px;
+  border-radius: 5px; padding: 1px 6px; cursor: pointer;
+}
+.dt-copy:hover { color: var(--ink); border-color: var(--border-bright); }
+.dt-ev { display: flex; gap: 8px; padding: 2px 0; font-size: 11.5px; color: var(--ink); }
+.dt-ev time {
+  flex: none; color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  user-select: text; -webkit-user-select: text;
+}
+.dt-ev span { user-select: text; -webkit-user-select: text; word-break: break-word; }

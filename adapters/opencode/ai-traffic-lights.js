@@ -1,25 +1,26 @@
-// ai-traffic-lights.js — adapter OpenCode do ai-traffic-lights (plugin).
+// ai-traffic-lights.js — OpenCode adapter for ai-traffic-lights (plugin).
 //
-// Instalado em ~/.config/opencode/plugin/ pelo `npm run setup-hook` (ou pelo
-// menu do tray). Roda DENTRO do processo do OpenCode e escreve o contrato de
-// state file lido pelo overlay:
+// Installed to ~/.config/opencode/plugin/ by `npm run setup-hook` (or by the
+// tray menu). Runs INSIDE the OpenCode process and writes the state file
+// contract read by the overlay:
 //   ${XDG_DATA_HOME:-~/.local/share}/ai-traffic-lights/state/<session>.json
 //
-// Tradução de eventos → vocabulário canônico do contrato:
-//   chat.message / message user           → UserPromptSubmit (captura janela ativa)
+// Event → canonical contract vocabulary mapping:
+//   chat.message / message user           → UserPromptSubmit (captures active window)
 //   tool.execute.before / after           → PreToolUse / PostToolUse
-//   tool.execute.before (ask/question)    → Question (🔴❓) — pergunta ao usuário
+//   tool.execute.before (ask/question)    → Question (🔴❓) — asks the user
 //   session.idle                          → Stop
-//   permission.ask (HOOK) / .asked        → PermissionRequest (🔴🔑) — pediu permissão
-//   permission.replied / .updated         → Stop (respondeu → sai do vermelho)
+//   permission.ask (HOOK) / .asked        → PermissionRequest (🔴🔑) — asked for permission
+//   permission.replied / .updated         → Stop (answered → leaves red)
 //   session.error                         → PostToolUseFailure (🔴⚠)
-//   session.deleted                       → remove o state file
+//   session.deleted                       → removes the state file
 //
-// IMPORTANTE: o OpenCode pede permissão pelo HOOK `permission.ask` (função) e
-// pelo evento `permission.asked` — NÃO por `permission.updated` (que o adapter
-// escutava antes e nunca disparava ao pedir). Ver @opencode-ai/plugin types.
+// IMPORTANT: OpenCode asks for permission via the `permission.ask` HOOK
+// (function) and the `permission.asked` event — NOT via `permission.updated`
+// (which the adapter listened to before and never fired on ask). See
+// @opencode-ai/plugin types.
 //
-// Regra de ouro: NUNCA quebrar o OpenCode — todo hook engole exceções.
+// Golden rule: NEVER break OpenCode — every hook swallows exceptions.
 
 import fs from "node:fs"
 import os from "node:os"
@@ -30,31 +31,30 @@ const DATA_HOME = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local/s
 const STATE_DIR = path.join(DATA_HOME, "ai-traffic-lights", "state")
 
 export const AiTrafficLights = async ({ directory, $ }) => {
-  // Contexto do terminal capturado no boot (o processo herda o env do shell).
+  // Terminal context captured at boot (the process inherits the shell's env).
   const boot = {
     term_program: process.env.TERM_PROGRAM || null,
     windowid: process.env.WINDOWID || null,
     focus_url: process.env.WARP_FOCUS_URL || null,  // Warp: warp://session/<uuid>
-    tilix_id: process.env.TILIX_ID || null,         // Tilix: uuid p/ activate-terminal
+    tilix_id: process.env.TILIX_ID || null,         // Tilix: uuid for activate-terminal
     zellij_session: process.env.ZELLIJ_SESSION_NAME || null,
-    tmux_session: null,   // resolvido abaixo (nome da sessão p/ attach remoto)
-    tmux_pane: process.env.TMUX_PANE || null,   // pane id (%N) p/ FOCO local (LOCAL_ONLY)
+    tmux_session: null,   // resolved below (session name for remote attach)
+    tmux_pane: process.env.TMUX_PANE || null,   // pane id (%N) for local FOCUS (LOCAL_ONLY)
   }
-  // tmux: nome da sessão só é obtido via CLI (não há env var). 1 fork no boot,
-  // só se $TMUX set — agentes fora do tmux => zero custo.
+  // tmux: the session name can only be obtained via CLI (there is no env var).
+  // 1 fork at boot, only if $TMUX is set — agents outside tmux => zero cost.
   if (process.env.TMUX) {
     try { boot.tmux_session = execSync("tmux display-message -p '#S'", { encoding: "utf8", timeout: 1000 }).trim() || null; }
-    catch { /* sem tmux/erro => fica null */ }
+    catch { /* no tmux/error => stays null */ }
   }
-  let lastModel = null    // último modelID visto (mensagens do assistant)
-  let capturedWin = null  // janela ativa no último prompt (X11)
-  const lastIdleAt = new Map()   // sessionID -> ms do último session.idle — janela anti-clobber do Stop (por sessão, não global)
+  let lastModel = null    // last modelID seen (assistant messages)
+  let capturedWin = null  // active window at the last prompt (X11)
+  const lastIdleAt = new Map()   // sessionID -> ms of the last session.idle — anti-clobber window for Stop (per session, not global)
 
-  // Tools de PERGUNTA ao usuário: quando o agente chama uma destas, ele está
-  // ESPERANDO uma resposta sua — é um "precisa de você" (🔴🔑), não um passo de
-  // trabalho normal (verde). Frameworks autônomos (oh-my-openagent) perguntam
-  // por TOOL, não pelo fluxo de permissão do OpenCode — então é aqui que o
-  // vermelho realmente dispara nesses setups.
+  // USER QUESTION tools: when the agent calls one of these, it is WAITING for
+  // your answer — it's a "needs you" (🔴🔑), not a normal work step (green).
+  // Autonomous frameworks (oh-my-openagent) ask via TOOL, not via OpenCode's
+  // permission flow — so this is where the red actually fires in those setups.
   const QUESTION_TOOLS = new Set(['ask', 'question', 'ask_user_question', 'askuserquestion'])
   const isQuestionTool = (name) => QUESTION_TOOLS.has(String(name || '').toLowerCase().replace(/[-\s]/g, '_'))
 
@@ -62,10 +62,10 @@ export const AiTrafficLights = async ({ directory, $ }) => {
     try { return JSON.parse(fs.readFileSync(file, "utf8")) } catch { return {} }
   }
 
-  // Escrita atômica (tmp + rename), merge-preserve de windowid/focus_url,
-  // events rolante (últimos 50) — mesmo comportamento do traffic-hook.sh.
-  // ID seguro p/ nome de arquivo (anti-path-traversal). Rejeita "../", espaços,
-  // etc. — vem de payload externo.
+  // Atomic write (tmp + rename), merge-preserve of windowid/focus_url,
+  // rolling events (last 50) — same behavior as traffic-hook.sh.
+  // Safe ID for filenames (anti-path-traversal). Rejects "../", spaces,
+  // etc. — it comes from external payload.
   const SAFE_ID = /^[A-Za-z0-9._-]+$/
 
   const write = (sid, evt, tool) => {
@@ -109,8 +109,8 @@ export const AiTrafficLights = async ({ directory, $ }) => {
     try { fs.unlinkSync(path.join(STATE_DIR, `${sid}.json`)) } catch {}
   }
 
-  // No prompt do usuário, a janela focada É o terminal da sessão (mesma
-  // técnica do adapter Claude/Gemini) — desambigua Warp multi-janela.
+  // On the user's prompt, the focused window IS the session's terminal (same
+  // technique as the Claude/Gemini adapter) — disambiguates multi-window Warp.
   const captureWindow = async () => {
     if (!process.env.DISPLAY) return
     try {
@@ -132,7 +132,7 @@ export const AiTrafficLights = async ({ directory, $ }) => {
     "tool.execute.before": async (input) => {
       try {
         const tool = input && input.tool
-        // tool de pergunta → 🔴❓ (espera resposta); as demais → verde (rodando)
+        // question tool → 🔴❓ (awaiting answer); the others → green (running)
         write(input && input.sessionID, isQuestionTool(tool) ? "Question" : "PreToolUse", tool)
       } catch {}
     },
@@ -141,8 +141,8 @@ export const AiTrafficLights = async ({ directory, $ }) => {
       try { write(input && input.sessionID, "PostToolUse", input && input.tool) } catch {}
     },
 
-    // OpenCode chama este HOOK quando PEDE permissão (edit/bash/etc.). É o
-    // caminho principal — dispara ANTES de o usuário responder. Marca 🔴🔑.
+    // OpenCode calls this HOOK when it ASKS for permission (edit/bash/etc.). It
+    // is the main path — fires BEFORE the user answers. Marks 🔴🔑.
     "permission.ask": async (input) => {
       try { write(input && input.sessionID, "PermissionRequest", null) } catch {}
     },
@@ -156,21 +156,22 @@ export const AiTrafficLights = async ({ directory, $ }) => {
 
         if (t === "message.updated") {
           if (info.role === "assistant" && info.modelID) lastModel = info.modelID
-          // fallback p/ versões sem o hook chat.message. O opencode re-emite
-          // message.updated do role user na ESTABILIZAÇÃO da mensagem, logo após
-          // o session.idle — se re-gravasse UserPromptSubmit aí, o Stop sairia
-          // sobrescrito e a sessão ficaria 💛 presa no último prompt (bug visto:
-          // sessão terminada sem tools ficava amarela pra sempre). Janela de 2s.
+          // fallback for versions without the chat.message hook. opencode
+          // re-emits message.updated for the user role on message STABILIZATION,
+          // right after session.idle — if UserPromptSubmit were re-written there,
+          // the Stop would be overwritten and the session would stay 💛 stuck on
+          // the last prompt (bug seen: a session that ended without tools stayed
+          // yellow forever). 2s window.
           if (info.role === "user" && Date.now() - (lastIdleAt.get(sid) || 0) >= 2000) {
             await captureWindow(); write(sid, "UserPromptSubmit", null)
           }
           return
         }
         if (t === "session.idle") { lastIdleAt.set(sid, Date.now()); return write(sid, "Stop", null) }
-        // pediu permissão → 🔴🔑 (permission.asked é o evento; o hook
-        // permission.ask acima é o caminho principal — os dois são idempotentes)
+        // asked for permission → 🔴🔑 (permission.asked is the event; the
+        // permission.ask hook above is the main path — both are idempotent)
         if (t === "permission.ask" || t === "permission.asked") return write(sid, "PermissionRequest", null)
-        // respondeu (allow/deny) → sai do vermelho; o próximo tool/idle ajusta a cor
+        // answered (allow/deny) → leaves red; the next tool/idle adjusts the color
         if (t === "permission.replied" || t === "permission.updated") return write(sid, "Stop", null)
         if (t === "session.error") return write(sid, "PostToolUseFailure", null)
         if (t === "session.deleted") return drop(sid)

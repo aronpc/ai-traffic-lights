@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# install_macos.sh — instala o AI Traffic Lights (.app) no macOS.
+# install_macos.sh — installs AI Traffic Lights (.app) on macOS.
 #
-# Uso:
+# Usage:
 #   curl -fsSL https://raw.githubusercontent.com/aronpc/ai-traffic-lights/main/install_macos.sh | bash
-#   GITHUB_TOKEN=ghp_xxx bash install_macos.sh   # evita rate-limit da API do GitHub
+#   GITHUB_TOKEN=ghp_xxx bash install_macos.sh   # avoids GitHub API rate-limit
 #
-# O app não é notarizado; este instalador remove a quarantine e re-assina
-# ad-hoc localmente (xattr + codesign) para o Gatekeeper não bloquear.
+# The app is not notarized; this installer removes the quarantine and
+# re-signs ad-hoc locally (xattr + codesign) so Gatekeeper doesn't block it.
 #
 set -euo pipefail
 
@@ -23,12 +23,13 @@ warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "faltando dependência: $1"; }
 
-# Verifica a integridade (sha512) do .dmg contra o latest-mac.yml que o
-# electron-builder publica no release (paridade com o install.sh Linux — PR-32
-# #07: antes baixava o .dmg sem nenhuma verificação). Best-effort: sem yml/sha512
-# ou openssl, prossegue com aviso (não bloqueia a instalação).
-# Compara o sha512 (base64) de um arquivo com o esperado. Separada porque os
-# dois tiers — sidecar e yml — terminam no mesmo lugar.
+# Verifies the integrity (sha512) of the .dmg against the latest-mac.yml that
+# electron-builder publishes on the release (parity with the Linux install.sh —
+# PR-32 #07: it previously downloaded the .dmg with no verification at all).
+# Best-effort: without yml/sha512 or openssl, it proceeds with a warning
+# (doesn't block installation).
+# Compares a file's sha512 (base64) against the expected one. Separate because
+# the two tiers — sidecar and yml — end up in the same place.
 compara_checksum() {
   local file="$1" expected="$2" base="$3" actual
   if command -v openssl >/dev/null 2>&1; then
@@ -48,31 +49,32 @@ compara_checksum() {
 verify_checksum() {
   local file="$1" asset_url="$2" yml yml_url base base_decoded expected actual
   base="$(basename "${asset_url%%\?*}")"
-  # O GitHub codifica espaços na URL como %20, mas o electron-builder grava o
-  # yml com hífens (ex: AI-Traffic-Lights-0.7.3-arm64.dmg). Decodifica %20→espaço
-  # e também tenta a versão com espaços→hífens para localizar o sha512 correto.
+  # GitHub encodes spaces in the URL as %20, but electron-builder writes the
+  # yml with hyphens (e.g. AI-Traffic-Lights-0.7.3-arm64.dmg). Decodes %20→space
+  # and also tries the spaces→hyphens variant to locate the correct sha512.
   base_decoded="$(printf '%s' "$base" | sed 's/%20/ /g')"
 
-  # Tier 0: o sidecar <arquivo>.sha512 publicado pelo release.sh. É o caminho
-  # preferido e o MESMO nos dois instaladores: não depende do formato do
-  # electron-builder, nem do nome do arquivo dentro do yml, nem de qual target
-  # foi construído. Importa aqui porque o build do macOS deixou de gerar o zip,
-  # e o latest-mac.yml só sai com ele (ArchiveTarget: isWriteUpdateInfo && zip).
-  # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
-  # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
-  # Três desfechos DIFERENTES, e tratá-los igual era o furo: `expected=""`
-  # colapsava tudo em "não tem sidecar", caindo no tier 1 e, como o
-  # latest-mac.yml não é mais publicado (ver acima), terminando em
-  # "pulei a verificação" + instala.
+  # Tier 0: the <file>.sha512 sidecar published by release.sh. It's the
+  # preferred path and the SAME one in both installers: it doesn't depend on
+  # the electron-builder format, nor the file name inside the yml, nor which
+  # target was built. It matters here because the macOS build stopped
+  # generating the zip, and latest-mac.yml only ships with it
+  # (ArchiveTarget: isWriteUpdateInfo && zip).
+  # URL WITHOUT query string: the `base` right below already anticipates one,
+  # and "…AppImage?token=x.sha512" would 404 — silently skipping tier 0.
+  # Three DIFFERENT outcomes, and treating them alike was the hole:
+  # `expected=""` collapsed everything into "no sidecar", falling to tier 1
+  # and, since latest-mac.yml is no longer published (see above), ending in
+  # "pulei a verificação" + install.
   #
-  #   404            release antiga, anterior ao sidecar  -> fallback (tier 1)
-  #   falha de rede  não dá para saber                    -> ABORTA
-  #   200 malformado alguém no meio do caminho            -> ABORTA
+  #   404            old release, predating the sidecar  -> fallback (tier 1)
+  #   network fail   can't tell                          -> ABORTS
+  #   200 malformed  someone in the middle               -> ABORTS
   #
-  # O 200 malformado é o mais perigoso: um proxy, portal cativo ou borda de CDN
-  # devolvendo corpo próprio com status 200 desligaria o controle inteiro se
-  # virasse "sem sidecar". Um artefato que chega junto com um sidecar ilegível
-  # não é uma release antiga — é um sinal de que a origem não é confiável.
+  # A malformed 200 is the most dangerous one: a proxy, captive portal or CDN
+  # edge returning its own body with status 200 would turn the whole check off
+  # if it became "no sidecar". An artifact that arrives with an unreadable
+  # sidecar is not an old release — it's a sign the origin can't be trusted.
   local sc_body sc_code
   sc_body="$(mktemp)"
   sc_code="$(curl -sSL --connect-timeout 15 --max-time 30 \
@@ -81,7 +83,7 @@ verify_checksum() {
   if [ "$sc_code" = "200" ]; then
     expected="$(tr -d '\r\n' < "$sc_body")"
     rm -f "$sc_body"
-    # 88 chars base64 terminando em '==' é o tamanho fixo de um sha512.
+    # 88 base64 chars ending in '==' is the fixed size of a sha512.
     if [[ ! "$expected" =~ ^[A-Za-z0-9+/]{86}==$ ]]; then
       die "sidecar .sha512 chegou com conteúdo inválido (HTTP 200, ${#expected} bytes).
    Isso não é uma release sem checksum — é um corpo adulterado ou interceptado.
@@ -97,25 +99,25 @@ verify_checksum() {
    Tente de novo em instantes; se persistir, baixe o .dmg manualmente pelo GitHub Releases."
   fi
 
-  # Daqui para baixo: HTTP 404 confirmado. Release anterior ao sidecar, e a
-  # política de fallback vale — é o que permite atualizar a partir de uma
-  # release antiga.
+  # From here down: HTTP 404 confirmed. A release predating the sidecar, and
+  # the fallback policy applies — that's what allows upgrading from an old
+  # release.
 
   yml_url="${asset_url%/*}/latest-mac.yml"
   yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
     || { warn "sem sidecar .sha512 nem latest-mac.yml — pulei a verificação de integridade"; return 0; }
-  # Tenta: nome decodificado, depois nome com espaços→hífens, depois qualquer .dmg no yml.
-  # `|| :` em cada tentativa: sob `set -euo pipefail` um grep sem match derrubaria o
-  # script ANTES de atingir o fallback — o best-effort prometido pela função não
-  # poderia nunca disparar (PR-46 review #2). A falha vira expected vazio → cai p/ o
-  # próximo tier ou p/ o aviso "sha512 não encontrado".
+  # Tries: decoded name, then spaces→hyphens name, then any .dmg in the yml.
+  # `|| :` on each attempt: under `set -euo pipefail` a grep with no match would
+  # kill the script BEFORE reaching the fallback — the best-effort the function
+  # promises could never trigger (PR-46 review #2). The failure becomes an empty
+  # expected → falls to the next tier or to the "sha512 não encontrado" warning.
   local base_hyphens; base_hyphens="$(printf '%s' "$base_decoded" | tr ' ' '-')"
   expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_hyphens" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   if [ -z "$expected" ]; then
     expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base_decoded" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   fi
   if [ -z "$expected" ]; then
-    # Fallback: pega o sha512 associado a qualquer entrada .dmg no yml
+    # Fallback: takes the sha512 associated with any .dmg entry in the yml
     expected="$(printf '%s\n' "$yml" | grep -A3 'url:.*\.dmg' | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   fi
   [ -n "$expected" ] || { warn "sha512 não encontrado no yml p/ $base — pulei a verificação"; return 0; }
@@ -134,21 +136,22 @@ verify_checksum() {
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 [ "$OS" = "Darwin" ] || die "Este instalador é exclusivo do macOS. SO atual: $OS"
-need curl   # hdiutil/ditto/xattr/codesign/lipo/sed são nativos do macOS; jq é verificado abaixo
+need curl   # hdiutil/ditto/xattr/codesign/lipo/sed are native to macOS; jq is checked below
 
-# O hook de eventos que o app instala (traffic-hook.sh) REQUER jq para gravar o
-# state de cada sessão — e jq não vem de fábrica no macOS. Sem ele o hook roda
-# em todo tool call, falha na escrita e o overlay fica silenciosamente vazio.
-# Instalamos via Homebrew quando dá; sem brew, aviso forte com o comando manual.
+# The event hook the app installs (traffic-hook.sh) REQUIRES jq to persist
+# each session's state — and jq doesn't ship with macOS. Without it the hook
+# runs on every tool call, fails the write, and the overlay stays silently
+# empty. We install via Homebrew when possible; without brew, a loud warning
+# with the manual command.
 ensure_jq() {
-  # command -v aprova um jq quebrado (shim corrompido): sonda executabilidade.
+  # command -v approves a broken jq (corrupted shim): probe executability.
   if command -v jq >/dev/null 2>&1 && jq --version >/dev/null 2>&1; then
     ok "jq presente (o hook de eventos exige)"
     return 0
   fi
   if command -v brew >/dev/null 2>&1; then
     info "instalando jq via Homebrew (o hook de eventos exige)..."
-    # Re-checa o PATH pós-install: brew via wrapper pode linkar fora do PATH.
+    # Re-checks PATH post-install: brew via wrapper may link outside PATH.
     if brew install jq && command -v jq >/dev/null 2>&1; then
       ok "jq instalado"
     else
@@ -163,15 +166,15 @@ ensure_jq() {
 }
 ensure_jq
 
-# O build publicado é Apple Silicon (arm64). Em Intel, o .dmg arm64 não abre
-# (Rosetta não traduz arm64→x86). Avisamos forte; a verificação pós-install
-# mostra a arch real do binário.
+# The published build is Apple Silicon (arm64). On Intel, the arm64 .dmg won't
+# open (Rosetta doesn't translate arm64→x86). We warn loudly; the post-install
+# check shows the binary's real arch.
 if [ "$ARCH" != "arm64" ]; then
   warn "Seu Mac é $ARCH (Intel). O build publicado é Apple Silicon (arm64) e provavelmente NÃO abrirá."
   warn "Compile do fonte: git clone https://github.com/$REPO && cd ai-traffic-lights && npm install && npx electron-builder --mac"
 fi
 
-# --- consulta o release (token opcional, timeout, rate-limit claro; sem brew/jq) ---
+# --- query the release (optional token, timeout, clear rate-limit error; no brew/jq) ---
 info "consultando a versão mais recente..."
 GH_ERR="$(mktemp)"
 gh_auth=()
@@ -188,15 +191,15 @@ rm -f "$GH_ERR"
 download_url="$(printf '%s\n' "$json" | grep -oE '"browser_download_url":[[:space:]]*"[^"]+\.dmg"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')" || true
 version="$(printf '%s\n' "$json" | grep -oE '"tag_name":[[:space:]]*"v?[^"]+"' | head -1 | sed -E 's/.*"v?([^"]+)"$/\1/')" || true
 
-# Detecta o modo dev ANTES de decidir o que fazer sem .dmg: dentro do repo a
-# ausência do build é tolerável (o alias cai para 'npx electron .'); via
-# curl|bash não é — sem app instalado o alias aponta para o vazio.
+# Detects dev mode BEFORE deciding what to do without a .dmg: inside the repo
+# a missing build is tolerable (the alias falls back to 'npx electron .');
+# via curl|bash it isn't — with no app installed the alias points at nothing.
 LOCAL_REPO=""
 if [ -f "package.json" ] && grep -q '"name": "ai-traffic-lights"' package.json 2>/dev/null; then
   LOCAL_REPO="$(pwd)"
 fi
 
-# --- diretório temporário com limpeza garantida (detach do dmg + rm) ---
+# --- temp directory with guaranteed cleanup (dmg detach + rm) ---
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/atl-install.XXXXXX")"
 MOUNT_POINT="$TMP_DIR/mount"
 cleanup() {
@@ -218,7 +221,7 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   mkdir -p "$MOUNT_POINT"
   hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_POINT" "$DMG_PATH" >/dev/null
 
-  # ditto preserva symlinks de frameworks, flags e metadados do bundle (cp -R não).
+  # ditto preserves framework symlinks, flags and bundle metadata (cp -R doesn't).
   if ditto "$MOUNT_POINT/$APP_NAME" "$DEST.tmp" 2>/dev/null; then
     rm -rf "$DEST"; mv "$DEST.tmp" "$DEST"
   else
@@ -232,9 +235,9 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
   ok "app copiado para $DEST"
   APP_INSTALLED=1
 
-  # --- destrava o Gatekeeper: remove quarantine + re-assina ad-hoc LOCALMENTE ---
-  # Sem isto, um app não-notarizado baixado via curl é bloqueado com
-  # "app está danificado / não pôde ser aberto". O usuário já consentiu ao rodar.
+  # --- unlocks Gatekeeper: removes quarantine + re-signs ad-hoc LOCALLY ---
+  # Without this, a non-notarized app downloaded via curl is blocked with
+  # "app está danificado / não pôde ser aberto". The user already consented by running it.
   xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
   if codesign --force --deep --sign - "$DEST" 2>/dev/null; then
     ok "quarantine removida + assinatura ad-hoc aplicada"
@@ -243,7 +246,7 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
     warn "  xattr -dr com.apple.quarantine \"$DEST\" && codesign --force --deep --sign - \"$DEST\""
   fi
 
-  # --- verificação pós-install: arch real do binário (não abre a GUI) ---
+  # --- post-install check: the binary's real arch (doesn't open the GUI) ---
   BIN="$DEST/Contents/MacOS/$APP_TITLE"
   if [ -f "$BIN" ]; then
     archs="$(lipo -archs "$BIN" 2>/dev/null || file -b "$BIN" 2>/dev/null || echo '?')"
@@ -254,15 +257,16 @@ if [ -n "$download_url" ] && [ "$download_url" != "null" ]; then
     esac
   fi
 elif [ -n "$LOCAL_REPO" ]; then
-  # Dentro do repo há plano B: o alias cai para 'npx electron .', que roda sem
-  # o .app. Seguimos para instalar deps e escrever os aliases.
+  # Inside the repo there's a plan B: the alias falls back to 'npx electron .',
+  # which runs without the .app. We go on to install deps and write the aliases.
   warn "nenhum .dmg no release ${version:+v$version }do GitHub — seguindo em modo desenvolvimento."
   warn "Para gerar o .app: npm run dist:mac (o bundle sai em dist/)."
 else
-  # Via curl|bash NÃO há plano B: sem .dmg nada foi instalado. Falhar aqui é o
-  # que impede o script de gravar aliases órfãos e imprimir "✓ Concluído!" —
-  # o usuário seguia as dicas de xattr/codesign e batia em "No such file".
-  # Paridade com o install.sh do Linux, que já morre sem o asset .AppImage.
+  # Via curl|bash there is NO plan B: without a .dmg nothing was installed.
+  # Failing here is what stops the script from writing orphan aliases and
+  # printing "✓ Concluído!" — the user would follow the xattr/codesign tips
+  # and hit "No such file".
+  # Parity with the Linux install.sh, which already dies without the .AppImage asset.
   printf '\n' >&2
   warn "o release ${version:+v$version }de $REPO não publica .dmg para macOS."
   warn "NADA foi instalado. Para rodar no seu Mac, compile do fonte:"
@@ -273,7 +277,7 @@ else
   die "instalação abortada — sem build macOS publicado."
 fi
 
-# --- modo dev: rodando dentro do repo → instala deps Node ---
+# --- dev mode: running inside the repo → installs Node deps ---
 if [ -n "$LOCAL_REPO" ]; then
   need node; need npm
   info "modo desenvolvimento — instalando dependências Node..."
@@ -281,7 +285,7 @@ if [ -n "$LOCAL_REPO" ]; then
   ok "dependências Node instaladas"
 fi
 
-# --- aliases idempotentes (bloco marcado; sem as flags x11 do Linux) ---
+# --- idempotent aliases (marked block; without the Linux x11 flags) ---
 if [ -n "$LOCAL_REPO" ]; then
   ALIAS_CMD="[ -d '/Applications/$APP_NAME' ] && open -a '$APP_TITLE' || (cd '$LOCAL_REPO' && npx electron .)"
 else
@@ -290,8 +294,8 @@ fi
 setup_profile_aliases() {
   local p="$1"
   touch "$p" 2>/dev/null || return 0
-  sed -i '' '/# >>> atl >>>/,/# <<< atl <<</d' "$p" 2>/dev/null || true    # bloco atual
-  sed -i '' '/alias atl=/d;/alias ai-traffic-lights=/d' "$p" 2>/dev/null || true  # formato legado
+  sed -i '' '/# >>> atl >>>/,/# <<< atl <<</d' "$p" 2>/dev/null || true    # current block
+  sed -i '' '/alias atl=/d;/alias ai-traffic-lights=/d' "$p" 2>/dev/null || true  # legacy format
   {
     echo '# >>> atl >>>'
     echo "alias atl=\"$ALIAS_CMD\""
@@ -303,8 +307,8 @@ setup_profile_aliases() {
 setup_profile_aliases "$HOME/.zshrc"
 [ -f "$HOME/.bash_profile" ] && setup_profile_aliases "$HOME/.bash_profile"
 
-# As dicas de Gatekeeper só fazem sentido com o .app no disco: imprimi-las sem
-# instalação levava o usuário a rodar xattr/codesign num path inexistente.
+# The Gatekeeper tips only make sense with the .app on disk: printing them
+# without an installation led the user to run xattr/codesign on a missing path.
 GATEKEEPER_TIP=""
 [ "$APP_INSTALLED" = 1 ] && GATEKEEPER_TIP="
   Se o macOS disser que o app \"não pôde ser aberto\" ou está \"danificado\":

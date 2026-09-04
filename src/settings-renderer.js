@@ -1,9 +1,9 @@
-// settings-renderer.js — UI da janela de Preferências.
-// Reusa o preload (window.trafficLight) do overlay. As mudanças aplicam AO VIVO:
-// cada controle chama saveSettings() na hora → o main persiste e reemite
-// 'settings-changed', e o overlay reflete imediatamente. Não há Salvar/Cancelar,
-// só Fechar (o × do header também fecha). Captura o atalho do teclado e monta
-// um accelerator do Electron.
+// settings-renderer.js — UI for the Preferences window.
+// Reuses the overlay's preload (window.trafficLight). Changes apply LIVE:
+// each control calls saveSettings() immediately → main persists and re-emits
+// 'settings-changed', and the overlay reflects it instantly. There is no
+// Save/Cancel, only Close (the header × also closes). Captures the keyboard
+// shortcut and builds an Electron accelerator.
 
 const $idle = document.getElementById('idle');
 const $lang = document.getElementById('lang');
@@ -38,33 +38,33 @@ const $syncShareTr = document.getElementById('syncShareTr');
 const $syncAttach = document.getElementById('syncAttach');
 const $syncPeers = document.getElementById('syncPeers');
 
-let captured = null;        // accelerator capturado (string) ou null
+let captured = null;        // captured accelerator (string) or null
 let capturing = false;
-// Quick Launcher: fora do macOS o agente sempre abre na janela Terminal embutida
-// do ATL (spawn via node-pty + wrap tmux) — o seletor de terminal externo não
-// tem efeito nenhum no Linux. Esconder evita uma preferência que não faz nada.
+// Quick Launcher: outside macOS the agent always opens in ATL's built-in
+// Terminal window (spawn via node-pty + tmux wrap) — the external terminal
+// selector has no effect on Linux. Hiding it avoids a preference that does nothing.
 if (!/^Mac/.test(navigator.platform || '')) {
   const sec = $terminal && $terminal.closest('.section');
   if (sec) sec.hidden = true;
 }
-let ready = false;          // trava o push durante a carga inicial (getSettings)
-let T = makeT('en');        // i18n — troca pro idioma do sistema via get-lang
-let soundFile = '';         // caminho do arquivo de som custom (setado no load / ao escolher)
-// Web Audio próprio das Preferências, só para o botão "Testar som".
+let ready = false;          // blocks push during initial load (getSettings)
+let T = makeT('en');        // i18n — switches to the system language via get-lang
+let soundFile = '';         // custom sound file path (set on load / when chosen)
+// Preferences' own Web Audio, just for the "Test sound" button.
 let prefsAudioCtx = null, prefsCustomBuffer = null, prefsCustomFor = null;
 
-// Textos estáticos do HTML (labels, botões, hints, abas) + título da janela.
-// document.title manda no título da janela (sobrepõe a option do main).
+// Static texts from the HTML (labels, buttons, hints, tabs) + window title.
+// document.title controls the window title (overrides main's option).
 function applyI18n() {
   for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = T(el.dataset.i18n);
   document.title = T('prefs_title');
-  if (typeof relabelAllSelects === 'function') relabelAllSelects(); // dropdowns custom seguem o idioma
+  if (typeof relabelAllSelects === 'function') relabelAllSelects(); // custom dropdowns follow the language
 }
 
 const KEYNAME = { ' ': 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' };
 const MODNAME = { ctrlKey: 'Control', altKey: 'Alt', shiftKey: 'Shift', metaKey: 'Super' };
 
-// keydown → accelerator "Mod+...+Key". Retorna null se ainda só modifiers.
+// keydown → "Mod+...+Key" accelerator. Returns null if only modifiers so far.
 function accelFromEvent(e) {
   const mods = [];
   for (const [prop, name] of Object.entries(MODNAME)) if (e[prop]) mods.push(name);
@@ -73,7 +73,7 @@ function accelFromEvent(e) {
     if (/^[a-z0-9]$/i.test(e.key)) key = e.key.toUpperCase();
     else if (/^F([1-9]|1[0-2])$/i.test(e.key)) key = e.key.toUpperCase();
   }
-  if (!key) return null;            // modifier solto / tecla não suportada
+  if (!key) return null;            // lone modifier / unsupported key
   return [...mods, key].join('+');
 }
 
@@ -89,8 +89,8 @@ function setShortcut(acc) {
   capturing = false;
 }
 
-// Monta o cfg a partir dos campos atuais. O main mescla sobre o estado salvo,
-// então mandar só os campos das Preferências é seguro (não zera showUsage etc.).
+// Builds cfg from the current fields. Main merges over the saved state,
+// so sending only the Preferences fields is safe (does not zero showUsage etc.).
 function buildCfg() {
   const v = $idle.value;
   const cfg = (v === 'never')
@@ -98,16 +98,16 @@ function buildCfg() {
     : { escalateIdle: true, idleThresholdSec: parseInt(v, 10) };
   if (captured) cfg.shortcut = captured;
   cfg.lang = $lang.value;                    // 'auto' | 'en' | 'pt'
-  cfg.terminal = $terminal.value;            // Quick Launcher: terminal de spawn
+  cfg.terminal = $terminal.value;            // Quick Launcher: spawn terminal
   if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
   cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100;  // slider 60–100 → 0.6–1.0
-  cfg.markReadOnClick = $markRead.checked;   // clique marca como lido
-  cfg.notifyOnReset = $notifyReset.checked;  // avisar quando a cota resetar
-  cfg.revealOnRed = $revealRed.checked;      // trazer à frente ao ficar vermelho
-  cfg.revealOnReset = $revealReset.checked;  // trazer à frente ao resetar a cota
-  cfg.revealOnUpdate = $revealUpdate.checked; // trazer à frente ao ter update
-  cfg.updateChannel = $betaChannel.checked ? 'beta' : 'stable'; // canal de atualização
-  cfg.resetNotifyThresholdPct = parseInt($resetThreshold.value, 10) || 90; // limiar de "esgotado"
+  cfg.markReadOnClick = $markRead.checked;   // click marks as read
+  cfg.notifyOnReset = $notifyReset.checked;  // notify when the quota resets
+  cfg.revealOnRed = $revealRed.checked;      // bring to front when it turns red
+  cfg.revealOnReset = $revealReset.checked;  // bring to front when the quota resets
+  cfg.revealOnUpdate = $revealUpdate.checked; // bring to front on update
+  cfg.updateChannel = $betaChannel.checked ? 'beta' : 'stable'; // update channel
+  cfg.resetNotifyThresholdPct = parseInt($resetThreshold.value, 10) || 90; // "exhausted" threshold
   cfg.soundEnabled = $soundEnabled.checked;
   cfg.soundVolume = (parseInt($soundVolume.value, 10) || 0) / 100;  // slider 0–100 → 0–1
   cfg.soundType = $soundType.value;
@@ -115,14 +115,14 @@ function buildCfg() {
   return cfg;
 }
 
-// Aplica AO VIVO: grava + reemite settings-changed (o overlay reflete na hora).
+// Applies LIVE: saves + re-emits settings-changed (the overlay reflects it immediately).
 function pushLive() {
-  if (!ready) return;                        // ignora enquanto os campos são populados no load
+  if (!ready) return;                        // ignore while fields are being populated on load
   window.trafficLight.saveSettings(buildCfg());
 }
 
-// Sync (P2P): grava SÓ o sub-objeto sync (via setSync — validado e applySync'd
-// no main). Parser do textarea: 1 peer/linha, "host" ou "nome host".
+// Sync (P2P): saves ONLY the sync sub-object (via setSync — validated and
+// applySync'd in main). Textarea parser: 1 peer/line, "host" or "name host".
 function buildSyncCfg() {
   const peers = [];
   for (const raw of ($syncPeers.value || '').split('\n')) {
@@ -144,14 +144,14 @@ function buildSyncCfg() {
   };
 }
 function pushSync() { if (ready) window.trafficLight.setSync(buildSyncCfg()); }
-// Sub-toggles do sync ficam desabilitados (e meio-apagados) enquanto o mestre
-// `enabled` estiver desligado — sinaliza visualmente que nada está ativo.
+// Sync sub-toggles stay disabled (and half-faded) while the master `enabled`
+// switch is off — visually signals that nothing is active.
 function syncFieldState() {
   const on = $syncEnabled.checked;
   for (const $e of [$syncShare, $syncShareTr, $syncAttach, $syncToken, $syncNode, $syncPort, $syncPeers]) $e.disabled = !on;
 }
 
-// ---- captura do atalho ----
+// ---- shortcut capture ----
 $sc.addEventListener('click', () => {
   capturing = true;
   $sc.classList.add('capturing');
@@ -160,12 +160,12 @@ $sc.addEventListener('click', () => {
 $sc.addEventListener('keydown', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  if (e.key === 'Escape') { setShortcut(captured); return; }   // sai sem mudar
+  if (e.key === 'Escape') { setShortcut(captured); return; }   // exits without changing
   const acc = accelFromEvent(e);
-  if (acc) { setShortcut(acc); pushLive(); }                   // novo atalho aplica na hora
+  if (acc) { setShortcut(acc); pushLive(); }                   // new shortcut applies immediately
 });
 
-// ---- cada controle aplica na hora ----
+// ---- each control applies immediately ----
 $idle.addEventListener('change', pushLive);
 $lang.addEventListener('change', pushLive);
 $markRead.addEventListener('change', pushLive);
@@ -174,11 +174,11 @@ $revealRed.addEventListener('change', pushLive);
 $revealReset.addEventListener('change', pushLive);
 $revealUpdate.addEventListener('change', pushLive);
 $betaChannel.addEventListener('change', pushLive);
-// slider do limiar: atualiza o rótulo a cada pixel (barato/local); salva só ao
-// soltar (change). Não afeta o overlay ao vivo, então dispensa o debounce do opacity.
+// threshold slider: updates the label at every pixel (cheap/local); saves only
+// on release (change). Does not affect the live overlay, so it skips the opacity debounce.
 $resetThreshold.addEventListener('input', () => { $resetThresholdVal.textContent = $resetThreshold.value + '%'; });
 $resetThreshold.addEventListener('change', pushLive);
-// ---- som do alerta ----
+// ---- alert sound ----
 $soundEnabled.addEventListener('change', pushLive);
 $soundType.addEventListener('change', () => { syncSoundFileField(); pushLive(); });
 $soundVolume.addEventListener('input', () => { $soundVolumeVal.textContent = $soundVolume.value + '%'; });
@@ -189,12 +189,12 @@ $soundPick.addEventListener('click', async () => {
   if (!p) return;
   soundFile = p;
   $soundFileName.textContent = p.split('/').pop();
-  prefsCustomBuffer = null; prefsCustomFor = null;   // força redecodificar no próximo teste
+  prefsCustomBuffer = null; prefsCustomFor = null;   // forces re-decode on the next test
   pushLive();
 });
-// Mostra o campo de arquivo só no modo 'custom' (hoisted — usado no load e acima).
+// Shows the file field only in 'custom' mode (hoisted — used on load and above).
 function syncSoundFileField() { $soundFileField.hidden = $soundType.value !== 'custom'; }
-// AudioContext próprio das Prefs (o overlay tem o seu). Preview do botão "Testar".
+// Prefs' own AudioContext (the overlay has its own). Preview for the "Test" button.
 function prefsCtx() {
   prefsAudioCtx = prefsAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
   if (prefsAudioCtx.state === 'suspended') prefsAudioCtx.resume();
@@ -216,17 +216,18 @@ async function testSound() {
       if (prefsCustomBuffer) { playBuffer(ctx, prefsCustomBuffer, vol); return; }
     }
     playPreset(ctx, type, vol);
-  } catch { /* preview nunca quebra a UI */ }
+  } catch { /* preview must never break the UI */ }
 }
-// Reflete a transparência na PRÓPRIA janela de Preferências: o painel .prefs usa
-// var(--bg) → --bg-alpha (igual ao overlay). Só setar o CSS var local (barato).
+// Reflects the transparency in the Preferences window ITSELF: the .prefs panel
+// uses var(--bg) → --bg-alpha (same as the overlay). Just set the local CSS var (cheap).
 function applyPrefsOpacity() {
   const op = (parseInt($opacity.value, 10) || 97) / 100;
   document.documentElement.style.setProperty('--bg-alpha', String(Math.max(0.6, Math.min(1, op))));
 }
-// slider: atualiza rótulo + transparência das Prefs a cada pixel, mas DEBOUNCE o
-// save no overlay — senão vira tempestade de resize/render/write no overlay
-// durante o arraste. O 'change' (soltar) garante o valor final gravado na hora.
+// slider: updates the Prefs label + transparency at every pixel, but DEBOUNCES
+// the save to the overlay — otherwise it becomes a storm of resize/render/write
+// on the overlay during the drag. 'change' (release) ensures the final value is
+// saved immediately.
 let opTimer = null;
 $opacity.addEventListener('input', () => {
   $opacityVal.textContent = $opacity.value + '%';
@@ -237,7 +238,7 @@ $opacity.addEventListener('input', () => {
 $opacity.addEventListener('change', () => { clearTimeout(opTimer); pushLive(); });
 $terminal.addEventListener('change', () => { syncTerminalCmdField(); pushLive(); });
 $terminalCmd.addEventListener('change', pushLive);
-// ---- sync multi-máquina (cada controle aplica na hora) ----
+// ---- multi-machine sync (each control applies immediately) ----
 $syncEnabled.addEventListener('change', () => { syncFieldState(); pushSync(); });
 $syncShare.addEventListener('change', pushSync);
 $syncShareTr.addEventListener('change', pushSync);
@@ -247,7 +248,7 @@ $syncNode.addEventListener('change', pushSync);
 $syncPort.addEventListener('change', pushSync);
 $syncPeers.addEventListener('change', pushSync);
 
-// ---- abas: troca de painel (client-side) ----
+// ---- tabs: panel switching (client-side) ----
 const $tabs = document.querySelectorAll('.tab');
 const $panels = document.querySelectorAll('.tab-panel');
 function selectTab(name) {
@@ -256,24 +257,24 @@ function selectTab(name) {
 }
 for (const t of $tabs) t.addEventListener('click', () => selectTab(t.dataset.tab));
 
-// ---- fechar (× do header e botão do rodapé; nada fica pendente) ----
+// ---- close (header × and footer button; nothing stays pending) ----
 document.getElementById('closeBtn').addEventListener('click', () => window.close());
 document.getElementById('closeFooter').addEventListener('click', () => window.close());
 
-// ---- espelho do tray: autostart + hooks (mostrar/ocultar e sair ficam só no tray) ----
+// ---- tray mirror: autostart + hooks (show/hide and quit stay tray-only) ----
 const $autostart = document.getElementById('autostart');
 $autostart.addEventListener('change', () => window.trafficLight.setAutostart($autostart.checked));
 document.getElementById('installHooks').addEventListener('click', () => window.trafficLight.installHooks());
 document.getElementById('removeHooks').addEventListener('click', () => window.trafficLight.removeHooks());
 
-// Mostra o campo de comando custom só no modo 'custom' (hoisted — usado acima).
+// Shows the custom command field only in 'custom' mode (hoisted — used above).
 function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
 
-// Troca os <select> nativos por dropdowns custom ANTES do load (evita o flash do
-// select nativo enquanto o getSettings resolve); o load re-sincroniza os rótulos.
+// Replaces native <select>s with custom dropdowns BEFORE load (avoids the
+// native select flash while getSettings resolves); load re-syncs the labels.
 enhanceAllSelects();
 
-// ---- carga inicial ----
+// ---- initial load ----
 window.trafficLight.getVersion().then((v) => { if (v) document.getElementById('ver').textContent = v; });
 window.trafficLight.getRepoUrl().then((url) => {
   const $repo = document.getElementById('repoLink');
@@ -299,16 +300,16 @@ window.trafficLight.getSettings().then((c) => {
     const opct = Math.round((typeof c.opacity === 'number' ? c.opacity : 0.97) * 100);
     $opacity.value = String(opct);
     $opacityVal.textContent = opct + '%';
-    $markRead.checked = c.markReadOnClick !== false; // default ligado
-    $notifyReset.checked = c.notifyOnReset !== false; // default ligado
-    $revealRed.checked = c.revealOnRed === true;      // default desligado
-    $revealReset.checked = c.revealOnReset === true;  // default desligado
-    $revealUpdate.checked = c.revealOnUpdate === true; // default desligado
+    $markRead.checked = c.markReadOnClick !== false; // default on
+    $notifyReset.checked = c.notifyOnReset !== false; // default on
+    $revealRed.checked = c.revealOnRed === true;      // default off
+    $revealReset.checked = c.revealOnReset === true;  // default off
+    $revealUpdate.checked = c.revealOnUpdate === true; // default off
     $betaChannel.checked = c.updateChannel === 'beta';   // default 'stable'
     const thr = typeof c.resetNotifyThresholdPct === 'number' ? c.resetNotifyThresholdPct : 90;
     $resetThreshold.value = String(thr);
     $resetThresholdVal.textContent = thr + '%';
-    $soundEnabled.checked = c.soundEnabled !== false; // default ligado
+    $soundEnabled.checked = c.soundEnabled !== false; // default on
     $soundType.value = c.soundType || 'beep';
     const sv = Math.round((typeof c.soundVolume === 'number' ? c.soundVolume : 0.18) * 100);
     $soundVolume.value = String(sv);
@@ -316,14 +317,14 @@ window.trafficLight.getSettings().then((c) => {
     soundFile = c.soundFile || '';
     $soundFileName.textContent = soundFile ? soundFile.split('/').pop() : '—';
   }
-  applyPrefsOpacity();                               // aplica a transparência salva na janela de Prefs
+  applyPrefsOpacity();                               // applies the saved transparency to the Prefs window
   syncTerminalCmdField();
   syncSoundFileField();
-  refreshAllSelects();                               // re-sincroniza os dropdowns custom com os values carregados
-  ready = true;                                      // libera o live-apply só após popular tudo
+  refreshAllSelects();                               // re-syncs the custom dropdowns with the loaded values
+  ready = true;                                      // enables live-apply only after everything is populated
 });
-// Sync é feature beta: a aba Sincronização só existe em build beta (versão
-// -beta.N). Na estável/fonte, removemos aba + painel do DOM.
+// Sync is a beta feature: the Synchronization tab only exists in beta builds
+// (-beta.N version). In stable/source, we remove the tab + panel from the DOM.
 window.trafficLight.syncAvailable().then((ok) => {
   if (ok) return;
   const tab = document.querySelector('.tab[data-tab="sync"]');
@@ -332,8 +333,8 @@ window.trafficLight.syncAvailable().then((ok) => {
   if (panel) panel.remove();
 });
 window.trafficLight.getAutostart().then((on) => { $autostart.checked = !!on; });
-// Sync (P2P): popula os campos do sub-objeto sync. Population programática não
-// dispara 'change', então não empurra nada — e pushSync() ainda assim respeita `ready`.
+// Sync (P2P): populates the sync sub-object fields. Programmatic population
+// does not fire 'change', so nothing is pushed — and pushSync() still respects `ready`.
 window.trafficLight.getSync().then((s) => {
   s = s || {};
   $syncEnabled.checked = s.enabled === true;
@@ -344,5 +345,5 @@ window.trafficLight.getSync().then((s) => {
   $syncShareTr.checked = s.shareTranscripts === true;
   $syncAttach.checked = s.allowAttach === true;
   $syncPeers.value = (s.peers || []).map((p) => (p.name && p.name !== p.host ? `${p.name} ${p.host}` : p.host)).join('\n');
-  syncFieldState();   // reflete o estado enabled → sub-toggles on/off
+  syncFieldState();   // reflects the enabled state → sub-toggles on/off
 });

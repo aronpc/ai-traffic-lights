@@ -23,7 +23,7 @@ test('translate: interpola placeholders', () => {
 });
 
 test('translate: chave ausente cai no en; ausente no en devolve a chave', () => {
-  assert.equal(translate('xx', 'btn_close'), 'Close');      // idioma desconhecido → en
+  assert.equal(translate('xx', 'btn_close'), 'Close');      // unknown language → en
   assert.equal(translate('pt', 'nao_existe'), 'nao_existe'); // fail-soft
 });
 
@@ -36,10 +36,10 @@ test('paridade de chaves: en e pt têm exatamente o mesmo conjunto', () => {
   assert.deepEqual(Object.keys(STRINGS.en).sort(), Object.keys(STRINGS.pt).sort());
 });
 
-// Integração HTML ↔ i18n: todo data-i18n (e data-i18n-tip) usado pelas janelas
-// i18n-adas precisa existir em STRINGS — sem isto, um HTML que referencia chave
-// inexistente mostra o nome da chave cru na UI e ninguém percebe em CI.
-// (term.html — terminal embutido — não usa o sistema de i18n.)
+// HTML ↔ i18n integration: every data-i18n (and data-i18n-tip) used by the
+// i18n-ized windows must exist in STRINGS — without this, an HTML referencing
+// a missing key shows the raw key name in the UI and nobody notices in CI.
+// (term.html — embedded terminal — doesn't use the i18n system.)
 const fs = require('node:fs');
 const path = require('node:path');
 for (const page of ['settings.html', 'index.html']) {

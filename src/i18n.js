@@ -1,12 +1,13 @@
-// i18n.js — strings da UI em inglês e português (lógica PURA, sem I/O).
-// O idioma segue a localização do sistema: main.js resolve app.getLocale()
-// via pickLang() e distribui aos renderers pelo IPC get-lang. Qualquer locale
-// pt* (pt-BR, pt-PT, pt) vira 'pt'; todo o resto cai em 'en' — o app é
-// distribuído para um público majoritariamente EN, então inglês é o default.
+// i18n.js — UI strings in English and Portuguese (PURE logic, no I/O).
+// The language follows the system locale: main.js resolves app.getLocale()
+// via pickLang() and distributes it to renderers over the get-lang IPC. Any
+// pt* locale (pt-BR, pt-PT, pt) becomes 'pt'; everything else falls back to
+// 'en' — the app ships to a mostly-EN audience, so English is the default.
 //
-// Chave ausente num idioma cai no EN; ausente no EN devolve a própria chave
-// (fail-soft: a UI nunca quebra por tradução faltando, no máximo fica feia).
-// Placeholders: t('needs_you', {agent: 'Claude'}) substitui {agent}.
+// A key missing in a language falls back to EN; missing in EN returns the
+// key itself (fail-soft: the UI never breaks over a missing translation, at
+// worst it looks ugly).
+// Placeholders: t('needs_you', {agent: 'Claude'}) substitutes {agent}.
 
 const STRINGS = {
   en: {
@@ -18,6 +19,38 @@ const STRINGS = {
     snooze_on: 'Silence alerts 1h',
     snooze_off: 'Restore alerts',
     tooltip_settings: 'preferences',
+    tooltip_group_hosts: 'group by machine',
+    tooltip_search: 'search sessions (/)',
+    search_placeholder: 'filter…',
+    search_empty: 'No sessions match the search.',
+    ctx_copy_key: 'Copy session ID',
+    ctx_copy_cwd: 'Copy folder (cwd)',
+    ctx_copy_attach: 'Copy attach command',
+    ctx_rename: 'Rename…',
+    ctx_mark_read: 'Mark as read',
+    ctx_details: 'Session details',
+    dt_session: 'Session',
+    dt_context: 'Context',
+    dt_activity: 'Activity',
+    dt_timeline: 'Timeline',
+    dt_agent: 'Agent',
+    dt_sid: 'Session ID',
+    dt_alias: 'Nickname',
+    dt_model: 'Model',
+    dt_account: 'Account',
+    dt_pid: 'PID',
+    dt_cwd: 'Folder',
+    dt_term: 'Terminal',
+    dt_tmux: 'tmux session',
+    dt_origin: 'Origin',
+    dt_window: 'Window ID',
+    dt_last_event: 'Last event',
+    dt_last_tool: 'Last tool',
+    dt_notification: 'Notification',
+    dt_read_until: 'Read until',
+    dt_copy: 'copy',
+    dt_no_events: 'No events recorded.',
+    dt_gone: 'Session ended — this window can be closed.',
     tooltip_toggle_footer: 'toggle usage / launcher',
     tooltip_force_usage: 'refresh usage now',
     tooltip_force_cooldown: 'rate-limited — wait {min} min',
@@ -37,13 +70,14 @@ const STRINGS = {
     doc_sessions: 'sessions',
     // tray
     tray_show_hide: 'Show/Hide',
+    launch_section: 'Quick launch',
     tray_autostart: 'Start with the system',
     tray_install_hooks: 'Install/update hooks',
     tray_remove_hooks: 'Remove hooks',
     tray_preferences: 'Preferences…',
     tray_quit: 'Quit',
     tray_check_updates: 'Check for updates',
-    // notificações do instalador de hooks
+    // hook installer notifications
     ntf_installed: 'installed ({a}+{u})',
     ntf_ok: 'ok',
     ntf_plugin_ok: 'plugin ok',
@@ -60,7 +94,7 @@ const STRINGS = {
     ntf_no_terminal: 'No supported terminal found (install tilix / gnome-terminal / ghostty)',
     ntf_attach_no_tmux: 'No tmux session to attach (agent not running in tmux)',
     ntf_attach_no_host: 'Unknown host for peer "{origin}"',
-    // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    // notification: the click had no effect — the reason comes from focus.focusFailure
     ntf_update_checksum_indisponivel: "Couldn't fetch the update's checksum — will retry later.",
     ntf_update_checksum_malformado: "The update's checksum is malformed — download discarded.",
     ntf_update_checksum_divergente: "The update's checksum does NOT match — download discarded.",
@@ -69,12 +103,12 @@ const STRINGS = {
     ntf_focus_detached: 'This session lives in a tmux with no client attached — there is no window to focus. Attach it first (tmux attach).',
     ntf_focus_wayland: "Can't focus this terminal on Wayland — it isn't reachable from outside. Use Tilix or Warp, or run under X11/XWayland.",
     ntf_focus_nowindow: "Couldn't find this session's window. It may have been closed, or this terminal isn't reachable.",
-    // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
+    // notification: token quota reset (a limit that was exhausted freed up)
     ntf_tokens_reset: '🟢 {name}: quota reset — you can go again',
     launch_label: 'Terminal to launch agents',
     launch_auto: 'Automatic (first available)',
     launch_custom: 'Custom command',
-    // janela de Preferências
+    // Preferences window
     prefs_title: 'Preferences — AI Traffic Lights',
     prefs_h1: 'Preferences',
     sec_behavior: 'Behavior',
@@ -120,7 +154,7 @@ const STRINGS = {
     notify_reset_hint: 'When an exhausted limit frees up again, show a notification with sound.',
     reset_threshold_label: 'Count as exhausted from',
     reset_threshold_hint: 'Only notify if usage had passed this % before resetting.',
-    // som do alerta
+    // alert sound
     sec_alert_sound: 'Alert sound',
     sound_enabled_label: 'Play a sound when something turns red',
     sec_reveal: 'Bring to front when hidden',
@@ -169,6 +203,38 @@ const STRINGS = {
     snooze_on: 'Silenciar alertas 1h',
     snooze_off: 'Restaurar alertas',
     tooltip_settings: 'preferências',
+    tooltip_group_hosts: 'agrupar por máquina',
+    tooltip_search: 'buscar sessões (/)',
+    search_placeholder: 'filtrar…',
+    search_empty: 'Nenhuma sessão corresponde à busca.',
+    ctx_copy_key: 'Copiar ID da sessão',
+    ctx_copy_cwd: 'Copiar pasta (cwd)',
+    ctx_copy_attach: 'Copiar comando de attach',
+    ctx_rename: 'Renomear…',
+    ctx_mark_read: 'Marcar como lida',
+    ctx_details: 'Detalhes da sessão',
+    dt_session: 'Sessão',
+    dt_context: 'Contexto',
+    dt_activity: 'Atividade',
+    dt_timeline: 'Linha do tempo',
+    dt_agent: 'Agente',
+    dt_sid: 'Session ID',
+    dt_alias: 'Apelido',
+    dt_model: 'Modelo',
+    dt_account: 'Conta',
+    dt_pid: 'PID',
+    dt_cwd: 'Pasta',
+    dt_term: 'Terminal',
+    dt_tmux: 'sessão tmux',
+    dt_origin: 'Origem',
+    dt_window: 'Janela (X11)',
+    dt_last_event: 'Último evento',
+    dt_last_tool: 'Última ferramenta',
+    dt_notification: 'Notificação',
+    dt_read_until: 'Lida até',
+    dt_copy: 'copiar',
+    dt_no_events: 'Sem eventos registrados.',
+    dt_gone: 'Sessão encerrada — pode fechar esta janela.',
     tooltip_toggle_footer: 'alternar uso / launcher',
     tooltip_force_usage: 'atualizar uso agora',
     tooltip_force_cooldown: 'rate-limited — aguarde {min} min',
@@ -188,13 +254,14 @@ const STRINGS = {
     doc_sessions: 'sessões',
     // tray
     tray_show_hide: 'Mostrar/Ocultar',
+    launch_section: 'Início rápido',
     tray_autostart: 'Iniciar com o sistema',
     tray_install_hooks: 'Instalar/atualizar hooks',
     tray_remove_hooks: 'Remover hooks',
     tray_preferences: 'Preferências…',
     tray_quit: 'Sair',
     tray_check_updates: 'Verificar atualizações…',
-    // notificações do instalador de hooks
+    // hook installer notifications
     ntf_installed: 'instalado ({a}+{u})',
     ntf_ok: 'ok',
     ntf_plugin_ok: 'plugin ok',
@@ -211,7 +278,7 @@ const STRINGS = {
     ntf_no_terminal: 'Nenhum terminal suportado (instale tilix / gnome-terminal / ghostty)',
     ntf_attach_no_tmux: 'Sem sessão tmux para attach (agente não está no tmux)',
     ntf_attach_no_host: 'Host desconhecido para o peer "{origin}"',
-    // notificação: o clique não teve efeito — a razão vem de focus.focusFailure
+    // notification: the click had no effect — the reason comes from focus.focusFailure
     ntf_update_checksum_indisponivel: 'Não consegui buscar o checksum do update — tento de novo depois.',
     ntf_update_checksum_malformado: 'O checksum do update veio malformado — download descartado.',
     ntf_update_checksum_divergente: 'O checksum do update NÃO confere — download descartado.',
@@ -220,12 +287,12 @@ const STRINGS = {
     ntf_focus_detached: 'Esta sessão está num tmux sem cliente attachado — não existe janela para focar. Faça o attach primeiro (tmux attach).',
     ntf_focus_wayland: 'Não foi possível focar este terminal no Wayland — ele não é alcançável de fora. Use Tilix ou Warp, ou rode em X11/XWayland.',
     ntf_focus_nowindow: 'Não encontrei a janela desta sessão. Ela pode ter sido fechada, ou este terminal não é alcançável.',
-    // notificação: cota de tokens resetou (um limite que estava esgotado liberou)
+    // notification: token quota reset (a limit that was exhausted freed up)
     ntf_tokens_reset: '🟢 {name}: cota liberada — pode voltar a usar',
     launch_label: 'Terminal para abrir agentes',
     launch_auto: 'Automático (primeiro disponível)',
     launch_custom: 'Comando customizado',
-    // janela de Preferências
+    // Preferences window
     prefs_title: 'Preferências — AI Traffic Lights',
     prefs_h1: 'Preferências',
     sec_behavior: 'Comportamento',
@@ -271,7 +338,7 @@ const STRINGS = {
     notify_reset_hint: 'Quando um limite esgotado libera de novo, mostra uma notificação com som.',
     reset_threshold_label: 'Considerar esgotado a partir de',
     reset_threshold_hint: 'Só avisa se o uso tinha passado deste % antes de resetar.',
-    // som do alerta
+    // alert sound
     sec_alert_sound: 'Som do alerta',
     sound_enabled_label: 'Tocar som quando algo fica vermelho',
     sec_reveal: 'Trazer à frente quando oculto',
@@ -313,12 +380,12 @@ const STRINGS = {
   },
 };
 
-// Locale do sistema → idioma suportado. pt* → pt; resto → en.
+// System locale → supported language. pt* → pt; rest → en.
 function pickLang(locale) {
   return String(locale || '').toLowerCase().startsWith('pt') ? 'pt' : 'en';
 }
 
-// Tradução com fallback en → chave, e interpolação de {placeholders}.
+// Translation with en → key fallback, and {placeholder} interpolation.
 function translate(lang, key, vars) {
   const dict = STRINGS[lang] || STRINGS.en;
   let s = dict[key] != null ? dict[key] : (STRINGS.en[key] != null ? STRINGS.en[key] : key);
@@ -326,7 +393,18 @@ function translate(lang, key, vars) {
   return s;
 }
 
-// t parcial por idioma — os call sites ficam limpos: T('empty_state').
+// Partial t per language — call sites stay clean: T('empty_state').
 function makeT(lang) { return (key, vars) => translate(lang, key, vars); }
 
-if (typeof module !== 'undefined') module.exports = { STRINGS, pickLang, translate, makeT };
+// Event "time ago" (3s / 12min / 2h05). Used to live in renderer.js; moved
+// here when the details window (details.js) started needing it too —
+// i18n/format is the place shareable across pages.
+function ageText(nowSec, ts) {
+  if (!ts) return '';
+  const s = Math.max(0, nowSec - ts);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}min`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}`;
+}
+
+if (typeof module !== 'undefined') module.exports = { STRINGS, pickLang, translate, makeT, ageText };

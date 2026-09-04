@@ -1,5 +1,5 @@
-// Testes dos coletores de consumo/reset (src/usage.js).
-// Lógica PURA (parse) sobre fixtures + I/O com fetcher/home injetados — sem rede.
+// Tests for the usage/reset collectors (src/usage.js).
+// PURE logic (parse) over fixtures + I/O with injected fetcher/home — no network.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -9,12 +9,12 @@ const {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits,
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
-  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter,
+  collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
 
-// now fixo = 2026-07-07T12:00:00Z → testes determinísticos (mês é 0-indexed em JS: 6=Jul).
+// fixed now = 2026-07-07T12:00:00Z → deterministic tests (month is 0-indexed in JS: 6=Jul).
 const NOW = Date.UTC(2026, 6, 7, 12, 0, 0);
 
 // =========================== parseEnviron (/proc/<pid>/environ) ===========================
@@ -24,13 +24,13 @@ test('parseEnviron: extrai só as chaves pedidas de pares KEY=val\\0', () => {
   const env = parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
   assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.z.ai/api/anthropic');
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-abc');
-  assert.equal(env.PATH, undefined);       // não pedida → ignorada
+  assert.equal(env.PATH, undefined);       // not requested → ignored
 });
 
 test('parseEnviron: valor com "=" interno preservado; entradas malformadas ignoradas', () => {
   const raw = 'ANTHROPIC_AUTH_TOKEN=a=b=c\0=semkey\0soletra\0';
   const env = parseEnviron(raw, ['ANTHROPIC_AUTH_TOKEN']);
-  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'a=b=c'); // só o 1º "=" separa
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'a=b=c'); // only the 1st "=" separates
   assert.deepEqual(Object.keys(env), ['ANTHROPIC_AUTH_TOKEN']);
 });
 
@@ -51,7 +51,7 @@ test('parseClaudeConfig: extrai reset + plano + passes', () => {
   assert.equal(r.resetAt, '2026-07-08T07:00:00Z');
   assert.equal(r.plan, 'Claude Max 5×');
   assert.equal(r.passes, 3);
-  assert.equal(r.usedPct, null);            // % nunca vem do arquivo (honesto)
+  assert.equal(r.usedPct, null);            // % never comes from the file (honest)
   // 2026-07-08T07:00Z - 2026-07-07T12:00Z = 19h = 1140min
   assert.equal(r.resetInMin, 1140);
 });
@@ -76,9 +76,9 @@ test('parseClaudeConfig: organizationType claude_team → "Claude Team"', () => 
 });
 
 test('parseClaudeConfig: tier desconhecido (default_raven) mas org presente → "Claude" genérico (não some)', () => {
-  // Regressão do "créditos do Claude sumiram": conta virou team/tier opaco que
-  // não mapeamos → antes plan ficava null e o tile desaparecia. Agora: rótulo
-  // genérico enquanto houver QUALQUER campo de identidade da conta.
+  // Regression for "Claude credits vanished": the account became an opaque
+  // team/tier we don't map → before, plan stayed null and the tile disappeared.
+  // Now: a generic label as long as there is ANY account identity field.
   const cfg = { oauthAccount: { organizationType: 'unknown_kind', organizationRateLimitTier: 'default_raven', emailAddress: 'x@y.com' } };
   assert.equal(parseClaudeConfig(cfg, NOW).plan, 'Claude');
 });
@@ -89,7 +89,8 @@ test('parseClaudeConfig: sem oauthAccount → plan null (sem conta, some do over
 
 test('parseClaudeConfig: payload vazio/malformado → tudo null', () => {
   const r = parseClaudeConfig({}, NOW);
-  assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null });
+  assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
+    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null });
   assert.deepEqual(parseClaudeConfig(null, NOW).plan, null);
 });
 
@@ -129,16 +130,16 @@ test('parseGlmQuota: TOKENS_LIMIT diferencia 5h e 7d via campo unit', () => {
 });
 
 test('parseGlmQuota: schema real (data.limits + nextResetTime em ms + level)', () => {
-  // payload cru do /api/monitor/usage/quota/limit (z.ai), capturado em 2026-07-07.
+  // raw payload from /api/monitor/usage/quota/limit (z.ai), captured on 2026-07-07.
   const payload = {
     code: 200, msg: 'Operation successful', success: true,
     data: {
       level: 'pro',
       limits: [
         { type: 'TIME_LIMIT', usage: 1000, currentValue: 1001, remaining: 0, percentage: 100,
-          nextResetTime: Date.UTC(2026, 6, 9, 12, 0, 0),  // 2 dias depois de NOW
+          nextResetTime: Date.UTC(2026, 6, 9, 12, 0, 0),  // 2 days after NOW
           usageDetails: [{ modelCode: 'search-prime', usage: 856 }] },
-        { type: 'TOKENS_LIMIT', percentage: 71, nextResetTime: Date.UTC(2026, 6, 7, 17, 0, 0) }, // 5h depois
+        { type: 'TOKENS_LIMIT', percentage: 71, nextResetTime: Date.UTC(2026, 6, 7, 17, 0, 0) }, // 5h later
       ],
     },
   };
@@ -148,7 +149,7 @@ test('parseGlmQuota: schema real (data.limits + nextResetTime em ms + level)', (
   assert.equal(out[0].usedPct, 100);
   assert.equal(out[0].level, 'pro');
   assert.equal(out[0].resetAt, new Date(Date.UTC(2026, 6, 9, 12, 0, 0)).toISOString());
-  assert.equal(out[0].resetInMin, 2 * 24 * 60);   // 2 dias = 2880 min
+  assert.equal(out[0].resetInMin, 2 * 24 * 60);   // 2 days = 2880 min
   assert.equal(out[1].title, 'Tokens (5h)');
   assert.equal(out[1].usedPct, 71);
   assert.equal(out[1].resetInMin, 5 * 60);         // 5h = 300 min
@@ -175,7 +176,7 @@ test('parseGlmQuota: tipo desconhecido é ignorado', () => {
 
 test('parseAnthropicUsage: extrai janelas 5h e 7d com utilization + resets_at', () => {
   const payload = {
-    five_hour: { utilization: 23, resets_at: '2026-07-07T17:00:00Z' }, // 5h após NOW
+    five_hour: { utilization: 23, resets_at: '2026-07-07T17:00:00Z' }, // 5h after NOW
     seven_day: { utilization: 78, resets_at: '2026-07-09T12:00:00Z' },
     seven_day_opus: null,
   };
@@ -189,8 +190,8 @@ test('parseAnthropicUsage: extrai janelas 5h e 7d com utilization + resets_at', 
 });
 
 test('parseAnthropicUsage: extra_usage (overage) vira tile "Extra" com % e valor ($ minor units)', () => {
-  // payload REAL da conta Team (capturado 2026-07-10): used_credits/monthly_limit
-  // em centavos (decimal_places:2). 5042/5000 = $50.42/$50.00, 100%.
+  // REAL payload from a Team account (captured 2026-07-10): used_credits/monthly_limit
+  // in cents (decimal_places:2). 5042/5000 = $50.42/$50.00, 100%.
   const payload = {
     five_hour: { utilization: 7, resets_at: '2026-07-07T17:00:00Z' },
     extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 5042, utilization: 100, currency: 'USD', decimal_places: 2 },
@@ -224,7 +225,7 @@ test('parseAnthropicUsage: janela ausente/sem utilization é pulada; clampa >100
   assert.deepEqual(parseAnthropicUsage({}, NOW), []);
 });
 
-// =========================== parseRetryAfter (backoff do 429) ===========================
+// =========================== parseRetryAfter (429 backoff) ===========================
 
 test('parseRetryAfter: delta-seconds ("1007") → ms', () => {
   assert.equal(parseRetryAfter('1007', NOW), 1007 * 1000);
@@ -235,7 +236,7 @@ test('parseRetryAfter: HTTP-date → ms até a data (nunca negativo)', () => {
   const future = new Date(NOW + 5 * 60_000).toUTCString();
   assert.equal(parseRetryAfter(future, NOW), 5 * 60_000);
   const past = new Date(NOW - 60_000).toUTCString();
-  assert.equal(parseRetryAfter(past, NOW), 0);       // passado → 0, não negativo
+  assert.equal(parseRetryAfter(past, NOW), 0);       // past → 0, not negative
 });
 
 test('parseRetryAfter: ausente/ilegível → null', () => {
@@ -246,7 +247,7 @@ test('parseRetryAfter: ausente/ilegível → null', () => {
 
 // =========================== readClaudeUsage (I/O + OAuth) ===========================
 
-// Monta um home tmp com .claude.json (plano) e opcionalmente .credentials.json (OAuth).
+// Builds a tmp home with .claude.json (plan) and optionally .credentials.json (OAuth).
 function claudeHome({ plan = true, token = null } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
   if (plan) {
@@ -273,7 +274,7 @@ test('readClaudeUsage: OAuth ok → 2 linhas (5h + 7d) com % e reset reais', asy
   assert.equal(r[0].source, 'anthropic.oauth');
   assert.equal(r[1].id, 'claude-7d');
   assert.equal(r[1].usedPct, 78);
-  // header OAuth correto
+  // correct OAuth header
   assert.equal(f.calls[0].headers.Authorization, 'Bearer oauth-tok');
   assert.equal(f.calls[0].headers['anthropic-beta'], 'oauth-2025-04-20');
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -284,7 +285,7 @@ test('claudePlanFromCreds: tier Max conhecido vence; senão subscriptionType', (
   assert.equal(claudePlanFromCreds({ rateLimitTier: 'default_claude_max_5x' }), 'Claude Max 5×');
   assert.equal(claudePlanFromCreds({ subscriptionType: 'team', rateLimitTier: 'default_raven' }), 'Claude Team');
   assert.equal(claudePlanFromCreds({ subscriptionType: 'enterprise' }), 'Claude Enterprise');
-  assert.equal(claudePlanFromCreds({}), null);   // sem info → null (caller usa .claude.json)
+  assert.equal(claudePlanFromCreds({}), null);   // no info → null (caller uses .claude.json)
 });
 
 test('readClaudeUsage: extra_usage vira tile id=claude-extra (não colide com 7d)', async () => {
@@ -317,9 +318,10 @@ test('readClaudeUsage: sem token OAuth → fallback plano-só (1 linha, sem %)',
 });
 
 test('readClaudeUsage: plano-só NÃO mostra planLimitsEndDate como reset (é fim do ciclo do plano, não da janela)', async () => {
-  // planLimitsEndDate (ex.: Jul 13) é o fim do ciclo do PLANO, não o reset da
-  // janela de uso 5h/7d (que reseta várias vezes até lá). Pô-lo no tile enganava
-  // ("3d" logo após a janela resetar). Sem a API OAuth → honestamente sem reset.
+  // planLimitsEndDate (e.g. Jul 13) is the end of the PLAN's cycle, not the
+  // reset of the 5h/7d usage window (which resets many times before then).
+  // Putting it on the tile was misleading ("3d" right after the window reset).
+  // Without the OAuth API → honestly no reset.
   _clearClaudeCache();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
   fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({
@@ -327,13 +329,13 @@ test('readClaudeUsage: plano-só NÃO mostra planLimitsEndDate como reset (é fi
     cachedGrowthBookFeatures: { tengu_saffron_lattice: { planLimitsEndDate: '2026-07-13T07:00:00Z' } },
     passesLastSeenRemaining: 2,
   }));
-  const r = await readClaudeUsage({ home: tmp, now: NOW });   // sem token → plano-só
+  const r = await readClaudeUsage({ home: tmp, now: NOW });   // no token → plan-only
   assert.equal(r[0].id, 'claude-plan');
   assert.equal(r[0].plan, 'Claude Team');
   assert.equal(r[0].resetAt, null, 'NÃO expõe planLimitsEndDate como reset da janela');
   assert.equal(r[0].resetInMin, null);
-  assert.equal(r[0].usedPct, null);                           // % só vem da API (honesto)
-  assert.equal(r[0].extra, '2 passes');                       // passes é info local legítima
+  assert.equal(r[0].usedPct, null);                           // % comes only from the API (honest)
+  assert.equal(r[0].extra, '2 passes');                       // passes is legitimate local info
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -350,12 +352,12 @@ test('readClaudeUsage: OAuth falha (rede) → fallback plano-só, não lança', 
 
 test('readClaudeUsage: sem plano nem token → null', async () => {
   _clearClaudeCache();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-')); // vazio
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-')); // empty
   assert.equal(await readClaudeUsage({ home: tmp, now: NOW }), null);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-// fetcher que sempre lança 429 (com Retry-After em ms), contando chamadas.
+// fetcher that always throws 429 (with Retry-After in ms), counting calls.
 function fetcher429(retryAfterMs) {
   const calls = [];
   const fn = async (url, headers) => {
@@ -373,12 +375,12 @@ test('readClaudeUsage: 429 → cooldown NÃO rebate na API durante o Retry-After
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
   const f = fetcher429(20 * 60_000);                 // Retry-After 20 min
-  // 1ª coleta leva 429 → cai no plano-só e agenda o cooldown.
+  // 1st collection gets 429 → falls back to plan-only and schedules the cooldown.
   const r1 = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f });
   assert.equal(r1.length, 1);
-  assert.equal(r1[0].id, 'claude-plan');             // tile NÃO some
+  assert.equal(r1[0].id, 'claude-plan');             // tile does NOT vanish
   assert.equal(f.calls.length, 1);
-  // +60s: passou do cache (30s) MAS ainda no cooldown → não bate na API de novo.
+  // +60s: past the cache (30s) BUT still in cooldown → doesn't hit the API again.
   const r2 = await readClaudeUsage({ home: tmp, now: NOW + 60_000, fetcher: f });
   assert.equal(r2[0].id, 'claude-plan');
   assert.equal(f.calls.length, 1, 'não deve rebater na API durante o cooldown do 429');
@@ -388,9 +390,9 @@ test('readClaudeUsage: 429 → cooldown NÃO rebate na API durante o Retry-After
 test('readClaudeUsage: 429 sem Retry-After usa cooldown padrão (15 min)', async () => {
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
-  const f = fetcher429(null);                        // sem header legível
+  const f = fetcher429(null);                        // no readable header
   await readClaudeUsage({ home: tmp, now: NOW, fetcher: f });
-  // +10min < 15min padrão → ainda em cooldown, sem nova chamada.
+  // +10min < default 15min → still in cooldown, no new call.
   await readClaudeUsage({ home: tmp, now: NOW + 10 * 60_000, fetcher: f });
   assert.equal(f.calls.length, 1);
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -399,7 +401,7 @@ test('readClaudeUsage: 429 sem Retry-After usa cooldown padrão (15 min)', async
 test('readClaudeUsage: 429 mantém o ÚLTIMO valor bom (não regride pro plano-só)', async () => {
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
-  // 1ª: OK → 2 janelas reais. 2ª: 429 → deve segurar as janelas boas, não sumir %.
+  // 1st: OK → 2 real windows. 2nd: 429 → must hold the good windows, not drop the %.
   let n = 0;
   const f = async () => {
     n += 1;
@@ -409,7 +411,7 @@ test('readClaudeUsage: 429 mantém o ÚLTIMO valor bom (não regride pro plano-s
   const r1 = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f });
   assert.equal(r1.length, 2);
   assert.equal(r1[0].usedPct, 42);
-  // +60s: cache expirou → tenta, leva 429 → mantém as 2 janelas boas anteriores.
+  // +60s: cache expired → tries, gets 429 → keeps the 2 previous good windows.
   const r2 = await readClaudeUsage({ home: tmp, now: NOW + 60_000, fetcher: f });
   assert.equal(r2.length, 2, 'segura as janelas boas em vez de cair pro plano-só');
   assert.equal(r2[0].usedPct, 42);
@@ -424,32 +426,32 @@ test('readClaudeUsage: cache próprio de 5min (não rebate em +60s, ao contrári
   await readClaudeUsage({ home: tmp, now: NOW + 60_000, fetcher: f });   // +60s < 5min
   await readClaudeUsage({ home: tmp, now: NOW + 4 * 60_000, fetcher: f }); // +4min < 5min
   assert.equal(f.calls.length, 1, 'cache de 5min evita rebater a cada tick de 60s');
-  // +6min > 5min → cache expira, rebate.
+  // +6min > 5min → cache expires, hits again.
   await readClaudeUsage({ home: tmp, now: NOW + 6 * 60_000, fetcher: f });
   assert.equal(f.calls.length, 2);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('readClaudeUsage: cooldownUntil injetado (persistido) bloqueia a chamada mesmo com cache vazio', async () => {
-  _clearClaudeCache();                                 // simula processo recém-iniciado (bun start)
+  _clearClaudeCache();                                 // simulates a freshly started process (bun start)
   const tmp = claudeHome({ token: 'tok' });
   const f = fetcher429(20 * 60_000);
-  // cooldown veio do disco (futuro) → NÃO deve bater na API no boot (anti-reescalada).
+  // cooldown came from disk (future) → must NOT hit the API on boot (anti re-escalation).
   const r = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, cooldownUntil: NOW + 10 * 60_000 });
   assert.equal(f.calls.length, 0, 'cooldown persistido evita re-bater no boot e re-escalar o 429');
-  assert.equal(r[0].id, 'claude-plan');                // cai no plano-só (cache vazio)
+  assert.equal(r[0].id, 'claude-plan');                // falls back to plan-only (empty cache)
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('readClaudeUsage: allowFetch=false (lazy) NÃO bate na API — cai no plano-só sem chamar o fetcher', async () => {
-  _clearClaudeCache();                                 // sem valor bom prévio
+  _clearClaudeCache();                                 // no previous good value
   const tmp = claudeHome({ token: 'tok' });
   const f = mockFetcher({ five_hour: { utilization: 50, resets_at: '2026-07-07T17:00:00Z' } });
-  // loop de fundo (lazy): sem cache e sem gatilho de UI → não toca a rede.
+  // background loop (lazy): no cache and no UI trigger → doesn't touch the network.
   const r = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, allowFetch: false });
   assert.equal(f.calls.length, 0, 'loop de fundo não bate na API do Claude');
   assert.equal(r.length, 1);
-  assert.equal(r[0].id, 'claude-plan');                // plano-só honesto (sem %)
+  assert.equal(r[0].id, 'claude-plan');                // honest plan-only (no %)
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -457,11 +459,11 @@ test('readClaudeUsage: allowFetch=false devolve o ÚLTIMO valor bom do cache (n�
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
   const f = mockFetcher({ five_hour: { utilization: 50, resets_at: '2026-07-07T17:00:00Z' } });
-  // gatilho de UI (abrir overlay) → busca 1x e popula o cache com o % real.
+  // UI trigger (opening the overlay) → fetches 1x and populates the cache with the real %.
   const r1 = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, allowFetch: true });
   assert.equal(r1[0].id, 'claude-5h');
   assert.equal(f.calls.length, 1);
-  // +6min (cache de 5min já expirou) MAS loop de fundo (lazy) → não rebate; mantém o %.
+  // +6min (5min cache already expired) BUT background loop (lazy) → doesn't hit again; keeps the %.
   const r2 = await readClaudeUsage({ home: tmp, now: NOW + 6 * 60_000, fetcher: f, allowFetch: false });
   assert.equal(f.calls.length, 1, 'lazy não gasta chamada no loop de fundo');
   assert.equal(r2[0].id, 'claude-5h');
@@ -482,17 +484,17 @@ test('readClaudeUsage: 429 chama setCooldown com {until, fails} p/ persistir', a
 test('readClaudeUsage: 429 seguidos aplicam backoff exponencial (Retry-After × 1.5^fails)', async () => {
   _clearClaudeCache();
   const tmp = claudeHome({ token: 'tok' });
-  const f = fetcher429(10 * 60_000);                 // Retry-After fixo 10min
+  const f = fetcher429(10 * 60_000);                 // fixed Retry-After 10min
   let saved = null;
-  // 1ª falha: fails 0→1, backoff = 10min × 1.5^0 = 10min
+  // 1st failure: fails 0→1, backoff = 10min × 1.5^0 = 10min
   await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, setCooldown: (o) => { saved = o; } });
   assert.equal(saved.until, NOW + 10 * 60_000, '1ª falha: sem multiplicar ainda');
   assert.equal(saved.fails, 1);
-  // 2ª falha (fails=1 injetado do disco): backoff = 10min × 1.5^1 = 15min
+  // 2nd failure (fails=1 injected from disk): backoff = 10min × 1.5^1 = 15min
   await readClaudeUsage({ home: tmp, now: NOW + 11 * 60_000, fetcher: f, cooldownFails: 1, setCooldown: (o) => { saved = o; } });
   assert.equal(saved.until, NOW + 11 * 60_000 + 15 * 60_000, '2ª falha: ×1.5 = 15min');
   assert.equal(saved.fails, 2);
-  // 3ª falha (fails=2): backoff = 10min × 1.5^2 = 22.5min
+  // 3rd failure (fails=2): backoff = 10min × 1.5^2 = 22.5min
   await readClaudeUsage({ home: tmp, now: NOW + 30 * 60_000, fetcher: f, cooldownFails: 2, setCooldown: (o) => { saved = o; } });
   assert.equal(saved.until, NOW + 30 * 60_000 + Math.round(10 * 60_000 * 1.5 * 1.5), '3ª falha: ×2.25');
   assert.equal(saved.fails, 3);
@@ -504,7 +506,7 @@ test('readClaudeUsage: 429 respeita o teto de backoff (1h)', async () => {
   const tmp = claudeHome({ token: 'tok' });
   const f = fetcher429(30 * 60_000);                 // Retry-After 30min
   let saved = null;
-  // fails=10 injetado: 30min × 1.5^10 = imenso → clampado no teto de 1h
+  // fails=10 injected: 30min × 1.5^10 = huge → clamped at the 1h cap
   await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, cooldownFails: 10, setCooldown: (o) => { saved = o; } });
   assert.equal(saved.until, NOW + 60 * 60_000, 'clampado no teto de 1h');
   assert.equal(saved.fails, 11);
@@ -523,7 +525,7 @@ test('readClaudeUsage: sucesso zera o contador de backoff (fails=0)', async () =
   let saved = null;
   await readClaudeUsage({ home: tmp, now: NOW, fetcher: f, cooldownFails: 0, setCooldown: (o) => { saved = o; } });
   assert.equal(saved.fails, 1, 'falhou → armou fails=1');
-  // depois de expirar, sucesso → zera
+  // after expiry, success → resets
   await readClaudeUsage({ home: tmp, now: NOW + 6 * 60_000, fetcher: f, cooldownFails: 1, setCooldown: (o) => { saved = o; } });
   assert.deepEqual(saved, { until: 0, fails: 0 }, 'sucesso zera o backoff persistido');
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -539,8 +541,8 @@ test('readClaudeUsage: após o cooldown expirar, rebate na API e recupera o %', 
     return JSON.stringify({ five_hour: { utilization: 12, resets_at: '2026-07-07T17:00:00Z' } });
   };
   const r1 = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f });
-  assert.equal(r1[0].id, 'claude-plan');             // 429 → plano-só
-  // +6min: cooldown (5min) já expirou → bate de novo e pega o % real.
+  assert.equal(r1[0].id, 'claude-plan');             // 429 → plan-only
+  // +6min: cooldown (5min) already expired → hits again and gets the real %.
   const r2 = await readClaudeUsage({ home: tmp, now: NOW + 6 * 60_000, fetcher: f });
   assert.equal(r2[0].id, 'claude-5h');
   assert.equal(r2[0].usedPct, 12);
@@ -550,7 +552,7 @@ test('readClaudeUsage: após o cooldown expirar, rebate na API e recupera o %', 
 
 // =========================== readGlmUsage (I/O + fetcher mock) ===========================
 
-// fetcher mock: devolve o body dado; captura url/headers para asserção.
+// mock fetcher: returns the given body; captures url/headers for assertion.
 function mockFetcher(body) {
   const calls = [];
   const fn = async (url, headers, timeoutMs) => {
@@ -585,7 +587,7 @@ test('readGlmUsage: credencial GLM válida → 2 entries com %', async () => {
   assert.equal(out[0].agent, 'glm');
   assert.equal(out[0].usedPct, 23);
   assert.equal(out[1].usedPct, 45);
-  // endpoint correto e auth header (sem "Bearer")
+  // correct endpoint and auth header (no "Bearer")
   assert.equal(f.calls.length, 1);
   assert.match(f.calls[0].url, /api\.z\.ai\/api\/monitor\/usage\/quota\/limit/);
   assert.equal(f.calls[0].headers.Authorization, 'tok');
@@ -617,13 +619,13 @@ test('collectUsage: junta Claude (plano-só, sem OAuth) + GLM (API)', async () =
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
   fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({
     oauthAccount: { organizationRateLimitTier: 'default_claude_max_5x' },
-  })); // sem .credentials.json → Claude cai no plano-só (1 linha)
+  })); // no .credentials.json → Claude falls back to plan-only (1 line)
   const env = { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: 'tok' };
   const f = mockFetcher({ limits: [{ type: 'TOKENS_LIMIT', percentage: 30 }] });
   const out = await collectUsage({ home: tmp, env, now: NOW, fetcher: f });
   assert.equal(out.length, 2);
-  assert.equal(out[0].agent, 'claude');          // Claude primeiro
-  assert.equal(out[0].usedPct, null);            // plano-só (sem OAuth) → sem %
+  assert.equal(out[0].agent, 'claude');          // Claude first
+  assert.equal(out[0].usedPct, null);            // plan-only (no OAuth) → no %
   assert.equal(out[1].agent, 'glm');
   assert.equal(out[1].usedPct, 30);
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -631,13 +633,13 @@ test('collectUsage: junta Claude (plano-só, sem OAuth) + GLM (API)', async () =
 
 test('collectUsage: sem nenhuma fonte → []', async () => {
   _clearGlmCache();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-')); // sem .claude.json
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-')); // no .claude.json
   const out = await collectUsage({ home: tmp, env: {}, now: NOW });
   assert.deepEqual(out, []);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-// fetcher ciente do token: % diferente por conta (prova isolamento multi-conta)
+// token-aware fetcher: different % per account (proves multi-account isolation)
 function tokenFetcher(pctByToken) {
   const calls = [];
   const fn = async (url, headers) => {
@@ -652,7 +654,7 @@ function tokenFetcher(pctByToken) {
 
 test('collectUsage: múltiplas contas GLM → um bloco por conta, % isolado', async () => {
   _clearGlmCache();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-')); // sem Claude
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-')); // no Claude
   const glmCreds = [
     { env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: 'tokA' }, label: 'z.ai', suffix: 'aaa' },
     { env: { ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic', ANTHROPIC_AUTH_TOKEN: 'tokB' }, label: 'bigmodel.cn', suffix: 'bbb' },
@@ -662,7 +664,7 @@ test('collectUsage: múltiplas contas GLM → um bloco por conta, % isolado', as
   assert.equal(out.length, 2, 'uma linha por conta');
   assert.equal(out[0].id, 'glm-tokens:aaa');
   assert.equal(out[0].usedPct, 20);
-  assert.equal(out[0].plan, 'GLM Pro (z.ai)');       // rótulo distingue a conta
+  assert.equal(out[0].plan, 'GLM Pro (z.ai)');       // the label tells the account apart
   assert.equal(out[1].id, 'glm-tokens:bbb');
   assert.equal(out[1].usedPct, 75);
   assert.equal(out[1].plan, 'GLM Pro (bigmodel.cn)');
@@ -677,8 +679,8 @@ test('collectUsage: conta única não rotula nem sufixa (id canônico)', async (
   const f = tokenFetcher({ tok: 40 });
   const out = await collectUsage({ home: tmp, glmCreds, now: NOW, fetcher: f });
   assert.equal(out.length, 1);
-  assert.equal(out[0].id, 'glm-tokens');             // sem sufixo (1 conta só)
-  assert.equal(out[0].plan, 'GLM Pro');              // sem rótulo
+  assert.equal(out[0].id, 'glm-tokens');             // no suffix (single account)
+  assert.equal(out[0].plan, 'GLM Pro');              // no label
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -688,7 +690,7 @@ test('readGlmUsage: cache é POR TOKEN (conta B não usa cache da conta A)', asy
   const a = await readGlmUsage({ env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: 'tokA' }, now: NOW, fetcher: f });
   const b = await readGlmUsage({ env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: 'tokB' }, now: NOW, fetcher: f });
   assert.equal(a[0].usedPct, 10);
-  assert.equal(b[0].usedPct, 90);                    // não veio do cache de A
+  assert.equal(b[0].usedPct, 90);                    // didn't come from A's cache
   assert.equal(f.calls.length, 2);
 });
 
@@ -725,7 +727,7 @@ test('lastCodexRateLimits: pega o rate_limits do ÚLTIMO token_count (payload.ty
     JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: 55 } } } }),
   ].join('\n');
   const rl = lastCodexRateLimits(jsonl);
-  assert.equal(rl.primary.used_percent, 55);         // o último, não o primeiro
+  assert.equal(rl.primary.used_percent, 55);         // the last one, not the first
   assert.equal(lastCodexRateLimits('lixo\n{}'), null);
 });
 
@@ -767,7 +769,7 @@ test('mergeUsage: coleta ruim mantém o último valor bom (não zera)', () => {
   const t1 = mergeUsage([], [GOOD('glm-tokens', 75)], NOW);
   assert.equal(t1[0].usedPct, 75);
   assert.equal(t1[0].stale, false);
-  // +30s, coletor falhou → mantém 75, ainda não stale
+  // +30s, collector failed → keeps 75, not stale yet
   const t2 = mergeUsage(t1, [BAD('glm-tokens')], NOW + 30_000);
   assert.equal(t2[0].usedPct, 75);
   assert.equal(t2[0].stale, false);
@@ -778,7 +780,7 @@ test('mergeUsage: após STALE_MS sem valor bom → stale (cinza)', () => {
   const t2 = mergeUsage(t1, [BAD('glm-tokens')], NOW + 5 * 60_000);
   assert.equal(t2[0].usedPct, 75);
   assert.equal(t2[0].stale, true);
-  // valor bom novo zera o relógio
+  // a new good value resets the clock
   const t3 = mergeUsage(t2, [GOOD('glm-tokens', 60)], NOW + 6 * 60_000);
   assert.equal(t3[0].usedPct, 60);
   assert.equal(t3[0].stale, false);
@@ -786,10 +788,10 @@ test('mergeUsage: após STALE_MS sem valor bom → stale (cinza)', () => {
 
 test('mergeUsage: linha some da coleta → mantém até DROP_MS, depois remove', () => {
   const t1 = mergeUsage([], [GOOD('glm-tokens', 75)], NOW);
-  const t2 = mergeUsage(t1, [], NOW + 5 * 60_000);   // sumiu, +5min
+  const t2 = mergeUsage(t1, [], NOW + 5 * 60_000);   // vanished, +5min
   assert.equal(t2.length, 1);
-  assert.equal(t2[0].stale, true);                    // segurou, mas cinza
-  const t3 = mergeUsage(t2, [], NOW + 25 * 60_000);  // +25min → dropa
+  assert.equal(t2[0].stale, true);                    // held, but gray
+  const t3 = mergeUsage(t2, [], NOW + 25 * 60_000);  // +25min → drops
   assert.equal(t3.length, 0);
 });
 
@@ -801,21 +803,21 @@ test('mergeUsage: linha nova sem valor bom passa como veio (1ª aparição hones
 });
 
 // =========================== mergeUsage: dedup summary↔concrete ===========================
-// Bug do overlay "duplicando às vezes": a coleta oscila entre OK (tiles reais)
-// e falha (fallback plano-só / GLM-sem-limites) entre ticks. Sem desduplicação,
-// o fallback coexistia com os reais — "Claude Max" + "Claude Max 5× - 5 h" na
-// mesma tela. O summary só deve aparecer se NÃO houver tile concreto do mesmo
-// agente.
+// Overlay "sometimes duplicating" bug: collection oscillates between OK (real
+// tiles) and failure (plan-only fallback / GLM-without-limits) across ticks.
+// Without dedup, the fallback coexisted with the real ones — "Claude Max" +
+// "Claude Max 5× - 5 h" on the same screen. The summary must only appear if
+// there is NO concrete tile for the same agent.
 const CLAUDE_5H = { id: 'claude-5h', agent: 'claude', plan: 'Claude Max 5×', title: '5 h', usedPct: 63, resetInMin: 200, source: 'anthropic.oauth', error: null };
 const CLAUDE_PLAN = { id: 'claude-plan', agent: 'claude', plan: 'Claude Max 5×', title: null, usedPct: null, resetInMin: null, source: 'claude.json', error: null };
 const GLM_FALLBACK = { id: 'glm', agent: 'glm', plan: 'GLM', title: 'GLM', usedPct: null, resetInMin: null, source: 'glm.api', error: 'timeout' };
 
 test('mergeUsage: claude-plan suprimido quando claude-5h (concreto) está presente', () => {
-  // tick OK → 5h real
+  // OK tick → real 5h
   const t1 = mergeUsage([], [CLAUDE_5H], NOW);
   assert.equal(t1.length, 1);
-  // tick seguinte: API OAuth oscilou → só veio o plano-só (fallback). O 5h vira
-  // órfão bom; o plano NÃO deve reaparecer junto dele.
+  // next tick: OAuth API oscillated → only the plan-only (fallback) came. The
+  // 5h becomes a good orphan; the plan must NOT reappear alongside it.
   const t2 = mergeUsage(t1, [CLAUDE_PLAN], NOW + 30_000);
   assert.equal(t2.length, 1, 'plano-só não coexiste com o 5h real');
   assert.equal(t2[0].id, 'claude-5h');
@@ -832,6 +834,26 @@ test('mergeUsage: summary sozinho (sem concreto) se mantém (1ª aparição hone
   const m = mergeUsage([], [CLAUDE_PLAN], NOW);
   assert.equal(m.length, 1);
   assert.equal(m[0].id, 'claude-plan');
+});
+
+// Multi-account (#58): the summary↔concrete dedup is per FAMILY (agent+account
+// suffix), not per agent. Account B's plan-only (claude-plan:ca2705 — token
+// failed / no window) coexists with account A's concretes (claude-5h:ffdc8e):
+// with plain agent matching, B's WHOLE bar vanished from the screen.
+const C5H_A = { id: 'claude-5h:ffdc8e', agent: 'claude', plan: 'Claude Max 5×', title: '5 h', usedPct: 34, resetInMin: 200, source: 'anthropic.oauth', error: null };
+const CPLAN_B = { id: 'claude-plan:ca2705', agent: 'claude', plan: 'Claude Max 20×', title: null, usedPct: null, resetInMin: null, source: 'claude.json', error: null, account: 'aronpeyroteo' };
+
+test('mergeUsage: plano-só da conta B convive com concretos da conta A (multi-conta)', () => {
+  const m = mergeUsage([], [C5H_A, CPLAN_B], NOW);
+  assert.equal(m.length, 2, 'plano-só da 2ª conta não é summary da 1ª');
+  assert.ok(m.some((e) => e.id === 'claude-plan:ca2705'), 'barra da conta B presente');
+});
+
+test('mergeUsage: plano-só suprimido quando a MESMA conta tem concreto (sufixo igual)', () => {
+  const c5h_b = { ...C5H_A, id: 'claude-5h:ca2705' };
+  const m = mergeUsage([], [c5h_b, CPLAN_B], NOW);
+  assert.equal(m.length, 1, 'summary da própria conta continua suprimido');
+  assert.equal(m[0].id, 'claude-5h:ca2705');
 });
 
 // =========================== readAntigravityUsage ===========================
@@ -883,7 +905,7 @@ test('readAntigravityUsage: readFile injetado → linha com o modelo (sem %)', (
   assert.equal(r[0].id, 'antigravity-plan');
   assert.equal(r[0].agent, 'antigravity');
   assert.equal(r[0].plan, 'Antigravity (GPT-OSS 120B (Medium))');
-  assert.equal(r[0].usedPct, null);           // % inviável
+  assert.equal(r[0].usedPct, null);           // % not feasible
   assert.equal(r[0].source, 'antigravity.settings');
 });
 
@@ -897,13 +919,13 @@ test('readAntigravityUsage: readFile lança (sem arquivo) → null', () => {
   assert.equal(r, null);
 });
 
-// =========================== Antigravity — quota esgotada (DBs de conversa) ===========================
+// =========================== Antigravity — quota exhausted (conversation DBs) ===========================
 
 test('parseAntigravityQuota: pega o MAIOR quotaResetTimeStamp futuro', () => {
   const txt = 'lixo\0"reason":"QUOTA_EXHAUSTED",...,"quotaResetTimeStamp":"2026-07-10T00:00:00Z"...'
     + '\0mais\0"reason":"QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-14T19:56:12Z"...';
   const q = parseAntigravityQuota(txt, NOW);
-  assert.deepEqual(q, { resetAt: '2026-07-14T19:56:12Z' }); // o mais distante
+  assert.deepEqual(q, { resetAt: '2026-07-14T19:56:12Z' }); // the farthest one
 });
 
 test('parseAntigravityQuota: reset no passado → null (não está esgotada agora)', () => {
@@ -918,14 +940,14 @@ test('readAntigravityUsage: quota esgotada → usedPct 100 + reset (DB injetado)
     home: '/x', now: NOW,
     readFile: () => JSON.stringify({ model: 'gpt-oss-120b-medium' }),
     listDbs: () => ['/db/a.db', '/db/b.db'],
-    mtime: (f) => (f === '/db/b.db' ? NOW - 5*60*1000 : NOW - 10*60*1000), // b é mais novo, ambos recentes
+    mtime: (f) => (f === '/db/b.db' ? NOW - 5*60*1000 : NOW - 10*60*1000), // b is newer, both recent
     readDb: (f) => (f === '/db/b.db'
       ? '"reason":"QUOTA_EXHAUSTED","quotaResetTimeStamp":"2026-07-14T19:56:12Z"'
       : 'sem quota'),
   });
   assert.equal(r.length, 1);
   assert.equal(r[0].id, 'antigravity-quota');
-  assert.equal(r[0].usedPct, 100);            // esgotado → barra cheia
+  assert.equal(r[0].usedPct, 100);            // exhausted → full bar
   assert.equal(r[0].resetAt, '2026-07-14T19:56:12Z');
   assert.equal(r[0].source, 'antigravity.quota');
   assert.equal(r[0].plan, 'Antigravity (gpt-oss-120b-medium)');
@@ -943,10 +965,10 @@ test('readAntigravityUsage: com quota (nenhum QUOTA_EXHAUSTED futuro) → só r�
   assert.equal(r[0].usedPct, null);
 });
 
-// =========================== mergeUsage — dedup por conteúdo (mesma conta) ===========================
+// =========================== mergeUsage — content dedup (same account) ===========================
 
 test('mergeUsage: linhas idênticas com ids diferentes → colapsa em 1 (mesma conta z.ai)', () => {
-  // mesma conta chega por 2 credenciais (proc + opencode): ids distintos, resto igual.
+  // the same account arrives via 2 credentials (proc + opencode): distinct ids, everything else equal.
   const a = { id: 'glm-tokens:proc', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (z.ai)', usedPct: 12, resetAt: '2026-07-08T02:00:00Z', error: null };
   const b = { id: 'glm-tokens:oc', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro (z.ai)', usedPct: 12, resetAt: '2026-07-08T02:00:00Z', error: null };
   const out = mergeUsage([], [a, b], NOW);
@@ -962,13 +984,14 @@ test('mergeUsage: conteúdo diferente (reset distinto) → NÃO colapsa (contas 
 });
 
 test('mergeUsage: GLM canônico (plan "GLM Pro") vs sufixado (plan "GLM Pro (z.ai)") da MESMA conta → colapsa (bug z.ai 2×)', () => {
-  // Cenário real: a coleta oscila entre single-conta (id canônico 'glm-month',
-  // plan 'GLM Pro') e multi-conta (id 'glm-month:6baca3', plan 'GLM Pro (z.ai)'),
-  // ou um é resquício legado do usage.json. Sem normalizar o label na chave, as
-  // duas linhas têm plans diferentes e coexistem → "z.ai" aparece duplicado.
+  // Real scenario: the collection oscillates between single-account (canonical
+  // id 'glm-month', plan 'GLM Pro') and multi-account (id 'glm-month:6baca3',
+  // plan 'GLM Pro (z.ai)'), or one is a legacy leftover from usage.json. Without
+  // normalizing the label in the key, the two lines have different plans and
+  // coexist → "z.ai" shows up duplicated.
   const canon = { id: 'glm-month', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro', usedPct: 100, resetAt: '2026-08-01T00:00:00Z', fetchedAt: NOW - 2000, error: null };
   const suffixed = { id: 'glm-month:6baca3', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro (z.ai)', usedPct: 100, resetAt: '2026-08-01T00:00:00Z', fetchedAt: NOW - 1000, error: null };
-  // boot carregou AMBOS do usage.json; sem GLM ativo agora (fresh vazio) → órfãos.
+  // boot loaded BOTH from usage.json; no active GLM now (empty fresh) → orphans.
   const out = mergeUsage([canon, suffixed], [], NOW);
   assert.equal(out.length, 1, 'a mesma conta não aparece 2× mesmo com id/plan oscilando');
   assert.equal(out[0].usedPct, 100);
@@ -986,13 +1009,14 @@ test('mergeUsage: token inválido (summary sem %) some quando há concreto do me
   const good = { id: 'glm-tokens', agent: 'glm', title: 'Tokens (5h)', plan: 'GLM Pro', usedPct: 7, resetAt: '2026-07-08T02:00:00Z', error: null };
   const out = mergeUsage([], [bad, good], NOW);
   assert.equal(out.length, 1);
-  assert.equal(out[0].id, 'glm-tokens'); // o summary fantasma sumiu
+  assert.equal(out[0].id, 'glm-tokens'); // the ghost summary vanished
 });
 
 test('mergeUsage: mesma conta por 2 credenciais com resetAt differing 1ms → colapsa (bug "mês 2×")', () => {
-  // Regressão real: a mesma conta z.ai Pro chega por 2 tokens (sufixos 6baca3 e
-  // c3c374); a API devolve resetAt com ~1ms de diferença ("...09.995Z" vs
-  // "...09.996Z"). A chave de dedup via resetAt exato não cola → "MCP (mês) 2×".
+  // Real regression: the same z.ai Pro account arrives via 2 tokens (suffixes
+  // 6baca3 and c3c374); the API returns resetAt with ~1ms difference
+  // ("...09.995Z" vs "...09.996Z"). A dedup key on the exact resetAt doesn't
+  // stick → "MCP (mês) 2×".
   const a = { id: 'glm-month:6baca3', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro (z.ai)', usedPct: 0, resetAt: '2026-08-10T11:47:09.995Z', error: null };
   const b = { id: 'glm-month:c3c374', agent: 'glm', title: 'MCP (mês)', plan: 'GLM Pro (z.ai)', usedPct: 0, resetAt: '2026-08-10T11:47:09.996Z', error: null };
   const out = mergeUsage([], [a, b], NOW);
@@ -1007,7 +1031,7 @@ test('mergeUsage: antigravity-plan limpa antigravity-quota do cache anterior', (
   assert.equal(out[0].id, 'antigravity-plan');
 });
 
-// =========================== detectReset (aviso de "cota resetou") ===========================
+// =========================== detectReset ("quota reset" notice) ===========================
 
 test('parseOpencodeUsage: extrai janelas rolling, weekly e monthly', () => {
   const payload = {
@@ -1096,8 +1120,8 @@ test('readOpencodeUsage: monta entry com os dados extraídos', async () => {
   assert.equal(out[0].resetInMin, 60);
   assert.equal(out[0].extra, 'esgotado'); // map status exhausted
 });
-// PURA: `now` injetado (NOW = 2026-07-07T12:00:00Z, definido no topo). Estes casos
-// são a ESPECIFICAÇÃO da regra de transição estava-esgotado → resetou.
+// PURE: injected `now` (NOW = 2026-07-07T12:00:00Z, defined at the top). These
+// cases ARE the specification of the exhausted→reset transition rule.
 const RESET_ENTRY = (id, usedPct, resetAt) => ({ id, agent: 'glm', plan: 'GLM Pro', title: 'Tokens (5h)', usedPct, resetAt });
 const H = 3600 * 1000;
 
@@ -1109,7 +1133,7 @@ test('detectReset: 1ª coleta (sem estado prévio) nunca notifica, só registra'
 
 test('detectReset: armado (>= threshold) e o reset chegou → notifica 1x', () => {
   const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
-  // +6h: passou das 17:00Z; a API avançou a janela (novo reset) e o % caiu.
+  // +6h: past 17:00Z; the API advanced the window (new reset) and the % dropped.
   const later = NOW + 6 * H;
   const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 4, '2026-07-07T22:00:00Z')], later, 90);
   assert.equal(toNotify.length, 1);
@@ -1125,7 +1149,7 @@ test('detectReset: NÃO estava esgotado (abaixo do threshold) → não notifica 
 
 test('detectReset: armado mas o reset ainda não chegou → não notifica', () => {
   const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
-  const soon = NOW + 60 * 1000; // +1min, ainda antes das 17:00Z
+  const soon = NOW + 60 * 1000; // +1min, still before 17:00Z
   const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], soon, 90);
   assert.equal(toNotify.length, 0);
 });
@@ -1134,7 +1158,7 @@ test('detectReset: não redispara no tick seguinte à mesma janela nova (dedupe)
   const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
   const later = NOW + 6 * H;
   const r2 = detectReset(s1, [RESET_ENTRY('glm-tokens', 5, '2026-07-07T22:00:00Z')], later, 90);
-  assert.equal(r2.toNotify.length, 1);                 // resetou → avisa
+  assert.equal(r2.toNotify.length, 1);                 // reset happened → notify
   const r3 = detectReset(r2.nextState, [RESET_ENTRY('glm-tokens', 6, '2026-07-07T22:00:00Z')], later + 60 * 1000, 90);
   assert.equal(r3.toNotify.length, 0, 'mesma janela nova não pode redisparar');
 });
@@ -1143,7 +1167,7 @@ test('detectReset: API stale com mesmo resetAt não rearma após notificar', () 
   const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
   const later = NOW + 6 * H;
   const r2 = detectReset(s1, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], later, 90);
-  assert.equal(r2.toNotify.length, 1);                 // passou do reset, mas API ainda não avançou
+  assert.equal(r2.toNotify.length, 1);                 // past the reset, but the API hasn't advanced yet
   const r3 = detectReset(r2.nextState, [RESET_ENTRY('glm-tokens', 100, '2026-07-07T17:00:00Z')], later + 60 * 1000, 90);
   assert.equal(r3.toNotify.length, 0, 'mesmo resetAt stale não pode rearma/redisparar');
   assert.equal(r3.nextState['glm-tokens'].armed, false);
@@ -1163,8 +1187,9 @@ test('detectReset: threshold configurável — em 100 só esgotamento total arma
 });
 
 test('detectReset: resetAt estendido ANTES do tempo (sem reset) não notifica', () => {
-  // 12:00 esgotado, reset 17:00; às 16:00 (ainda ANTES das 17:00) a API estendeu
-  // o resetAt pra 20:00 e o % continua 95 → NÃO houve reset, só mudou o horário.
+  // 12:00 exhausted, reset 17:00; at 16:00 (still BEFORE 17:00) the API
+  // extended resetAt to 20:00 and the % stays at 95 → NO reset happened, only
+  // the time changed.
   const s1 = detectReset(null, [RESET_ENTRY('glm-tokens', 95, '2026-07-07T17:00:00Z')], NOW, 90).nextState;
   const before = NOW + 4 * H;
   const { toNotify } = detectReset(s1, [RESET_ENTRY('glm-tokens', 95, '2026-07-07T20:00:00Z')], before, 90);
@@ -1177,4 +1202,405 @@ test('detectReset: 2 entries mesmo id numa coleta → só 1 notificação', () =
   const e = RESET_ENTRY('glm-tokens', 4, '2026-07-07T22:00:00Z');
   const { toNotify } = detectReset(s1, [e, e], later, 90);
   assert.equal(toNotify.length, 1, 'duplicata de id não duplica o aviso');
+});
+
+// =========================== Claude multi-account (#58) ===========================
+
+test('claudeAccountSfx: sha256-6 estável e distinto por fonte', () => {
+  assert.match(claudeAccountSfx('uuid-A'), /^[0-9a-f]{6}$/);
+  assert.equal(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-A'));
+  assert.notEqual(claudeAccountSfx('uuid-A'), claudeAccountSfx('uuid-B'));
+});
+
+// claudeAccountKey (review fix #9): the identity key was 4 nearly-identical
+// expressions scattered around (collectUsage dedup, tile sfx, rename
+// lastAccountIds, annotator) — divergence = a saved rename that no read
+// matches. A single definition, with the full precedence.
+test('claudeAccountKey: org > accountUuid > dir > default (uma definição, review #9)', () => {
+  assert.equal(claudeAccountKey({ accountOrgUuid: 'org-1', accountUuid: 'acc-1' }, '/d'), 'org-1', 'org vence (#60: billing por org)');
+  assert.equal(claudeAccountKey({ accountUuid: 'acc-1' }, '/d'), 'acc-1', 'conta pessoal pelo uuid');
+  assert.equal(claudeAccountKey({ accountName: 'sem uuid' }, '/.gh-claude'), '/.gh-claude', 'perfil proxy sem oauth → dir (tile renomeável)');
+  assert.equal(claudeAccountKey(null, '/.gh-claude'), '/.gh-claude', 'sem .claude.json → dir também');
+  assert.equal(claudeAccountKey(null, null), 'default', 'conta do symlink → default');
+});
+
+// accountLabel: account label precedence (#58, details modal):
+// manual alias > org > email local-part (NEVER the full one) > dir basename.
+test('accountLabel: precedência manual > org > local-part > basename', () => {
+  const pc = { accountName: 'Ghost Org', accountEmail: 'ghost@ex.com' };
+  assert.equal(accountLabel(pc, '/home/x/.ghost', 'apelido'), 'apelido', 'manual vence');
+  assert.equal(accountLabel(pc, '/home/x/.ghost'), 'Ghost Org', 'org');
+  assert.equal(accountLabel({ accountEmail: 'ghost@ex.com' }, '/home/x/.ghost'), 'ghost', 'local-part, nunca o email completo');
+  assert.equal(accountLabel(null, '/home/x/.ghost'), 'ghost', 'basename do dir sem o ponto');
+  assert.equal(accountLabel(null, null), null, 'nada resolvido → null (linha ausente no modal)');
+});
+
+// apiProviderFromSettings: the profile's alternate API provider (session
+// details). settings.json in the dir with env.ANTHROPIC_BASE_URL → host[:port];
+// no base_url / no file / dir null → null (profile uses the official API).
+test('apiProviderFromSettings: host[:porta] do base_url; null quando API oficial', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const mk = (name, settings) => {
+    const d = path.join(tmp, name);
+    fs.mkdirSync(d);
+    if (settings !== null) fs.writeFileSync(path.join(d, 'settings.json'), JSON.stringify(settings));
+    return d;
+  };
+  const proxy = mk('gh', { env: { ANTHROPIC_BASE_URL: 'http://vm-contabo:20128/v1', ANTHROPIC_AUTH_TOKEN: 'sekret' } });
+  const httpsApi = mk('zai', { env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' } });
+  const official = mk('artemis', { env: { API_TIMEOUT_MS: '30000' }, model: 'opus' });
+  const noFile = mk('vazio', null);
+  assert.equal(apiProviderFromSettings(proxy), 'vm-contabo:20128', 'http com porta explícita');
+  assert.equal(apiProviderFromSettings(httpsApi), 'api.z.ai', 'porta 443 padrão não aparece');
+  assert.equal(apiProviderFromSettings(official), null, 'sem base_url → API oficial → null');
+  assert.equal(apiProviderFromSettings(noFile), null, 'sem settings.json → null');
+  assert.equal(apiProviderFromSettings(path.join(tmp, 'nunca-existiu')), null, 'dir inexistente → null, não throw');
+  assert.equal(apiProviderFromSettings(null), null, 'dir null (conta do symlink) → null');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// Technical PROXY profile (no oauth, with env.ANTHROPIC_BASE_URL in the dir's
+// settings.json): before, it generated NO bar at all — invisible in the usage
+// list. Now it becomes a plan-only tile "API <host>" labeled by the profile,
+// with no % (the proxy doesn't expose Anthropic quota). No base_url → still no bar.
+test('collectUsage: conta gh (proxy, sem oauth) vira barra API <host> na lista de uso', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirGh = path.join(tmp, 'gh'), dirBare = path.join(tmp, 'bare');
+  for (const d of [dirA, dirGh, dirBare]) fs.mkdirSync(d);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-A', organizationName: 'Alpha Org' } }));
+  // gh: live .claude.json but WITHOUT oauthAccount (technical profile) + settings with proxy
+  fs.writeFileSync(path.join(dirGh, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  fs.writeFileSync(path.join(dirGh, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://vm-contabo:20128/v1' } }));
+  // bare: no oauth AND no base_url → no bar
+  fs.writeFileSync(path.join(dirBare, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirGh }, { dir: dirBare }], now: NOW });
+  const gh = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx(dirGh));
+  assert.ok(gh, 'conta gh gera tile claude-plan:<sfx> mesmo sem oauth');
+  assert.equal(gh.plan, 'API vm-contabo:20128', 'plan = API + host do proxy');
+  assert.equal(gh.account, 'gh', 'rótulo da conta = basename do dir');
+  assert.equal(gh.usedPct, null, 'sem % — proxy não expõe quota Anthropic');
+  assert.equal(gh.source, 'settings.json', 'fonte é o settings.json do perfil');
+  assert.ok(!out.some((e) => String(e.id).startsWith('claude') && /bare/.test(String(e.id))), 'sem base_url → sem barra');
+  assert.ok(out.some((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A')), 'conta oauth normal intacta');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('parseClaudeConfig: extrai identidade da conta (uuid/org/email) p/ multi-conta', () => {
+  const r = parseClaudeConfig({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x',
+    accountUuid: 'uuid-123', organizationName: 'Ghost Org', emailAddress: 'ghost@ex.com',
+  } }, NOW);
+  assert.equal(r.accountUuid, 'uuid-123');
+  assert.equal(r.accountName, 'Ghost Org');
+  assert.equal(r.accountEmail, 'ghost@ex.com');
+});
+
+// Two named accounts (no .credentials.json → plan-only, 1 line per account).
+// Account B has no organizationName → the label falls back to the email
+// local-part (the FULL email never appears — the cut happens in claudeAccountLabel).
+test('collectUsage: 2 contas Claude → uma barra por conta, id sufixado + rótulo', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-A', organizationName: 'Alpha Org' } }));
+  fs.writeFileSync(path.join(dirB, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-B', emailAddress: 'beta@ex.com' } }));
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 2, 'uma barra por conta');
+  const a = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A'));
+  const b = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-B'));
+  assert.ok(a && b, 'ids sufixados pelo uuid (claude-plan:<sha6>)');
+  assert.equal(a.account, 'Alpha Org', 'rótulo = organizationName');
+  assert.equal(b.account, 'beta', 'sem org → local-part do email');
+  assert.equal(a.accountId, claudeAccountSfx('uuid-A'), 'accountId = endereço do rename');
+  assert.equal(out[0].plan, 'Claude Max 5×');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('collectUsage: apelido manual (label do account-labels.json) vence o org name', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-A', organizationName: 'Alpha Org' } }));
+  fs.writeFileSync(path.join(dirB, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-B' } }));
+  const out = await collectUsage({
+    home: tmp,
+    claudeAccounts: [{ dir: dirA, label: 'Ghost' }, { dir: dirB }],
+    now: NOW,
+  });
+  const a = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A'));
+  assert.ok(a);
+  assert.equal(a.account, 'Ghost', 'label manual tem precedência sobre organizationName');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('collectUsage: 2 dirs MESMO uuid sem org → 1 barra canônica (conta pessoal)', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  for (const d of [dirA, dirB]) {
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-X' } }));
+  }
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 1, 'dois perfis, mesmo login pessoal → uma barra');
+  assert.equal(out[0].id, 'claude-plan', 'conta única → id canônico, sem sufixo');
+  assert.equal(out[0].account, undefined);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// The real case of two Team orgs at HG: SAME login (equal accountUuid),
+// different orgs — billing and rate limit are per organizationRateLimitTier
+// (the ORG's), so they are TWO accounts with independent limits. Before #60,
+// dedup by accountUuid collapsed both into a single bar, labeled with the org
+// of whichever dir arrived first — the second org was left invisible.
+test('collectUsage: mesmo accountUuid em ORGS diferentes → 2 barras (limite é por org)', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'hg-claude-artemis'), dirB = path.join(tmp, 'hg-claude-orion');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  fs.writeFileSync(path.join(dirA, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-9',
+    organizationUuid: 'org-artemis', organizationName: 'Newfold Digital Artemis' } }));
+  fs.writeFileSync(path.join(dirB, '.claude.json'), JSON.stringify({ oauthAccount: {
+    organizationRateLimitTier: 'default_claude_max_5x', accountUuid: 'uuid-9',
+    organizationUuid: 'org-orion', organizationName: 'Newfold Digital Orion' } }));
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 2, 'mesmo login, orgs diferentes → duas barras');
+  const a = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('org-artemis'));
+  const b = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('org-orion'));
+  assert.ok(a && b, 'ids sufixados pelo organizationUuid (não pelo accountUuid igual)');
+  assert.equal(a.account, 'Newfold Digital Artemis');
+  assert.equal(b.account, 'Newfold Digital Orion');
+  assert.notEqual(a.accountId, b.accountId, 'accountIds distintos (endereços de rename)');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('collectUsage: mesma ORG em 2 dirs (mesmo time) → 1 barra', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const dirA = path.join(tmp, 'profA'), dirB = path.join(tmp, 'profB');
+  fs.mkdirSync(dirA); fs.mkdirSync(dirB);
+  for (const d of [dirA, dirB]) {
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x',
+      organizationUuid: 'org-Z', organizationName: 'Ghost Org' } }));
+  }
+  const out = await collectUsage({ home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW });
+  assert.equal(out.length, 1, 'dois perfis do mesmo time → uma barra');
+  assert.equal(out[0].id, 'claude-plan', 'conta única → id canônico, sem sufixo');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('isSummaryEntry: claude-plan sufixado (multi-conta) é resumo', () => {
+  assert.ok(isSummaryEntry({ id: 'claude-plan:abc123' }));
+  assert.ok(!isSummaryEntry({ id: 'claude-5h:abc123' }), 'janela concreta não é resumo');
+});
+
+// mergeUsage's content key includes `account`: two accounts with the SAME
+// plan and the SAME window must not collapse into a single line (that was the
+// behavior when the key ignored the account).
+test('mergeUsage: contas distintas, mesmo plano/janela → não colapsam', () => {
+  const mk = (sfx, account, pct) => ({
+    id: 'claude-5h:' + sfx, agent: 'claude', title: 'Claude Max 5× · 5 h window',
+    plan: 'Claude Max 5×', account, accountId: sfx, usedPct: pct,
+    resetAt: new Date(NOW + 3600e3).toISOString(), resetInMin: 60, error: null,
+  });
+  const merged = mergeUsage([], [mk('sfxA', 'Alpha', 10), mk('sfxB', 'Beta', 20)], NOW);
+  assert.equal(merged.length, 2, 'uma linha por conta, mesmo plano igual');
+});
+
+// =========================== #58: post-rename duplication (single↔multi oscillation) ===========================
+// Field bug: renaming the account re-collects immediately; if the number of
+// LIVE accounts changed between ticks, the ids oscillate between canonical
+// (claude-5h) and suffixed (claude-5h:<sfx>) and the id-based merge kept BOTH
+// families for DROP_MS — the same account in 2 bars. The fresh is the truth:
+// the family it doesn't bring dies immediately.
+
+test('mergeUsage: multi→single (claude-5h:sfx → claude-5h) não deixa a sufixada órfã', () => {
+  const t1 = mergeUsage([], [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e', account: 'HG' }], NOW);
+  assert.equal(t1.length, 1);
+  const t2 = mergeUsage(t1, [CLAUDE_5H], NOW + 30_000);   // 2nd account closed → canonical id
+  const fives = t2.filter((e) => String(e.id).startsWith('claude-5h'));
+  assert.equal(fives.length, 1, 'uma barra só');
+  assert.equal(fives[0].id, 'claude-5h', 'vence a família que o fresh traz');
+});
+
+test('mergeUsage: single→multi (claude-5h → claude-5h:sfx) também não duplica', () => {
+  const t1 = mergeUsage([], [CLAUDE_5H], NOW);
+  const t2 = mergeUsage(t1, [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e' }], NOW + 30_000);
+  const fives = t2.filter((e) => String(e.id).startsWith('claude-5h'));
+  assert.equal(fives.length, 1, 'o canônico do prev morre: virou multi');
+  assert.equal(fives[0].id, 'claude-5h:ffdc8e');
+});
+
+test('mergeUsage: 2 contas legítimas (sfx distintos) continuam 2 barras', () => {
+  const fresh = [
+    { ...CLAUDE_5H, id: 'claude-5h:aaaaaa', accountId: 'aaaaaa', account: 'Alpha' },
+    { ...CLAUDE_5H, id: 'claude-5h:bbbbbb', accountId: 'bbbbbb', account: 'Beta' },
+  ];
+  const t = mergeUsage([], fresh, NOW);
+  assert.equal(t.filter((e) => String(e.id).startsWith('claude-5h')).length, 2, 'multi legítimo intacto');
+});
+
+// Key migration (#58→#60): the account identity moved from accountUuid to
+// organizationUuid — the sfx changed with it (ffdc8e→39e493), but the ACCOUNT
+// is the same. Without the multi→multi rule, the prev with the old sfx
+// coexisted with the fresh for DROP_MS: the same Artemis bar duplicated in
+// the overlay (field bug 2026-09-02).
+test('mergeUsage: multi→multi com OUTRO sfx na base (key velha da mesma conta) mata o prev', () => {
+  // 5h and 7d are distinct windows: different resetAt (otherwise the content
+  // dedup collapses both — same account, same reset = same line).
+  const W7D = { resetAt: new Date(NOW + 7 * 24 * 3600e3).toISOString(), resetInMin: 7 * 24 * 60 };
+  const t1 = mergeUsage([], [
+    { ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e', account: 'Newfold Digital Artemis' },
+    { ...CLAUDE_5H, ...W7D, id: 'claude-7d:ffdc8e', accountId: 'ffdc8e', account: 'Newfold Digital Artemis' },
+  ], NOW);
+  const t2 = mergeUsage(t1, [
+    { ...CLAUDE_5H, id: 'claude-5h:39e493', accountId: '39e493', account: 'Newfold Digital Artemis' },
+    { ...CLAUDE_5H, ...W7D, id: 'claude-7d:39e493', accountId: '39e493', account: 'Newfold Digital Artemis' },
+    { ...CLAUDE_5H, id: 'claude-5h:e505bc', accountId: 'e505bc', account: 'Newfold Digital Orion' },
+  ], NOW + 30_000);
+  const artemis = t2.filter((e) => e.account === 'Newfold Digital Artemis');
+  assert.equal(artemis.length, 2, 'só as linhas da key nova (5h+7d), sem fantasma da velha');
+  assert.ok(artemis.every((e) => String(e.id).endsWith(':39e493')), 'todas com o sfx novo');
+  assert.equal(t2.filter((e) => String(e.id) === 'claude-5h:e505bc').length, 1, 'Orion intacta');
+});
+
+// Counter-proof of the rule above: a prev with an sfx that REMAINS in the
+// fresh survives normally (a bad fresh doesn't zero the good value stored for the same id).
+test('mergeUsage: multi→multi com o MESMO sfx segue o fluxo anti-zeragem', () => {
+  const t1 = mergeUsage([], [{ ...CLAUDE_5H, id: 'claude-5h:39e493', accountId: '39e493' }], NOW);
+  const t2 = mergeUsage(t1, [{ ...CLAUDE_5H, id: 'claude-5h:39e493', accountId: '39e493', usedPct: null, error: '429' }], NOW + 30_000);
+  assert.equal(t2.length, 1, 'mesma família: prev bom segura o valor');
+  assert.equal(t2[0].usedPct, CLAUDE_5H.usedPct, 'valor do prev preservado');
+});
+
+// ================= review: transient collection failure × prune =================
+// Measured bug: live account B whose collection degrades (401/offline/exception
+// → only its plan-only tile comes in the fresh, claude-plan base) had the
+// concrete bar (claude-5h:<sfx>) killed ON THE SPOT by the multi→multi prune.
+// "Suffix missing from the base" doesn't distinguish a CLOSED account (suffix
+// gone from the entire fresh) from a LIVE account with a failing collection
+// (suffix alive in another base) — and the good bar must follow the
+// missing-line regime: stale until DROP_MS, not instant death.
+
+test('mergeUsage: coleta degradada da conta B (plano-só) segura a barra dela — stale, não morte', () => {
+  const A = { ...CLAUDE_5H, id: 'claude-5h:aaaaaa', accountId: 'aaaaaa', account: 'Alpha' };
+  const B = { ...CLAUDE_5H, id: 'claude-5h:bbbbbb', accountId: 'bbbbbb', account: 'Beta' };
+  const t1 = mergeUsage([], [A, B], NOW);
+  // Next tick: A ok; B degraded — only its plan-only came through (another base).
+  const degradedB = { ...CPLAN_B, id: 'claude-plan:bbbbbb', accountId: 'bbbbbb', account: 'Beta' };
+  const t2 = mergeUsage(t1, [A, degradedB], NOW + 30_000);
+  const beta = t2.find((e) => e.account === 'Beta');
+  assert.ok(beta, 'barra da Beta sobreviveu: conta viva, coleta falhou');
+  assert.equal(beta.id, 'claude-5h:bbbbbb', 'valor bom do prev segurado');
+  assert.equal(beta.usedPct, B.usedPct);
+  assert.equal(beta.stale, false, 'recém-coletada (< STALE_MS) → ainda viva');
+  assert.ok(!t2.some((e) => e.id === 'claude-plan:bbbbbb'), 'tile plano-só suprimido: concreto da própria conta presente');
+  // No recovery within DROP_MS → dies under the normal regime (not at the moment of the blip).
+  const t3 = mergeUsage(t2, [A, degradedB], NOW + 25 * 60_000);
+  assert.ok(!t3.some((e) => e.id === 'claude-5h:bbbbbb'), '20 min sem valor bom → barra CONCRETA some (regime normal)');
+  assert.ok(t3.some((e) => e.id === 'claude-plan:bbbbbb'), 'tile plano-só dela segue: conta viva, sem dado novo');
+});
+
+test('mergeUsage: conta que FECHOU (sufixo some do fresh inteiro) morre na hora', () => {
+  const A = { ...CLAUDE_5H, id: 'claude-5h:aaaaaa', accountId: 'aaaaaa' };
+  const B = { ...CLAUDE_5H, id: 'claude-5h:bbbbbb', accountId: 'bbbbbb' };
+  const t1 = mergeUsage([], [A, B], NOW);
+  const t2 = mergeUsage(t1, [A], NOW + 30_000);   // B didn't arrive in ANY base
+  assert.ok(!t2.some((e) => String(e.id).endsWith(':bbbbbb')), 'sem fantasma da conta fechada');
+});
+
+// Same mechanics in GLM: glm:<sha> is the plan-only (a base distinct from the
+// concrete glm-tokens:<sha>) — a degraded account doesn't lose its concrete bar.
+test('mergeUsage: GLM degradada (só glm:<sha> no fresh) segura glm-tokens:<sha> do prev', () => {
+  // distinct ISO resetAt in both: the content dedup key uses resetAt
+  // (resetInMin does NOT go into the key) — without this the two lines collapse into one.
+  const a = { ...GOOD('glm-tokens:abc123', 30), resetAt: new Date(NOW + 90 * 60000).toISOString() };
+  const d = { ...GOOD('glm-tokens:def456', 50), resetAt: new Date(NOW + 40 * 60000).toISOString() };
+  const t1 = mergeUsage([], [a, d], NOW);
+  const t2 = mergeUsage(t1, [
+    d,
+    { id: 'glm:abc123', agent: 'glm', plan: 'GLM Pro (z.ai)', title: 'GLM', usedPct: null, source: 'glm.api', error: null },
+  ], NOW + 30_000);
+  assert.ok(t2.some((e) => e.id === 'glm-tokens:abc123'), 'concreto da conta degradada segurado');
+});
+
+test('mergeUsage: sufixo acumulado do legado (a:sfx:sfx) colapsa e funde com o fresh', () => {
+  const legacy = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e:ffdc8e', accountId: 'ffdc8e' }];
+  const fresh = [{ ...CLAUDE_5H, id: 'claude-5h:ffdc8e', accountId: 'ffdc8e' }];
+  const t = mergeUsage(legacy, fresh, NOW);
+  const fives = t.filter((e) => String(e.id).startsWith('claude-5h'));
+  assert.equal(fives.length, 1, 'legado :sfx:sfx funde com o fresh :sfx (não fica órfão 20min)');
+  assert.equal(fives[0].id, 'claude-5h:ffdc8e');
+});
+
+// The mutation bug: in-place suffixing modified the LIVE per-token cache
+// entries — the 2nd collection within the validity returned already-suffixed
+// ids and suffixed them again (id ':sfx:sfx'). Post-fix, each round sees a
+// SINGLE suffix and the cache isn't called again (0 extra fetches).
+test('collectUsage: 2 rodadas multi com cache quente → sufixo NÃO acumula', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const mkAcc = (uuid, tok) => {
+    const d = path.join(tmp, 'prof-' + uuid);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x', accountUuid: uuid } }));
+    // named account: credentials INSIDE the dir (claude-config.credsFile), no .claude/
+    fs.writeFileSync(path.join(d, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+    return d;
+  };
+  const dirA = mkAcc('uuid-A', 'tokA'), dirB = mkAcc('uuid-B', 'tokB');
+  const f = mockFetcher({ five_hour: { utilization: 22, resets_at: '2026-07-07T17:00:00Z' }, seven_day: { utilization: 30, resets_at: '2026-07-09T12:00:00Z' } });
+  const opts = { home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW, claudeFetcher: f };
+  const r1 = await collectUsage(opts);
+  assert.equal(f.calls.length, 2, '1 fetch por conta na 1ª rodada');
+  const r2 = await collectUsage({ ...opts, now: NOW + 10_000 });  // within the cache validity
+  assert.equal(f.calls.length, 2, 'cache quente: 2ª rodada NÃO refaz o fetch');
+  assert.ok(r1.every((e) => String(e.id).split(':').length <= 2), '1ª rodada: 1 sufixo só');
+  const idA = 'claude-5h:' + claudeAccountSfx('uuid-A');
+  assert.ok(r2.some((e) => e.id === idA), '2ª rodada: id com UM sufixo, cache intocado');
+  assert.ok(r2.every((e) => String(e.id).split(':').length <= 2), 'sufixo não acumulou entre rodadas');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// The 429 cooldown used to be GLOBAL: a 429 on account A injected the same
+// cooldownUntil into EVERY account — healthy B returned stale/planOnly for the
+// whole window (and post-restart, with an empty per-token cache, it went
+// plan-only without ever taking a 429). Post-fix the cooldown is PER ACCOUNT:
+// only the one that took the 429 waits; the others hit the API normally.
+test('collectUsage: cooldown 429 é POR CONTA — conta sadia bate na API com a outra em cooldown', async () => {
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  const mkAcc = (uuid, tok) => {
+    const d = path.join(tmp, 'prof-' + uuid);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.claude.json'), JSON.stringify({ oauthAccount: {
+      organizationRateLimitTier: 'default_claude_max_5x', accountUuid: uuid } }));
+    fs.writeFileSync(path.join(d, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: tok } }));
+    return d;
+  };
+  const dirA = mkAcc('uuid-A', 'tokA'), dirB = mkAcc('uuid-B', 'tokB');
+  const f = mockFetcher({ five_hour: { utilization: 22, resets_at: '2026-07-07T17:00:00Z' } });
+  const out = await collectUsage({
+    home: tmp, claudeAccounts: [{ dir: dirA }, { dir: dirB }], now: NOW, claudeFetcher: f,
+    claudeCooldowns: { 'uuid-A': { until: NOW + 10 * 60_000, fails: 1 } },
+  });
+  assert.equal(f.calls.length, 1, 'só a conta sadia (B) bateu na API');
+  assert.equal(f.calls[0].headers.Authorization, 'Bearer tokB', 'a call foi da conta B');
+  const planA = out.find((e) => e.id === 'claude-plan:' + claudeAccountSfx('uuid-A'));
+  const fiveB = out.find((e) => e.id === 'claude-5h:' + claudeAccountSfx('uuid-B'));
+  assert.ok(planA && planA.usedPct == null, 'A em cooldown → plano-só dela (sem rede)');
+  assert.ok(fiveB && fiveB.usedPct === 22, 'B sadia → % real da API');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });

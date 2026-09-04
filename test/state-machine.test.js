@@ -1,11 +1,11 @@
-// Testes das funções puras: computeState / iconFor (state-machine.js) e
-// agentOf (agents.js). Rodam com `node --test` (nativo, sem dependências).
+// Tests for the pure functions: computeState / iconFor (state-machine.js) and
+// agentOf (agents.js). Run with `node --test` (native, no dependencies).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { computeState, iconFor, sortByUrgency } = require('../src/state-machine.js');
+const { computeState, iconFor, sortByUrgency, groupBreaks } = require('../src/state-machine.js');
 const { agentOf } = require('../src/agents.js');
 
-const NOW = 1_800_000_000;                 // epoch fixo (testes determinísticos)
+const NOW = 1_800_000_000;                 // fixed epoch (deterministic tests)
 const state = (last_event, agoSec = 0) => ({ last_event, last_event_ts: NOW - agoSec });
 
 test('computeState: eventos de processamento → amarelo/tool', () => {
@@ -22,31 +22,31 @@ test('computeState: razões explícitas de "precisa de você" → vermelho', () 
 });
 
 test('computeState: readAt rebaixa vermelho → read (cinza) quando cobre o evento', () => {
-  // sessão vermelha por permissão, evento em NOW-10
+  // session red due to permission, event at NOW-10
   const s = state('PermissionRequest', 10);        // last_event_ts = NOW - 10
-  // sem readAt → vermelho normal
+  // without readAt → normal red
   assert.deepEqual(computeState(s, NOW), { level: 'awaiting', reason: 'permission' });
-  // readAt >= last_event_ts → LIDO (cinza), preserva a razão
+  // readAt >= last_event_ts → READ (gray), keeps the reason
   assert.deepEqual(computeState(s, NOW, null, NOW - 10), { level: 'read', reason: 'permission' });
   assert.deepEqual(computeState(s, NOW, null, NOW), { level: 'read', reason: 'permission' });
 });
 
 test('computeState: evento vermelho NOVO (ts > readAt) reacende', () => {
-  // marcou lido em NOW-100, mas o evento é mais recente (NOW-5)
+  // marked read at NOW-100, but the event is more recent (NOW-5)
   const s = state('PostToolUseFailure', 5);        // last_event_ts = NOW - 5
   assert.deepEqual(computeState(s, NOW, null, NOW - 100), { level: 'awaiting', reason: 'error' },
     'notificação nova depois da marca → volta a vermelho');
 });
 
 test('computeState: readAt NÃO afeta amarelo nem verde', () => {
-  // processando (amarelo) nunca vira cinza
+  // processing (yellow) never turns gray
   assert.deepEqual(computeState(state('PreToolUse'), NOW, null, NOW), { level: 'processing', reason: 'tool' });
-  // terminado (verde) nunca vira cinza
+  // done (green) never turns gray
   assert.deepEqual(computeState(state('Stop'), NOW, null, NOW), { level: 'done', reason: 'ok' });
 });
 
 test('computeState: idle escalado (awaiting) também pode ser marcado lido', () => {
-  // Stop antigo → escalou pra awaiting/idle; readAt cobrindo → read
+  // old Stop → escalated to awaiting/idle; readAt covering it → read
   const s = state('Stop', 400);                    // > threshold default (300s)
   assert.deepEqual(computeState(s, NOW, null), { level: 'awaiting', reason: 'idle' });
   assert.deepEqual(computeState(s, NOW, null, NOW - 400), { level: 'read', reason: 'idle' });
@@ -64,15 +64,15 @@ test('sortByUrgency: read vai pro fim (menos urgente que done)', () => {
 
 test('computeState: Notification classifica por notification_type (não por message)', () => {
   const notif = (type) => ({ ...state('Notification'), notification_type: type });
-  // benignos → verde (auth/elicitação concluída/respondida)
+  // benign → green (auth/elicitation completed/answered)
   for (const t of ['auth_success', 'elicitation_complete', 'elicitation_response']) {
     assert.deepEqual(computeState(notif(t), NOW), { level: 'done', reason: 'ok' }, `${t} → benigno`);
   }
-  // precisa de você → vermelho
+  // needs you → red
   for (const t of ['permission_prompt', 'idle_prompt', 'elicitation_dialog']) {
     assert.deepEqual(computeState(notif(t), NOW), { level: 'awaiting', reason: 'question' }, `${t} → vermelho`);
   }
-  // tipo desconhecido → conservador vermelho (não arriscar falso verde)
+  // unknown type → conservative red (don't risk a false green)
   assert.deepEqual(computeState(notif('new_future_type'), NOW), { level: 'awaiting', reason: 'question' }, 'desconhecido → vermelho');
 });
 
@@ -88,7 +88,7 @@ test('computeState: Stop recente → verde', () => {
 test('computeState: escalada idle só no Stop, limite 5min', () => {
   assert.deepEqual(computeState(state('Stop', 299), NOW), { level: 'done', reason: 'ok' }, 'abaixo do limite');
   assert.deepEqual(computeState(state('Stop', 301), NOW), { level: 'awaiting', reason: 'idle' }, 'acima do limite');
-  // SessionEnd/SessionStart NÃO escalam mesmo idle
+  // SessionEnd/SessionStart do NOT escalate even when idle
   assert.deepEqual(computeState(state('SessionEnd', 9999), NOW), { level: 'done', reason: 'ok' });
 });
 
@@ -98,7 +98,7 @@ test('computeState: evento desconhecido → verde conservador', () => {
 
 test('sortByUrgency: urgência primária (🔴>🟡>🟢>read); mesmo nível = ESTÁVEL por origem+id (local agrupa antes dos peers)', () => {
   const mk = (level, id, origin) => ({ s: { session_id: id, origin: origin || 'local', last_event_ts: 0 }, st: { level } });
-  // verde, 2 vermelhos (local + remoto), amarelo — ordem de entrada embaralhada
+  // green, 2 reds (local + remote), yellow — shuffled input order
   const ranked = [mk('done', 'd1'), mk('awaiting', 'r1', 'local'), mk('processing', 'p1'), mk('awaiting', 'r2', 'notebook-hg')];
   const out = sortByUrgency(ranked).map((r) => `${r.st.level}:${r.s.origin}:${r.s.session_id}`);
   assert.deepEqual(out, ['awaiting:local:r1', 'awaiting:notebook-hg:r2', 'processing:local:p1', 'done:local:d1']);
@@ -106,8 +106,8 @@ test('sortByUrgency: urgência primária (🔴>🟡>🟢>read); mesmo nível = E
 
 test('sortByUrgency: local antes dos peers mesmo quando o hostname ordena antes (alienware < local)', () => {
   const mk = (level, id, origin) => ({ s: { session_id: id, origin: origin || 'local', last_event_ts: 0 }, st: { level } });
-  // 'alienware' < 'local' alfabeticamente — antes do fix (string pura de origin),
-  // o peer vinha antes do local (PR-32 #20).
+  // 'alienware' < 'local' alphabetically — before the fix (plain origin string),
+  // the peer came before local (PR-32 #20).
   const ranked = [mk('done', 'a1', 'alienware'), mk('done', 'l1', 'local'), mk('done', 'z9', 'notebook-hg')];
   const out = sortByUrgency(ranked).map((r) => `${r.s.origin}:${r.s.session_id}`);
   assert.deepEqual(out, ['local:l1', 'alienware:a1', 'notebook-hg:z9'], 'local primeiro (peso 0), depois peers em ordem alfabética');
@@ -120,8 +120,53 @@ test('sortByUrgency: não muta o array original', () => {
   assert.deepEqual(ranked.map((r) => r.st.level), snap, 'original intacto');
 });
 
+// ---- sortByUrgency originFirst (#54): contiguous host blocks ----
+test('sortByUrgency {originFirst}: origem é chave primária — peer 🔴 NÃO invade o bloco local', () => {
+  const mk = (level, id, origin) => ({ s: { session_id: id, origin: origin || 'local', last_event_ts: 0 }, st: { level } });
+  // same scenario as the test above, but with originFirst: urgency (peer 🔴)
+  // orders WITHIN the block, not between blocks — without this the peer's
+  // header would show up in the MIDDLE of the local rows (fragmented block).
+  const ranked = [mk('done', 'd1'), mk('awaiting', 'r1', 'local'), mk('processing', 'p1'), mk('awaiting', 'r2', 'notebook-hg')];
+  const out = sortByUrgency(ranked, { originFirst: true }).map((r) => `${r.s.origin}:${r.s.session_id}`);
+  assert.deepEqual(out, ['local:r1', 'local:p1', 'local:d1', 'notebook-hg:r2'],
+    'bloco local contíguo (urgência interna), depois o peer');
+});
+
+test('sortByUrgency {originFirst}: peers entre si em ordem alfabética, blocos contíguos', () => {
+  const mk = (level, id, origin) => ({ s: { session_id: id, origin, last_event_ts: 0 }, st: { level } });
+  const ranked = [mk('done', 'z1', 'zeta'), mk('awaiting', 'a1', 'alpha'), mk('processing', 'l1', 'local')];
+  const out = sortByUrgency(ranked, { originFirst: true }).map((r) => `${r.s.origin}:${r.s.session_id}`);
+  assert.deepEqual(out, ['local:l1', 'alpha:a1', 'zeta:z1'], 'local, depois peers A→Z, cada um contíguo');
+});
+
+// ---- groupBreaks (#54): block cuts by origin in an already sorted list ----
+test('groupBreaks: um corte por transição de origem, com count e startIdx', () => {
+  const mk = (id, origin) => ({ s: { session_id: id, origin }, st: { level: 'done' } });
+  // list ALREADY sorted (sortByUrgency): 2 local, 2 from peer A, 1 from peer B
+  const ordered = [mk('l1'), mk('l2'), mk('a1', 'alpha'), mk('a2', 'alpha'), mk('b1', 'beta')];
+  assert.deepEqual(groupBreaks(ordered), [
+    { origin: 'local', startIdx: 0, count: 2, worst: 'done' },
+    { origin: 'alpha', startIdx: 2, count: 2, worst: 'done' },
+    { origin: 'beta', startIdx: 4, count: 1, worst: 'done' },
+  ]);
+});
+
+test('groupBreaks: worst é o nível mais urgente do bloco (awaiting > processing > done > read)', () => {
+  const mk = (id, origin, level) => ({ s: { session_id: id, origin }, st: { level } });
+  const ordered = [mk('r1', 'local', 'read'), mk('d1', 'local', 'done'), mk('p1', 'alpha', 'processing'), mk('a1', 'alpha', 'awaiting')];
+  const breaks = groupBreaks(ordered);
+  assert.equal(breaks[0].worst, 'done', 'done mais urgente que read');
+  assert.equal(breaks[1].worst, 'awaiting', 'awaiting mais urgente que processing');
+});
+
+test('groupBreaks: lista vazia e bloco único', () => {
+  assert.deepEqual(groupBreaks([]), []);
+  const mk = (id) => ({ s: { session_id: id, origin: 'local' }, st: { level: 'done' } });
+  assert.deepEqual(groupBreaks([mk('l1'), mk('l2')]), [{ origin: 'local', startIdx: 0, count: 2, worst: 'done' }], '1 bloco = 1 corte');
+});
+
 test('sortByUrgency: mesmo nível NÃO reordena por timestamp (estável — evita a lista pular a cada evento)', () => {
-  // 2 done com timestamps trocados: a ordem é por identidade, não por ts.
+  // 2 done with swapped timestamps: order is by identity, not by ts.
   const ranked = [
     { s: { session_id: 'a', origin: 'local', last_event_ts: 10 }, st: { level: 'done' } },
     { s: { session_id: 'b', origin: 'local', last_event_ts: 90 }, st: { level: 'done' } },

@@ -1,6 +1,6 @@
-// term-renderer.js — UI da janela Terminal (src/term.html). Renderer "burro":
-// só desenha abas + xterm; TODO o estado (pty/ws) vive no main (Map termSessions).
-// Um xterm por aba; só o holder da aba ativa é visível. IPC por tabId.
+// term-renderer.js — UI for the Terminal window (src/term.html). "Dumb" renderer:
+// only draws tabs + xterm; ALL state (pty/ws) lives in main (Map termSessions).
+// One xterm per tab; only the active tab's holder is visible. IPC keyed by tabId.
 const terms = new Map();       // tabId -> { term, fit, holder }
 let activeTabId = null;
 const $tabs = document.getElementById('tabs');
@@ -8,7 +8,7 @@ const $area = document.getElementById('termArea');
 
 function ensureTerm(tabId) {
   if (terms.has(tabId)) return terms.get(tabId);
-  // FitAddon UMD pode ser a classe direta ou {FitAddon} (CJS) — robusto aos 2.
+  // FitAddon UMD may be the class itself or {FitAddon} (CJS) — robust to both.
   const FitCls = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
   if (!window.Terminal || !FitCls) return null;
   const term = new window.Terminal({ fontSize: 12, fontFamily: 'monospace', cursorBlink: true,
@@ -34,10 +34,10 @@ function showTab(tabId) {
   if (t) {
     if (areaVisible()) { try { t.fit.fit(); } catch {} }
     t.term.focus();
-    // 2º fit após o paint: o holder acabou de ficar visível, o layout final só
-    // vem depois do frame; refaz fit + repassa o tamanho ao pty/tmux (senão o
-    // tmux ficava com o tamanho antigo e não preenchia a janela). Só quando há
-    // área de verdade — com a janela oculta o fit colapsaria pra 2x1.
+    // 2nd fit after paint: the holder has just become visible, the final layout
+    // only settles after the frame; re-fit + forward the size to the pty/tmux
+    // (otherwise tmux kept the old size and did not fill the window). Only when
+    // there is a real area — with the window hidden the fit would collapse to 2x1.
     requestAnimationFrame(() => {
       if (activeTabId !== tabId) return;
       try { t.term.focus(); } catch {}
@@ -51,29 +51,30 @@ function showTab(tabId) {
   }
 }
 
-// Guarda contra fit/resize com o layout zerado (janela oculta/minimizada): o
-// FitAddon clampa no MÍNIMO (2 cols x 1 row) e mandaríamos esse tamanho pro
-// tmux. Medido: esconder a termWin nem sempre zera o layout, mas minimizar e
-// trocar de workspace zeram — então a checagem fica.
+// Guard against fit/resize with a zeroed layout (hidden/minimized window):
+// FitAddon clamps to the MINIMUM (2 cols x 1 row) and we would send that size
+// to tmux. Measured: hiding termWin does not always zero the layout, but
+// minimizing and switching workspaces do — so the check stays.
 function areaVisible() {
   const r = $area.getBoundingClientRect();
   return r.width > 1 && r.height > 1;
 }
 
-// Força o xterm a REDESENHAR o que já está no buffer. Esconder e reabrir a
-// janela (termWin.hide()/show()) descarta as texturas do canvas do xterm, mas
-// NÃO o buffer — medido: as linhas continuam todas lá, a tela é que fica em
-// branco. Sem nada que invalide o render, o xterm não repinta sozinho: ele só
-// desenha o que MUDA, e nada mudou. refresh() marca todas as linhas como sujas.
+// Forces xterm to REDRAW what is already in the buffer. Hiding and reopening
+// the window (termWin.hide()/show()) discards the xterm canvas textures, but
+// NOT the buffer — measured: all lines are still there, only the screen goes
+// blank. With nothing invalidating the render, xterm does not repaint on its
+// own: it only draws what CHANGES, and nothing changed. refresh() marks all
+// lines as dirty.
 function repaint(t) {
   if (!t) return;
-  // clearTextureAtlas() ANTES do refresh: o refresh sozinho remarca as linhas
-  // como sujas, mas o renderer redesenha usando o ATLAS DE GLIFOS em cache —
-  // e é ele que se corrompe quando a janela é ocultada/reexibida (o próprio
-  // xterm documenta esse método como workaround pra textura corrompida, ex.
-  // Chromium/Nvidia ao retomar da suspensão). Sem limpar o atlas o texto volta
-  // "apagado"/fantasma em vez de nítido. Descartar o atlas força o redesenho
-  // de cada glifo do zero.
+  // clearTextureAtlas() BEFORE refresh: refresh alone re-marks the lines as
+  // dirty, but the renderer redraws using the cached GLYPH ATLAS — and that is
+  // what gets corrupted when the window is hidden/re-shown (xterm itself
+  // documents this method as a workaround for corrupted textures, e.g.
+  // Chromium/Nvidia on resume from suspend). Without clearing the atlas the
+  // text comes back "erased"/ghosted instead of crisp. Discarding the atlas
+  // forces each glyph to be redrawn from scratch.
   try { t.term.clearTextureAtlas(); } catch {}
   try { t.term.refresh(0, t.term.rows - 1); } catch {}
 }
@@ -88,18 +89,18 @@ function fitActive() {
   }
 }
 
-// Re-fit uma aba específica e re-envia o tamanho ao pty/ws. Usado quando a
-// CONEXÃO (re)estabelece (revive): o `start` foi mandado com o tamanho que
-// estava em s.cols/s.rows, que pode estar defasado do xterm atual — o tmux
-// remoto então desenhava no tamanho errado e o conteúdo vinha "mal
-// posicionado". Re-fit pega o tamanho real da janela e re-envia.
+// Re-fit a specific tab and re-send the size to the pty/ws. Used when the
+// CONNECTION is (re)established (revive): `start` was sent with the size that
+// was in s.cols/s.rows, which may be stale relative to the current xterm —
+// the remote tmux then drew at the wrong size and the content came in
+// "mispositioned". Re-fit takes the actual window size and re-sends it.
 function refitTab(tabId) {
   const t = terms.get(tabId);
   if (!t) return;
   const previousActiveTabId = activeTabId;
   const hidden = new Map([...terms].map(([id, x]) => [id, x.holder.hidden]));
   try {
-    // garante que o holder dessa aba está visível apenas durante a medição
+    // ensure this tab's holder is visible only during the measurement
     if (t.holder.hidden) { for (const [id, x] of terms) x.holder.hidden = (id !== tabId); }
     if (!areaVisible()) return;
     try { t.fit.fit(); } catch {}
@@ -115,11 +116,11 @@ function refitTab(tabId) {
   }
 }
 
-// ---- eventos do main ----
-// O main só entrega o term-tab-added quando a termWin está ESTÁVEL (senão o
-// xterm abria durante a transição hide→show e o render quebrava — aba preta).
-// Enquanto o term-tab-added não chega, o pty-out é bufferizado aqui e escrito
-// na criação da aba.
+// ---- main events ----
+// Main only delivers term-tab-added once termWin is STABLE (otherwise the
+// xterm opened during the hide→show transition and the render broke — black
+// tab). Until term-tab-added arrives, pty-out is buffered here and written
+// upon tab creation.
 const pendingOut = new Map();
 function doTermTabAdded(tabId, title) {
   ensureTerm(tabId);
@@ -132,13 +133,13 @@ function doTermTabAdded(tabId, title) {
   btn.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); window.trafficLight.closeTab(tabId); });
   $tabs.appendChild(btn);
   showTab(tabId);
-  // Output que chegou antes do term-tab-added: agora o xterm existe → escreve.
+  // Output that arrived before term-tab-added: the xterm now exists → write it.
   const arr = pendingOut.get(tabId);
   if (arr) { pendingOut.delete(tabId); const t = terms.get(tabId); if (t) for (const d of arr) t.term.write(d); }
 }
 window.trafficLight.onPtyOut(({ tabId, data }) => {
   const t = terms.get(tabId);
-  if (!t) {                                       // term ainda não criado (main segura o tab-added) → bufferiza
+  if (!t) {                                       // term not yet created (main holds the tab-added) → buffer
     const a = pendingOut.get(tabId) || []; a.push(data); pendingOut.set(tabId, a);
     return;
   }
@@ -153,7 +154,7 @@ window.trafficLight.onTermTabRemoved(({ tabId }) => {
   const t = terms.get(tabId);
   if (t) { try { t.term.dispose(); } catch {} }
   terms.delete(tabId);
-  pendingOut.delete(tabId);   // saída tardia de sessão removida não recria buffer órfão
+  pendingOut.delete(tabId);   // late output from a removed session does not recreate an orphan buffer
   for (const b of $tabs.querySelectorAll('.tab[data-tab="' + tabId + '"]')) b.remove();
   if (activeTabId === tabId) {
     const next = terms.keys().next();
@@ -185,38 +186,38 @@ async function toggleHostMenu() {
 }
 document.getElementById('newTabBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleHostMenu(); });
 document.addEventListener('click', (e) => { if (!$hostMenu.hidden && !$hostMenu.contains(e.target)) $hostMenu.hidden = true; });
-// ---- chrome custom (frameless): botões de janela + estado maximizado ----
+// ---- custom chrome (frameless): window buttons + maximized state ----
 document.getElementById('winMinBtn').addEventListener('click', () => window.trafficLight.termWinControl('min'));
 document.getElementById('winMaxBtn').addEventListener('click', () => window.trafficLight.termWinControl('max'));
 document.getElementById('winCloseBtn').addEventListener('click', () => window.trafficLight.termWinControl('close'));
 window.trafficLight.onTermMaximized((max) => document.getElementById('termApp').classList.toggle('maximized', !!max));
-// Sinal do main (show/restore da janela) — mais confiável que visibilitychange,
-// que nem sempre dispara no hide/show de uma BrowserWindow no Linux.
+// Signal from main (window show/restore) — more reliable than visibilitychange,
+// which does not always fire on hide/show of a BrowserWindow on Linux.
 window.trafficLight.onTermShown(() => {
-  // Reabrir a termWin (hide→show): o canvas do xterm é descartado enquanto a
-  // janela esteve oculta. Repintamos no rAF e de novo ~260ms depois — no X11
-  // frameless+transparent o remapeamento pelo WM é assíncrono, e o 1º repaint
-  // pode rodar ANTES do canvas reanexar (a aba reabria preta). O 2º pega a
-  // janela já estável.
+  // Reopening termWin (hide→show): the xterm canvas was discarded while the
+  // window was hidden. Repaint on rAF and again ~260ms later — on X11
+  // frameless+transparent the WM remap is asynchronous, and the 1st repaint
+  // may run BEFORE the canvas re-attaches (the tab would reopen black). The
+  // 2nd catches the window already stable.
   const t = terms.get(activeTabId);
   const once = () => { fitActive(); repaint(t); };
   requestAnimationFrame(once);
   setTimeout(() => requestAnimationFrame(once), 260);
 });
-// Conexão (re)estabelecida (revive): re-fit + re-envia o tamanho p/ a aba certa,
-// senão o tmux remoto desenha no tamanho defasado e o conteúdo fica mal posicionado.
+// Connection (re)established (revive): re-fit + re-send the size for the right
+// tab, otherwise the remote tmux draws at the stale size and content is mispositioned.
 window.trafficLight.onTermRefit(({ tabId }) => {
   requestAnimationFrame(() => { refitTab(tabId); });
 });
 
-// resize: refaz fit da aba ativa e avisa o main (pty/ws) do novo tamanho
+// resize: re-fit the active tab and notify main (pty/ws) of the new size
 if (typeof ResizeObserver !== 'undefined') (new ResizeObserver(fitActive)).observe($area);
 window.addEventListener('resize', fitActive);
-// A janela VOLTOU a aparecer (× esconde, ⧉ mostra de novo; minimizar/restaurar;
-// troca de workspace). O canvas do xterm foi descartado enquanto ela estava
-// oculta, mas o buffer não — sem repintar, a aba reabre em BRANCO mesmo com o
-// tmux vivo do outro lado. 'visibilitychange' cobre o hide/show da BrowserWindow;
-// 'focus' cobre o restore do WM.
+// The window CAME BACK into view (× hides, ⧉ shows again; minimize/restore;
+// workspace switch). The xterm canvas was discarded while it was hidden, but
+// the buffer was not — without repainting, the tab reopens BLANK even with
+// tmux alive on the other side. 'visibilitychange' covers BrowserWindow
+// hide/show; 'focus' covers the WM restore.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   requestAnimationFrame(() => { fitActive(); repaint(terms.get(activeTabId)); });
@@ -224,7 +225,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', () => {
   requestAnimationFrame(() => repaint(terms.get(activeTabId)));
 });
-// ---- grip de resize (canto inferior direito) — janela frameless não tem resize nativo ----
+// ---- resize grip (bottom-right corner) — a frameless window has no native resize ----
 const $grip = document.getElementById('termGrip');
 let resizing = null;
 if ($grip) {

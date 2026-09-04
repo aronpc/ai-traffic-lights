@@ -1,56 +1,57 @@
-// state-machine.js — computa o estado do semáforo a partir do state file.
+// state-machine.js — computes the traffic-light state from the state file.
 //
-// POR QUE ISSO RODA NO RENDERER (e não no hook): a escalada idle (verde→vermelho
-// após N min) exige comparar o timestamp do último Stop com o AGORA. O hook é
-// event-driven (sem relógio); só o renderer tem um setInterval pra reavaliar.
+// WHY THIS RUNS IN THE RENDERER (and not in the hook): idle escalation
+// (green→red after N min) requires comparing the last Stop's timestamp against
+// NOW. The hook is event-driven (no clock); only the renderer has a
+// setInterval to re-evaluate.
 //
-// Decisões (plano §6): 3 cores. Erro = vermelho ⚠. Idle > N min escala p/ vermelho.
-// `reason` é o sub-ícone (motivo), não uma cor nova.
+// Decisions (plan §6): 3 colors. Error = red ⚠. Idle > N min escalates to red.
+// `reason` is the sub-icon (the reason), not a new color.
 
-// Defaults da escalada idle — sobrescritos pelo cfg de computeState quando o
-// usuário configura (ver src/settings.js + janela de Preferências).
-const DEFAULT_IDLE_THRESHOLD_SEC = 5 * 60;  // verde→vermelho após 5 min parado
-const DEFAULT_ESCALATE_IDLE = true;         // toggle (plano §6, opção c)
+// Idle escalation defaults — overridden by computeState's cfg when the user
+// configures them (see src/settings.js + the Preferences window).
+const DEFAULT_IDLE_THRESHOLD_SEC = 5 * 60;  // green→red after 5 min idle
+const DEFAULT_ESCALATE_IDLE = true;         // toggle (plan §6, option c)
 
-// Mapa evento → {level, reason}. Razões explícitas (awaiting) vêm primeiro.
-// Notification NÃO está aqui — é classificado por notification_type abaixo
-// (auth_success / elicitation_complete / elicitation_response são benignos).
+// Event → {level, reason} map. Explicit (awaiting) reasons come first.
+// Notification is NOT here — it is classified by notification_type below
+// (auth_success / elicitation_complete / elicitation_response are benign).
 const REASON_FOR = {
   PermissionRequest: { level: 'awaiting', reason: 'permission' },
   Question: { level: 'awaiting', reason: 'question' },
   PostToolUseFailure: { level: 'awaiting', reason: 'error' },
 };
 
-// Tipos de Notification que NÃO precisam do usuário (docs do Claude Code):
-//   auth_success            — autenticação deu certo
-//   elicitation_complete    — fluxo de elicitação do MCP terminou
-//   elicitation_response    — usuário respondeu a uma elicitação
-// Os demais (permission_prompt, idle_prompt, elicitation_dialog) são 🔴.
-// Classifica pelo notification_type, NUNCA por substring da message
-// (instável entre versões e sujeito a i18n).
+// Notification types that do NOT need the user (Claude Code docs):
+//   auth_success            — authentication succeeded
+//   elicitation_complete    — the MCP elicitation flow finished
+//   elicitation_response    — user answered an elicitation
+// The others (permission_prompt, idle_prompt, elicitation_dialog) are 🔴.
+// Classify by notification_type, NEVER by substring of message (unstable
+// across versions and subject to i18n).
 const BENIGN_NOTIFICATION_TYPES = new Set(['auth_success', 'elicitation_complete', 'elicitation_response']);
 
 const PROCESSING_EVENTS = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
 
-// Ícone por motivo (sub-ícone ao lado do nome).
+// Icon per reason (sub-icon next to the name).
 const REASON_ICON = {
   permission: '🔑', question: '❓', error: '⚠', idle: '⏰', tool: '🛠', ok: '✓',
 };
 
 /**
- * @param {object} state  state file parseado {last_event, last_event_ts, ...}
- * @param {number} nowSec  epoch atual (Date.now()/1000)
- * @param {object} [cfg]   {idleThresholdSec, escalateIdle} — configurável
- * @param {number} [readAt]  ts (epoch s) até o qual a sessão foi marcada LIDA.
- *   Se a sessão estaria 'awaiting' mas o último evento é <= readAt (nenhuma
- *   notificação nova desde a marca), rebaixa para 'read' (cinza). Um evento
- *   vermelho com last_event_ts > readAt reacende naturalmente.
+ * @param {object} state  parsed state file {last_event, last_event_ts, ...}
+ * @param {number} nowSec  current epoch (Date.now()/1000)
+ * @param {object} [cfg]   {idleThresholdSec, escalateIdle} — configurable
+ * @param {number} [readAt]  ts (epoch s) up to which the session was marked READ.
+ *   If the session would be 'awaiting' but the last event is <= readAt (no new
+ *   notification since the mark), demote it to 'read' (gray). A red event with
+ *   last_event_ts > readAt re-lights naturally.
  * @returns {{level:'processing'|'done'|'awaiting'|'read', reason:string|null}}
  */
 function computeState(state, nowSec, cfg, readAt) {
   const st = baseState(state, nowSec, cfg);
-  // "Marcar como lido": só rebaixa vermelhos (awaiting) e só se a marca cobre o
-  // evento atual. Amarelo/verde nunca viram cinza. O readAt é por-sessão.
+  // "Mark as read": only demotes reds (awaiting) and only if the mark covers
+  // the current event. Yellow/green never turn gray. readAt is per-session.
   if (st.level === 'awaiting' && typeof readAt === 'number'
       && (state.last_event_ts || 0) <= readAt) {
     return { level: 'read', reason: st.reason };
@@ -63,7 +64,7 @@ function baseState(state, nowSec, cfg) {
   const escalate = cfg ? cfg.escalateIdle : DEFAULT_ESCALATE_IDLE;
   const threshold = cfg ? cfg.idleThresholdSec : DEFAULT_IDLE_THRESHOLD_SEC;
 
-  // 1. Notification: classifica pelo notification_type (benigno → verde).
+  // 1. Notification: classify by notification_type (benign → green).
   if (last === 'Notification') {
     if (state.notification_type && BENIGN_NOTIFICATION_TYPES.has(state.notification_type)) {
       return { level: 'done', reason: 'ok' };
@@ -71,13 +72,13 @@ function baseState(state, nowSec, cfg) {
     return { level: 'awaiting', reason: 'question' };
   }
 
-  // 2. Razões explícitas de "precisa de você" (vermelho).
+  // 2. Explicit "needs you" reasons (red).
   if (REASON_FOR[last]) return REASON_FOR[last];
 
-  // 3. Processando (amarelo).
+  // 3. Processing (yellow).
   if (PROCESSING_EVENTS.has(last)) return { level: 'processing', reason: 'tool' };
 
-  // 4. Terminado (verde) — com escalada idle opcional.
+  // 4. Done (green) — with optional idle escalation.
   if (last === 'Stop' || last === 'SessionStart' || last === 'SessionEnd') {
     const ageSec = nowSec - (state.last_event_ts || 0);
     if (escalate && last === 'Stop' && ageSec > threshold) {
@@ -86,43 +87,86 @@ function baseState(state, nowSec, cfg) {
     return { level: 'done', reason: 'ok' };
   }
 
-  // 5. Evento desconhecido → conservador verde.
+  // 5. Unknown event → conservative green.
   return { level: 'done', reason: null };
 }
 
 function iconFor(st) {
-  if (st.level === 'read') return '👁';                 // lido (silenciado até nova notificação)
+  if (st.level === 'read') return '👁';                 // read (silenced until a new notification)
   return REASON_ICON[st.reason] || (st.level === 'processing' ? '🛠' : '✓');
 }
 
-// ---- ordenação por urgência (vermelhos no topo) ----
-// Rank: awaiting (🔴) < processing (🟡) < done (🟢) < read (cinza, resolvido).
-// Dentro do mesmo nível NÃO há ordenação por tempo (mais antiga/espera há mais
-// tempo): a chave é ESTÁVEL — local antes de peers, peers em ordem alfabética,
-// depois id da sessão. Ordenar por last_event_ts faria a lista reordenar a cada
-// tool call (~2s), confundindo local/remoto e causando mis-click no topo.
+// ---- urgency ordering (reds at the top) ----
+// Rank: awaiting (🔴) < processing (🟡) < done (🟢) < read (gray, resolved).
+// Within the same level there is NO time ordering (oldest/waiting the
+// longest): the key is STABLE — local before peers, peers in alphabetical
+// order, then session id. Sorting by last_event_ts would make the list
+// re-sort on every tool call (~2s), confusing local/remote and causing
+// mis-clicks at the top.
 const URGENCY_RANK = { awaiting: 0, processing: 1, done: 2, read: 3 };
-function sortByUrgency(ranked) {
-  // Chave ESTÁVEL por id (não por last_event_ts, que muda a cada tool call e
-  // faria a lista REORDENAR a cada ~2s — confundia local/remoto, causava
-  // mis-click). A lista só muda quando a URGÊNCIA muda.
+// opts.originFirst (grouped mode, #54): ORIGIN as the primary key (local
+// first, peers alphabetical) and urgency WITHIN the block. Without it urgency
+// is primary — a 🔴 peer comes before local 🟢 — which is the flat list's
+// behavior, but it would fragment host blocks into several pieces (repeated
+// header in the middle).
+function sortByUrgency(ranked, opts) {
+  // STABLE key by id (not by last_event_ts, which changes on every tool call
+  // and would make the list RE-SORT every ~2s — it confused local/remote,
+  // caused mis-clicks). The list only changes when URGENCY changes.
   const skey = (x) => ((x.s && (x.s.session_id || x.s.pid)) || '');
   const originOf = (x) => ((x.s && x.s.origin) || 'local');
   const isLocal = (x) => { const o = originOf(x); return !o || o === 'local'; };
-  return [...ranked].sort((a, b) => {
-    const la = (a.st && a.st.level) || 'done';
-    const lb = (b.st && b.st.level) || 'done';
-    if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
-    // Mesmo nível: LOCAL (este host) sempre antes dos peers — evita mis-click e
-    // agrupa a máquina do usuário no topo. Antes era string pura de origin, e
-    // hostnames comuns ("alienware") ordenavam antes de "local" (PR-32 #20).
+  const originFirst = !!(opts && opts.originFirst);
+  const byOrigin = (a, b) => {
+    // LOCAL (this host) always before peers — avoids mis-clicks and
+    // groups the user's machine at the top. It used to be a plain origin
+    // string sort, and common hostnames ("alienware") sorted before "local"
+    // (PR-32 #20).
     const al = isLocal(a), bl = isLocal(b);
     if (al !== bl) return al ? -1 : 1;
     const oa = originOf(a), ob = originOf(b);
-    if (oa !== ob) return oa < ob ? -1 : 1;   // peers: ordem alfabética estável
+    if (oa !== ob) return oa < ob ? -1 : 1;   // peers: stable alphabetical order
+    return 0;
+  };
+  return [...ranked].sort((a, b) => {
+    const la = (a.st && a.st.level) || 'done';
+    const lb = (b.st && b.st.level) || 'done';
+    if (originFirst) {
+      const o = byOrigin(a, b);
+      if (o) return o;
+    }
+    if (la !== lb) return URGENCY_RANK[la] - URGENCY_RANK[lb];
+    if (!originFirst) {
+      const o = byOrigin(a, b);
+      if (o) return o;
+    }
     const ka = skey(a), kb = skey(b);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 }
 
-if (typeof module !== 'undefined') module.exports = { computeState, iconFor, sortByUrgency };
+// ---- grouping by host (#54) ----
+// Group cuts of a list ALREADY ordered by sortByUrgency (which leaves
+// sessions contiguous by origin: local first, peers alphabetical). Each cut
+// describes a block: {origin, startIdx, count, worst} — startIdx is the index
+// in `ordered` where the block starts, worst the most urgent level inside it
+// (for the header to summarize "notebook-hg · 3 🔴"). Pure: the renderer
+// decides whether to draw.
+function groupBreaks(ordered) {
+  const breaks = [];
+  let cur = null;
+  for (let i = 0; i < ordered.length; i++) {
+    const s = (ordered[i] && ordered[i].s) || {};
+    const level = (ordered[i].st && ordered[i].st.level) || 'done';
+    const origin = s.origin || 'local';
+    if (!cur || cur.origin !== origin) {
+      cur = { origin, startIdx: i, count: 0, worst: level };
+      breaks.push(cur);
+    }
+    cur.count++;
+    if (URGENCY_RANK[level] < URGENCY_RANK[cur.worst]) cur.worst = level;
+  }
+  return breaks;
+}
+
+if (typeof module !== 'undefined') module.exports = { computeState, iconFor, sortByUrgency, groupBreaks };

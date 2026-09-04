@@ -1,11 +1,12 @@
-// Testes de regressão do adapter Kiro (PR #46). Carregam o arquivo REAL num vm
-// Nota: AssistantMessage → PreToolUse e ToolResults → PostToolUse. O adapter
-// nasceu com esse mapeamento invertido (s5 do review da PR-46) e estes testes
-// codificavam a inversão; a cor não muda (ambos são PROCESSING), mas o
-// `last_event` aparece na linha do overlay e precisa descrever o que houve.
-// com fs mock in-memory e cobrem os achados 6-11 do review: crash-safety das
-// escritas, truncate/compactação do .jsonl, merge-preserve, cwd via .json,
-// zumbi pid:null e a síntese de Stop.
+// Kiro adapter regression tests (PR #46). They load the REAL file in a vm
+// Note: AssistantMessage → PreToolUse and ToolResults → PostToolUse. The
+// adapter was born with this mapping inverted (s5 of the PR-46 review) and
+// these tests encoded the inversion; the color doesn't change (both are
+// PROCESSING), but `last_event` shows on the overlay row and must describe
+// what happened.
+// with an in-memory fs mock and cover findings 6-11 of the review: write
+// crash-safety, .jsonl truncate/compaction, merge-preserve, cwd via .json,
+// pid:null zombie, and the Stop synthesis.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -51,7 +52,7 @@ function makeFs() {
       return { size: Buffer.byteLength(store.get(p), 'utf8'), mtimeMs: Date.now() };
     },
     unlinkSync: (p) => { store.delete(p); },
-    // lastJsonlEvent lê o TAIL do .jsonl via fd (s8) — espelha o readSync real.
+    // lastJsonlEvent reads the .jsonl TAIL via fd (s8) — mirrors the real readSync.
     _fds: new Map(),
     _nextFd: 1,
     openSync: (p) => { const fd = mfs._nextFd++; mfs._fds.set(fd, p); return fd; },
@@ -76,15 +77,16 @@ function loadAdapter(mfs, clock = { now: 0 }) {
     fs: mfs,
     path,
     os: { homedir: () => HOME },
-    // Relógio controlável: a síntese de Stop (scanForStops) compara Date.now()
-    // contra o _lastSeen gravado pelo handleJsonl — avançar o clock simula o
-    // silêncio do .jsonl sem precisar acessar o Map interno (é um const).
+    // Controllable clock: the Stop synthesis (scanForStops) compares Date.now()
+    // against the _lastSeen recorded by handleJsonl — advancing the clock
+    // simulates .jsonl silence without touching the internal Map (it's a
+    // const).
     Date: class extends Date {
       static now() { return clock.now; }
     },
-    // O adapter usa o validate.js compartilhado (em vez de uma 4ª cópia da regex
-    // de id), então o stub precisa entregar o módulo REAL — validar id é parte
-    // do comportamento sob teste, não algo a mockar.
+    // The adapter uses the shared validate.js (instead of a 4th copy of the id
+    // regex), so the stub must deliver the REAL module — validating the id is
+    // part of the behavior under test, not something to mock.
     require: (name) => ({
       fs: mfs, path, os: { homedir: () => HOME },
       '../../src/validate.js': require('../src/validate.js'),
@@ -95,8 +97,8 @@ function loadAdapter(mfs, clock = { now: 0 }) {
     clearInterval,
     setImmediate,
     clearImmediate,
-    // Buffer: o lastJsonlEvent agora lê só o tail do .jsonl (s8) — o Buffer
-    // não vem no contexto do vm por padrão.
+    // Buffer: lastJsonlEvent now reads only the .jsonl tail (s8) — Buffer
+    // doesn't come in the vm context by default.
     Buffer,
     module: { exports: {} },
     console,
@@ -149,10 +151,10 @@ test('writeState preserva foco/transcript/terceiros e atualiza last_event', () =
   assert.equal(st.zellij_session, 'Z');
   assert.equal(st.term_program, 'TP');
   assert.equal(st.third_party, 'keep');
-  // notification_type NÃO é preservado: o contrato (docs/ARCHITECTURE.md) manda
-  // ser null a menos que last_event == 'Notification', e o hook o reescreve a
-  // cada evento. Preservá-lo faria o computeState classificar a PRÓXIMA
-  // notificação sem tipo pelo discriminador da anterior.
+  // notification_type is NOT preserved: the contract (docs/ARCHITECTURE.md)
+  // requires it to be null unless last_event == 'Notification', and the hook
+  // rewrites it on every event. Preserving it would make computeState classify
+  // the NEXT untyped notification by the previous one's discriminator.
   assert.equal(st.notification_type, null, 'evento não-Notification limpa o tipo');
   assert.equal(st.pid, 4242);
   assert.equal(st.cwd, '/w');

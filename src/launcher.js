@@ -1,21 +1,21 @@
-// launcher.js — lógica PURA do Quick Launcher (spawn de agente num terminal).
-// O I/O (scan de PATH, spawn) fica no main; aqui ficam as decisões testáveis:
-// qual terminal usar, e como montar os argv (flag de cwd + comando do agente).
+// launcher.js — PURE Quick Launcher logic (spawning an agent in a terminal).
+// The I/O (PATH scan, spawn) lives in main; here live the testable decisions:
+// which terminal to use, and how to build the argv (cwd flag + agent command).
 
-// Terminais suportados. Cada um tem um flag de working-directory e um
-// separador antes do comando do agente (-e para Tilix/Ghostty, -- p/ GNOME).
-// Ghostty: working-directory é config-key; -e roda o comando (ver ghostty --help).
+// Supported terminals. Each has a working-directory flag and a
+// separator before the agent command (-e for Tilix/Ghostty, -- for GNOME).
+// Ghostty: working-directory is a config key; -e runs the command (see ghostty --help).
 const TERMINALS = {
   tilix:            { label: 'Tilix',           cwd: (d) => [`--working-directory=${d}`], exec: (cmd) => ['-e', ...cmd] },
   'gnome-terminal': { label: 'GNOME Terminal',  cwd: (d) => [`--working-directory=${d}`], exec: (cmd) => ['--', ...cmd] },
   ghostty:          { label: 'Ghostty',          cwd: (d) => [`--working-directory=${d}`], exec: (cmd) => ['-e', ...cmd] },
 };
 
-// Ordem de preferência do 'auto' (o 1º presente no PATH vence).
+// Preference order for 'auto' (the 1st one present in the PATH wins).
 const TERMINAL_ORDER = ['tilix', 'gnome-terminal', 'ghostty'];
 
-// Resolve qual terminal usar: pref manual ('custom' ou um id presente) > auto.
-// Retorna 'custom', um id suportado, ou null (nenhum terminal conhecido).
+// Resolves which terminal to use: manual pref ('custom' or a present id) > auto.
+// Returns 'custom', a supported id, or null (no known terminal).
 function pickTerminal(pref, available) {
   if (pref && pref !== 'auto') {
     if (pref === 'custom' || available.includes(pref)) return pref;
@@ -23,18 +23,18 @@ function pickTerminal(pref, available) {
   return TERMINAL_ORDER.find((t) => available.includes(t)) || null;
 }
 
-// Monta os argv: [flags de cwd] + [separador/comando] + [agente].
-// agentCmd = array (ex.: ['/usr/bin/claude']); Retorna null se terminal_unknown.
+// Builds the argv: [cwd flags] + [separator/command] + [agent].
+// agentCmd = array (e.g. ['/usr/bin/claude']); returns null if terminal_unknown.
 function terminalArgs(terminalId, cwd, agentCmd) {
   const t = TERMINALS[terminalId];
   if (!t) return null;
   return [...t.cwd(cwd), ...t.exec(agentCmd)];
 }
 
-// Auto-wrap: roda o agente DENTRO de um `tmux new-session` (sessão própria) → o
-// hook captura tmux_session (#S) → o clique attacha na janela Terminal. O
-// sessionName deve ser único (o main acrescenta um sufixo tipo-Date); é
-// sanitizado aqui porque entra como argv do tmux (vem de config/agent).
+// Auto-wrap: runs the agent INSIDE a `tmux new-session` (its own session) → the
+// hook captures tmux_session (#S) → the click attaches in the Terminal window.
+// The sessionName must be unique (main appends a Date-like suffix); it is
+// sanitized here because it enters as a tmux argv (comes from config/agent).
 function tmuxSessionName(agentId) {
   return 'atl-' + String(agentId || 'agent').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24);
 }

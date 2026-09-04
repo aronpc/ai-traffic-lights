@@ -1,5 +1,5 @@
-// Testes dos PARÂMETROS de som (src/sound.js) — parte pura/testável em node.
-// O playback (playPreset/playBuffer) usa Web Audio e não é exercitado aqui.
+// Tests for the sound PARAMETERS (src/sound.js) — the pure/testable part in node.
+// Playback (playPreset/playBuffer) uses Web Audio and is not exercised here.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SOUND_PRESETS, SOUND_TYPES, clampVolume } = require('../src/sound');
@@ -26,8 +26,8 @@ test('clampVolume: faixa [0,1] com fallback 0.18 para não-número', () => {
   assert.equal(clampVolume(0.5), 0.5);
   assert.equal(clampVolume(0), 0);
   assert.equal(clampVolume(1), 1);
-  assert.equal(clampVolume(-1), 0);   // abaixo → clampa
-  assert.equal(clampVolume(2), 1);    // acima → clampa
+  assert.equal(clampVolume(-1), 0);   // below → clamps
+  assert.equal(clampVolume(2), 1);    // above → clamps
   assert.equal(clampVolume('x'), 0.18);
   assert.equal(clampVolume(NaN), 0.18);
   assert.equal(clampVolume(undefined), 0.18);

@@ -1,23 +1,24 @@
-// transcript.js — ler as últimas N MENSAGENS de um transcript JSONL (fase 3).
-// Electron-free: só fs. Usado pelo endpoint /transcript (servidor) e pelo painel
-// "ver prompt" (futuro). Reusa collect.findTranscript() p/ achar o arquivo.
+// transcript.js — read the last N MESSAGES from a JSONL transcript (phase 3).
+// Electron-free: fs only. Used by the /transcript endpoint (server) and by the
+// "view prompt" panel (future). Reuses collect.findTranscript() to find the file.
 //
-// DUAS armadilhas (confirmadas pela pesquisa):
-//  1. Leitura REVERSA do fim do arquivo, em CHUNKS (4-64KB) — nunca carrega o
-//     arquivo todo (transcripts do Codex chegam a ~2GB). Lê os últimos ~2MB,
-//     que cobrem folgadamente as últimas N mensagens.
-//  2. Uma MENSAGEM de assistant do Claude Code vira VÁRIAS linhas JSONL (blocos
-//     incrementais de streaming) com o MESMO message.id → AGREGAR por message.id,
-//     nunca fatiar "últimas N linhas" cruas (176/227 msgs num transcript real).
+// TWO gotchas (confirmed by research):
+//  1. REVERSE reading from the end of the file, in CHUNKS (4-64KB) — never
+//     loads the whole file (Codex transcripts reach ~2GB). Reads the last
+//     ~2MB, which comfortably covers the last N messages.
+//  2. One Claude Code assistant MESSAGE becomes SEVERAL JSONL lines
+//     (incremental streaming blocks) with the SAME message.id → AGGREGATE by
+//     message.id, never slice raw "last N lines" (176/227 msgs in a real
+//     transcript).
 
 const fs = require('fs');
 
-const TAIL_BYTES = 2 * 1024 * 1024;   // lê os últimos 2MB (chega p/ dezenas de msgs)
-const CHUNK = 64 * 1024;              // Lê em chunks de 64KB (não 1 byte/syscall)
-const MAX_MSG_CHARS = 4000;           // truncamento por mensagem (payload sob controle)
+const TAIL_BYTES = 2 * 1024 * 1024;   // reads the last 2MB (enough for dozens of msgs)
+const CHUNK = 64 * 1024;              // reads in 64KB chunks (not 1 byte/syscall)
+const MAX_MSG_CHARS = 4000;           // per-message truncation (payload under control)
 
-// Lê os últimos ~maxBytes do arquivo em chunks (do fim) e devolve as LINHAS
-// completas em ordem cronológica. Não carrega o arquivo inteiro na memória.
+// Reads the last ~maxBytes of the file in chunks (from the end) and returns
+// complete LINES in chronological order. Does not load the whole file into memory.
 function readTailLines(filePath, maxBytes = TAIL_BYTES) {
   let size;
   try { size = fs.statSync(filePath).size; } catch { return []; }
@@ -36,15 +37,15 @@ function readTailLines(filePath, maxBytes = TAIL_BYTES) {
       remaining -= len;
     }
     let data = Buffer.concat(chunks).toString('utf8');
-    if (pos > 0) data = data.slice(data.indexOf('\n') + 1); // descarta 1ª linha parcial
+    if (pos > 0) data = data.slice(data.indexOf('\n') + 1); // discards the 1st partial line
     return data.split('\n').filter(Boolean);
   } finally { fs.closeSync(fd); }
 }
 
-// Extrai {id, role, text, ts} de um objeto-linha do transcript (dialeto Claude
-// Code: obj.message.{role,content,id}; content = string ou array de blocos).
-// Ignora tool_use/thinking/tool_result (não são "prompt" visível). null se não
-// for uma mensagem de chat útil.
+// Extracts {id, role, text, ts} from a transcript line object (Claude Code
+// dialect: obj.message.{role,content,id}; content = string or array of blocks).
+// Ignores tool_use/thinking/tool_result (not visible "prompt"). null if it is
+// not a useful chat message.
 function extractMessage(obj) {
   if (!obj || typeof obj !== 'object') return null;
   const msg = obj.message || obj;
@@ -62,31 +63,31 @@ function extractMessage(obj) {
   if (!text) return null;
   if (text.length > MAX_MSG_CHARS) text = text.slice(0, MAX_MSG_CHARS) + '…';
   return {
-    id: msg.id || null,   // PR-32 #15: null quando não há id real (msgs de user do Claude Code) — lastMessages trata cada uma como própria, em vez de colapsar todas num bloco
+    id: msg.id || null,   // PR-32 #15: null when there is no real id (Claude Code user msgs) — lastMessages treats each one as its own, instead of collapsing them all into one block
     role,
     text,
     ts: typeof obj.timestamp === 'string' ? obj.timestamp : null,
   };
 }
 
-// Últimas N mensagens (agregando os blocos de streaming pelo message.id).
-// Devolve [{role, text, ts}] em ordem cronológica.
+// Last N messages (aggregating streaming blocks by message.id).
+// Returns [{role, text, ts}] in chronological order.
 function lastMessages(filePath, n = 20) {
   const lines = readTailLines(filePath);
-  const byId = new Map();   // id -> {role, text, ts} (acumula blocos do mesmo msg)
-  const order = [];         // ids em ordem de aparição
-  let seq = 0;              // chave sintética p/ msgs SEM id real (user do Claude Code)
+  const byId = new Map();   // id -> {role, text, ts} (accumulates blocks of the same msg)
+  const order = [];         // ids in order of appearance
+  let seq = 0;              // synthetic key for msgs WITHOUT a real id (Claude Code user)
   for (const line of lines) {
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     const m = extractMessage(obj);
     if (!m) continue;
-    // Só agrega por message.id REAL (blocos de streaming do assistant). Sem id,
-    // cada linha é uma mensagem PRÓPRIA (PR-32 #15: antes id='user' colapsava
-    // todos os prompts do usuário num único item, quebrando o painel ver-prompt).
+    // Only aggregates by a REAL message.id (assistant streaming blocks). Without
+    // an id, each line is its OWN message (PR-32 #15: previously id='user'
+    // collapsed all user prompts into a single item, breaking the view-prompt panel).
     const key = m.id || '__noid_' + (++seq);
     const prev = byId.get(key);
-    if (prev) prev.text = prev.text + ' ' + m.text; // mesmo msg.id = bloco a mais do streaming
+    if (prev) prev.text = prev.text + ' ' + m.text; // same msg.id = one more streaming block
     else { byId.set(key, { role: m.role, text: m.text, ts: m.ts }); order.push(key); }
   }
   return order.slice(-Math.max(1, n)).map((id) => byId.get(id)).filter(Boolean);

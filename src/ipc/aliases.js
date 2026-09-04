@@ -1,12 +1,12 @@
-// src/ipc/aliases.js — aliases (apelido manual por sessão) IPC.
-// Extraído do main.js (REF passo 7). Electron-bound (ipcMain); o main injeta
-// ALIASES_FILE e os callbacks de side-effect (sendSessions, onAliasSaved).
+// src/ipc/aliases.js — aliases (manual per-session alias) IPC.
+// Extracted from main.js (REF step 7). Electron-bound (ipcMain); main injects
+// ALIASES_FILE and the side-effect callbacks (sendSessions, onAliasSaved).
 //
-// Chave = identidade da sessão (session_id, fallback pid) — a MESMA linha do
-// overlay, calculada em renderer.aliasKey. Antes era o cwd, o que fazia dois
-// terminais no mesmo diretório compartilharem o apelido. O módulo só persiste a
-// chave opaca que o renderer manda (anti-path-traversal via validação de tamanho
-// no limite IPC; ALIASES_FILE é path absoluto do main).
+// Key = session identity (session_id, pid fallback) — the SAME row of the
+// overlay, computed in renderer.aliasKey. It used to be the cwd, which made
+// two terminals in the same directory share the alias. The module only
+// persists the opaque key the renderer sends (anti-path-traversal via length
+// validation at the IPC boundary; ALIASES_FILE is an absolute path from main).
 
 function setupAliasesIpc({ ipcMain, ALIASES_FILE, sendSessions, onAliasSaved }) {
   const fs = require('fs');
@@ -21,16 +21,17 @@ function setupAliasesIpc({ ipcMain, ALIASES_FILE, sendSessions, onAliasSaved }) 
     try { fs.writeFileSync(ALIASES_FILE, JSON.stringify(a)); } catch {}
   }
 
-  // Aliases (apelido por sessão — chave = session_id|pid, ver renderer.aliasKey).
+  // Aliases (per-session alias — key = session_id|pid, see renderer.aliasKey).
   ipcMain.handle('get-aliases', () => loadAliases());
   ipcMain.on('set-alias', (_e, { key, alias }) => {
-    // valida no limite IPC: key é a identidade da sessão (session_id ou pid),
-    // alias é string curta. Ignora payload malformado em vez de gravar lixo.
+    // Validates at the IPC boundary: key is the session identity (session_id
+    // or pid), alias is a short string. Ignores a malformed payload instead of
+    // writing garbage.
     if (typeof key !== 'string' || !key || key.length > 512) return;
     if (alias != null && (typeof alias !== 'string' || alias.length > 256)) return;
     saveAlias(key, alias);
     if (sendSessions) sendSessions();
-    if (onAliasSaved) onAliasSaved(key, alias);   // ex.: atualizar título da aba Terminal
+    if (onAliasSaved) onAliasSaved(key, alias);   // e.g., update the Terminal tab title
   });
 }
 

@@ -1,41 +1,42 @@
-// tooltip.js — tooltips customizados (bolha estilizada, animada) que substituem
-// os `title` nativos do SO (feios, ~1s de delay, sem estilo). Um só elemento
-// #tooltip é reposicionado sob o alvo — o overlay tem overflow:hidden, então a
-// posição é SEMPRE dentro da janela (clamp na viewport), nunca vaza.
+// tooltip.js — custom tooltips (styled, animated bubble) that replace the
+// OS-native `title` (ugly, ~1s delay, unstyled). A single #tooltip element
+// is repositioned under the target — the overlay has overflow:hidden, so the
+// position is ALWAYS inside the window (clamped to the viewport), never leaks out.
 //
-// Lógica de posição é PURA (tipPosition) → testável sem DOM. O wiring de eventos
-// (setupTooltips) é a casca de I/O, com delegação: um único par de listeners no
-// contêiner cobre todos os alvos [data-tip], inclusive os criados depois.
+// Position logic is PURE (tipPosition) → testable without a DOM. Event wiring
+// (setupTooltips) is the I/O shell, with delegation: a single pair of listeners
+// on the container covers all [data-tip] targets, including ones created later.
 
-// Calcula a posição da bolha dado o retângulo do alvo, o tamanho da bolha e os
-// limites da viewport. Preferência: ABAIXO do alvo; se não couber, ACIMA. A
-// posição horizontal é centralizada no alvo e clampada nas bordas (com margem),
-// e a seta aponta pro centro do alvo mesmo quando a bolha foi deslocada.
+// Computes the bubble position given the target rect, bubble size and
+// viewport bounds. Preference: BELOW the target; if it does not fit, ABOVE.
+// The horizontal position is centered on the target and clamped at the edges
+// (with margin), and the arrow points at the target's center even when the
+// bubble has been shifted.
 //
 //   target: {left, right, top, bottom, width}   (getBoundingClientRect)
 //   tip:    {width, height}
 //   vp:     {width, height}
 //   opts:   {gap=8, margin=6}
-// → {left, top, place:'bottom'|'top', arrowX}   (px relativos à viewport)
+// → {left, top, place:'bottom'|'top', arrowX}   (px relative to the viewport)
 function tipPosition(target, tip, vp, opts = {}) {
   const gap = opts.gap != null ? opts.gap : 8;
   const margin = opts.margin != null ? opts.margin : 6;
 
-  // vertical: cabe abaixo? senão acima. (se não couber em nenhum, fica abaixo
-  // clampado — melhor cortar de leve que sumir.)
+  // vertical: does it fit below? otherwise above. (if it fits nowhere, stays
+  // below clamped — better to clip slightly than to disappear.)
   const belowTop = target.bottom + gap;
   const fitsBelow = belowTop + tip.height + margin <= vp.height;
   const place = fitsBelow ? 'bottom' : 'top';
   let top = place === 'bottom' ? belowTop : target.top - gap - tip.height;
   top = clamp(top, margin, Math.max(margin, vp.height - tip.height - margin));
 
-  // horizontal: centraliza no alvo, clampa nas bordas.
+  // horizontal: centers on the target, clamps at the edges.
   const targetCenter = target.left + target.width / 2;
   let left = targetCenter - tip.width / 2;
   left = clamp(left, margin, Math.max(margin, vp.width - tip.width - margin));
 
-  // seta: aponta pro centro do alvo, relativa à bolha; clampada pra não sair
-  // das quinas arredondadas da bolha.
+  // arrow: points at the target's center, relative to the bubble; clamped so
+  // it does not leave the bubble's rounded corners.
   let arrowX = targetCenter - left;
   arrowX = clamp(arrowX, 12, Math.max(12, tip.width - 12));
 
@@ -44,12 +45,12 @@ function tipPosition(target, tip, vp, opts = {}) {
 
 function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-// Instala a máquina de tooltip. `root` é o contêiner (delegação de eventos),
-// `tipEl` é a bolha única (div#tooltip). Alvos são [data-tip] com texto no
-// atributo. Retorna um handle { destroy } — útil em testes.
+// Installs the tooltip machine. `root` is the container (event delegation),
+// `tipEl` is the single bubble (div#tooltip). Targets are [data-tip] with
+// text in the attribute. Returns a { destroy } handle — useful in tests.
 //
-// Comportamento: hover/focus com data-tip → após `delay`ms mostra a bolha
-// posicionada; mouseleave/blur/click/scroll → esconde na hora. Um só timer.
+// Behavior: hover/focus with data-tip → after `delay`ms shows the positioned
+// bubble; mouseleave/blur/click/scroll → hides immediately. A single timer.
 function setupTooltips(root, tipEl, opts = {}) {
   if (!root || !tipEl) return { destroy() {} };
   const delay = opts.delay != null ? opts.delay : 400;
@@ -72,7 +73,7 @@ function setupTooltips(root, tipEl, opts = {}) {
     if (!text) return;
     current = el;
     label.textContent = text;
-    // mede fora de tela: torna visível pra pegar dimensões, depois posiciona.
+    // measures off-screen: makes it visible to grab dimensions, then positions.
     tipEl.classList.add('is-measuring');
     const tRect = el.getBoundingClientRect();
     const tip = { width: tipEl.offsetWidth, height: tipEl.offsetHeight };
@@ -87,7 +88,7 @@ function setupTooltips(root, tipEl, opts = {}) {
   }
 
   function targetFrom(node) {
-    // sobe até um elemento com data-tip (ícone SVG dentro do botão, etc.)
+    // walks up to an element with data-tip (SVG icon inside a button, etc.)
     while (node && node !== root) {
       if (node.nodeType === 1 && node.hasAttribute && node.hasAttribute('data-tip')) return node;
       node = node.parentNode;
@@ -104,14 +105,14 @@ function setupTooltips(root, tipEl, opts = {}) {
   function onOut(e) {
     const el = targetFrom(e.target);
     if (!el) return;
-    // saiu do alvo (e não entrou num filho dele): esconde
+    // left the target (and did not enter one of its children): hide
     const to = e.relatedTarget;
     if (to && el.contains(to)) return;
     hide();
   }
   const onFocus = (e) => { const el = targetFrom(e.target); if (el) show(el); };
   const onBlur = () => hide();
-  const onDown = () => hide();     // clicar age no botão → tooltip some
+  const onDown = () => hide();     // clicking acts on the button → tooltip goes away
   const onScroll = () => hide();
 
   root.addEventListener('mouseover', onOver);

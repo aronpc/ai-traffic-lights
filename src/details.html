@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<!-- details.html — standalone session details WINDOW (#59). The panel used to
+     be a BLOCKING modal inside the overlay (backdrop over the list); now it is
+     its own BrowserWindow: the list stays clickable, the window can sit open
+     beside it monitoring (the main pushes the live session on every refresh)
+     and Esc/× destroy the window. Same CSS as the overlay (styles.css, .dt-*
+     block) with local overrides: no backdrop, the card fills the window with
+     the same shape as main/Preferences (translucent, 14px corners) and the
+     header drags the window (frameless). -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <!-- Static chrome is the EN default; details.js localizes lang/title/aria
+       with the resolved language (ctx_details/btn_close keys) at load. -->
+  <title>Session details</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Overrides da JANELA (o CSS dt-* nasceu para o modal do overlay): sem
+       backdrop, card = 100% da janela no MESMO formato das outras janelas
+       (espelha .overlay/.prefs: fundo translúcido + borda clara + cantos 14px,
+       que o .dt-card do styles.css já traz — aqui só alinhamos o radius e
+       esticamos pro tamanho da janela), header arrasta. */
+    body { background: transparent; overflow: hidden; cursor: default; }
+    .dt-panel { position: static; background: none; backdrop-filter: none; display: block; height: 100%; }
+    .dt-card { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; border-radius: 14px; }
+    .dt-head { -webkit-app-region: drag; cursor: default; }
+    .dt-head .ts-close { -webkit-app-region: no-drag; }
+  </style>
+</head>
+<body>
+  <div class="dt-panel">
+    <div class="dt-card">
+      <div class="dt-head">
+        <span class="dt-title"></span>
+        <button class="ts-close" aria-label="close">×</button>
+      </div>
+      <div class="dt-body"></div>
+    </div>
+  </div>
+  <script src="agents.js"></script>
+  <script src="identity.js"></script>
+  <script src="i18n.js"></script>
+  <script src="details.js"></script>
+</body>
+</html>

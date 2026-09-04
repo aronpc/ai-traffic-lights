@@ -1,17 +1,18 @@
-// Teste de integração do install_macos.sh: roda o script REAL num sandbox com
-// stubs de PATH (uname/curl/jq/npm + ferramentas do macOS), provando o contrato
-// que o instalador tem com o usuário — sobretudo que ele NÃO declara sucesso
-// quando não instalou nada.
+// Integration test for install_macos.sh: runs the REAL script in a sandbox
+// with PATH stubs (uname/curl/jq/npm + macOS tools), proving the contract the
+// installer has with the user — above all that it does NOT claim success when
+// nothing was installed.
 //
-// Regressão que originou o arquivo: sem .dmg no release, o script apenas avisava
-// e seguia — gravava aliases apontando para um app inexistente, imprimia
-// "✓ Concluído!" e sugeria xattr/codesign num caminho que não existe. O usuário
-// seguia as dicas e batia em "Unable to find application" / "No such file".
+// Regression that originated this file: with no .dmg in the release, the
+// script just warned and moved on — wrote aliases pointing to a nonexistent
+// app, printed "✓ Concluído!" and suggested xattr/codesign on a path that
+// doesn't exist. The user followed the tips and hit "Unable to find
+// application" / "No such file".
 //
-// Por que stubs de PATH e não mock de função: o script é consumido via
-// `curl | bash`, então o que importa é o comportamento de ponta a ponta (exit
-// code, o que foi escrito no perfil, o que foi impresso). Recortar pedaços dele
-// testaria uma reescrita, não o artefato que o usuário executa.
+// Why PATH stubs instead of function mocks: the script is consumed via
+// `curl | bash`, so what matters is end-to-end behavior (exit code, what was
+// written to the profile, what was printed). Cutting pieces out of it would
+// test a rewrite, not the artifact the user runs.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('child_process');
@@ -20,17 +21,17 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-// O stub de curl grava exatamente este conteúdo no lugar do .dmg; o sidecar
-// "válido" precisa ser o sha512 DELE, senão o teste do caminho feliz passaria
-// a exercitar a recusa em vez da instalação.
+// The curl stub writes exactly this content in place of the .dmg; the "valid"
+// sidecar must be the sha512 OF IT, otherwise the happy path test would
+// exercise the refusal instead of the installation.
 const DMG_FALSO = 'dmg-falso\n';
 const SHA512_DO_DMG = crypto.createHash('sha512').update(DMG_FALSO).digest('base64');
 
 const SCRIPT = path.join(__dirname, '..', 'install_macos.sh');
 const APP_NAME = 'AI Traffic Lights.app';
 
-// Release COM .dmg e SEM .dmg — o grep do script procura literalmente
-// "browser_download_url": "....dmg", então o JSON precisa ter essa forma.
+// Release WITH .dmg and WITHOUT .dmg — the script's grep looks literally for
+// "browser_download_url": "....dmg", so the JSON must have this shape.
 const JSON_COM_DMG = '{"tag_name":"v9.9.9","assets":[{"browser_download_url":"https://example.invalid/AI-Traffic-Lights.dmg"}]}';
 const JSON_SEM_DMG = '{"tag_name":"v0.7.3","assets":[{"browser_download_url":"https://example.invalid/ai-traffic-lights.AppImage"}]}';
 
@@ -39,13 +40,14 @@ function stub(dir, nome, corpo) {
   fs.writeFileSync(p, `#!/usr/bin/env bash\n${corpo}\n`, { mode: 0o755 });
 }
 
-// Monta um sandbox isolado: bin/ com os stubs, home/ como $HOME falso e o cwd
-// de onde o script será chamado (dentro ou fora de um checkout do repo).
-// sidecar: como o servidor responde a <artefato>.sha512.
-//   'valido'  200 + o sha512 real do .dmg falso  -> instala e VERIFICA
-//   'lixo'    200 + corpo que não é sha512       -> aborta (proxy/portal cativo)
-//   'ausente' 404                                -> release antiga, segue sem verificar
-//   'rede'    curl não completa                  -> aborta (não dá para saber)
+// Builds an isolated sandbox: bin/ with the stubs, home/ as the fake $HOME,
+// and the cwd from which the script will be called (inside or outside a repo
+// checkout).
+// sidecar: how the server answers <artifact>.sha512.
+//   'valido'  200 + the real sha512 of the fake .dmg -> installs and VERIFIES
+//   'lixo'    200 + body that isn't a sha512         -> aborts (proxy/captive portal)
+//   'ausente' 404                                     -> old release, proceeds without verifying
+//   'rede'    curl doesn't complete                   -> aborts (can't tell)
 function sandbox({ temDmg, dentroDoRepo, sidecar = 'valido' }) {
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-install-test-'));
   const bin = path.join(raiz, 'bin');
@@ -53,15 +55,15 @@ function sandbox({ temDmg, dentroDoRepo, sidecar = 'valido' }) {
   const cwd = path.join(raiz, dentroDoRepo ? 'repo' : 'outro-lugar');
   for (const d of [bin, home, cwd]) fs.mkdirSync(d, { recursive: true });
 
-  // O script só roda em Darwin e avisa fora de arm64.
+  // The script only runs on Darwin and warns off arm64.
   stub(bin, 'uname', 'case "${1:-}" in -s) echo Darwin ;; -m) echo arm64 ;; *) echo Darwin ;; esac');
 
-  // curl tem 3 papéis no script; o stub decide pelo formato dos argumentos.
-  // O stub decide o papel pelo formato dos argumentos. O sidecar é buscado com
-  // `-o <arquivo> -w %{http_code}`: o CORPO vai para o arquivo e o CÓDIGO HTTP
-  // para o stdout. Emular os dois separadamente é o que permite distinguir
-  // "404 = release antiga" de "200 com lixo = alguém no meio do caminho" — que
-  // é justamente a decisão que o instalador passou a tomar.
+  // curl plays 3 roles in the script; the stub decides by argument format.
+  // The stub picks the role by the shape of the arguments. The sidecar is
+  // fetched with `-o <file> -w %{http_code}`: the BODY goes to the file and
+  // the HTTP CODE to stdout. Emulating the two separately is what allows
+  // distinguishing "404 = old release" from "200 with garbage = someone in the
+  // middle" — exactly the decision the installer started making.
   stub(bin, 'curl', `
 alvo=""; saida=""; quer_code=0
 for ((i=1; i<=$#; i++)); do
@@ -87,21 +89,22 @@ case "$alvo" in
 esac
 exit 22`);
 
-  // jq presente encerra o ensure_jq no primeiro ramo (sem depender de brew).
+  // jq present ends ensure_jq on the first branch (no brew dependency).
   stub(bin, 'jq', 'echo jq-1.7');
-  // Modo dev roda `npm install` — no-op para o teste ser hermético e rápido.
+  // Dev mode runs `npm install` — no-op so the test stays hermetic and fast.
   stub(bin, 'npm', 'exit 0');
 
-  // Ferramentas do macOS exercitadas só no caminho com .dmg.
+  // macOS tools exercised only on the .dmg path.
   stub(bin, 'hdiutil', `
 if [ "\${1:-}" = "attach" ]; then
   mp=""; for ((i=1; i<=$#; i++)); do [ "\${!i}" = "-mountpoint" ] && { j=$((i+1)); mp="\${!j}"; }; done
   mkdir -p "$mp/${APP_NAME}/Contents/MacOS" && : > "$mp/${APP_NAME}/Contents/MacOS/AI Traffic Lights"
 fi
 exit 0`);
-  // /Applications exige admin no Mac de um usuário comum: o stub recusa esse
-  // destino de propósito, exercitando o fallback documentado para ~/Applications
-  // (e evitando que a suíte escreva em /Applications da máquina que roda o teste).
+  // /Applications requires admin on a regular user's Mac: the stub refuses
+  // that destination on purpose, exercising the documented fallback to
+  // ~/Applications (and keeping the suite from writing to the test machine's
+  // /Applications).
   stub(bin, 'ditto', 'case "$2" in /Applications/*) exit 1 ;; esac; cp -R "$1" "$2"');
   stub(bin, 'xattr', 'exit 0');
   stub(bin, 'codesign', 'exit 0');
@@ -129,21 +132,21 @@ function rodar(opts) {
   };
 }
 
-// --- o bug reportado: curl|bash num release sem build de macOS ---
+// --- the reported bug: curl|bash on a release with no macOS build ---
 test('sem .dmg e fora do repo: aborta em vez de declarar sucesso', () => {
   const r = rodar({ temDmg: false, dentroDoRepo: false });
   try {
     assert.notEqual(r.status, 0, 'deve sair com erro — nada foi instalado');
     assert.match(r.saida, /não publica \.dmg/, 'deve dizer por que abortou');
     assert.doesNotMatch(r.saida, /Concluído/, 'não pode declarar "Concluído" sem instalar');
-    // O que o usuário do report seguiu e quebrou: as dicas apontavam para um
-    // /Applications/... inexistente.
+    // What the report's user followed and broke on: the tips pointed to a
+    // nonexistent /Applications/...
     assert.doesNotMatch(r.saida, /xattr -dr com\.apple\.quarantine/, 'não pode sugerir xattr sem app no disco');
     assert.equal(r.perfil, '', 'não pode gravar alias apontando para um app inexistente');
   } finally { r.limpar(); }
 });
 
-// --- modo dev: sem .dmg ainda há plano B, o alias cai para `npx electron .` ---
+// --- dev mode: no .dmg still has plan B, the alias falls back to `npx electron .` ---
 test('sem .dmg mas dentro do repo: segue em modo dev e escreve o alias', () => {
   const r = rodar({ temDmg: false, dentroDoRepo: true });
   try {
@@ -155,7 +158,7 @@ test('sem .dmg mas dentro do repo: segue em modo dev e escreve o alias', () => {
   } finally { r.limpar(); }
 });
 
-// --- o outro lado do booleano: instalou de verdade → as dicas DEVEM aparecer ---
+// --- the other side of the boolean: actually installed → the tips MUST appear ---
 test('com .dmg: instala, e aí sim imprime as dicas de Gatekeeper', () => {
   const r = rodar({ temDmg: true, dentroDoRepo: false });
   try {
@@ -168,11 +171,12 @@ test('com .dmg: instala, e aí sim imprime as dicas de Gatekeeper', () => {
   } finally { r.limpar(); }
 });
 
-// --- sidecar .sha512: os quatro desfechos (4º review, achado P1 #2) ---
-// O furo: `expected=""` colapsava "404", "falha de rede" e "200 com lixo" num
-// caso só. Como o build do macOS deixou de emitir latest-mac.yml, o tier 1
-// nunca acha nada e o script terminava em "pulei a verificação" + instala.
-// Um proxy ou portal cativo respondendo 200 desligava o controle inteiro.
+// --- .sha512 sidecar: the four outcomes (4th review, finding P1 #2) ---
+// The hole: `expected=""` collapsed "404", "network failure" and "200 with
+// garbage" into a single case. Since the macOS build stopped emitting
+// latest-mac.yml, tier 1 never finds anything and the script ended up at
+// "skipped verification" + install. A proxy or captive portal answering 200
+// turned the whole control off.
 
 test('sidecar válido: instala E verifica o sha512', () => {
   const r = rodar({ temDmg: true, dentroDoRepo: false, sidecar: 'valido' });
@@ -205,8 +209,9 @@ test('sidecar inalcançável (rede): ABORTA em vez de instalar sem verificar', (
 });
 
 test('sidecar 404: release antiga segue instalando (senão nada atualiza)', () => {
-  // O contra-peso dos dois de cima: endurecer o 404 impediria qualquer release
-  // anterior ao sidecar de ser instalada. 404 é ausência legítima.
+  // The counterweight to the two above: hardening 404 would prevent any
+  // release older than the sidecar from being installed. 404 is a legitimate
+  // absence.
   const r = rodar({ temDmg: true, dentroDoRepo: false, sidecar: 'ausente' });
   try {
     assert.equal(r.status, 0, '404 não pode abortar — é release antiga, não ataque');

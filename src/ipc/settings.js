@@ -1,21 +1,23 @@
-// src/ipc/settings.js — janela de Preferências + handlers de leitura/I/O (REF passo 9).
-// createSettingsWindow (chrome custom, bounds persistidos) + handlers get-settings/
+// src/ipc/settings.js — Preferences window + read/I-O handlers (REF step 9).
+// createSettingsWindow (custom chrome, persisted bounds) + handlers get-settings/
 // get-lang/get-version/get-repo-url/open-external/open-settings/pick-sound-file/
-// get-sound-bytes. save-settings FICA no main (é o "aplicador": persiste config e
-// re-aplica atalho/sync/idioma — como buildTrayMenu, é compositor). settingsCfg/
-// LANG/T continuam no main como shared state (entram por DI: getSettings/getLang/T).
+// get-sound-bytes. save-settings STAYS in main (it's the "applier": persists
+// config and re-applies shortcut/sync/language — like buildTrayMenu, it's a
+// composer). settingsCfg/LANG/T stay in main as shared state (enter via DI:
+// getSettings/getLang/T).
 //
-// Retorna { createSettingsWindow } p/ o tray (item "Preferências") e o handler
-// open-settings.
+// Returns { createSettingsWindow } for the tray ("Preferences" item) and the
+// open-settings handler.
 
 function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_URL, SETTINGS_BOUNDS_FILE, BASE_DIR, appDir, SETTINGS_W, SETTINGS_H }) {
   const fs = require('fs');
   const path = require('path');
-  const settingsLib = require('../settings');   // isPrerelease (gate da feature beta)
+  const settingsLib = require('../settings');   // isPrerelease (beta feature gate)
   const { BrowserWindow, screen, dialog, shell } = require('electron');
 
-  // Estado da janela — privado do módulo. Estava declarado no main.js e o
-  // módulo o referenciava sem alcance (ReferenceError ao abrir Preferências).
+  // Window state — private to the module. It used to be declared in main.js
+  // and the module referenced it out of scope (ReferenceError when opening
+  // Preferences).
   let settingsWin = null;
   let settingsBoundsTimer = null;
 
@@ -29,8 +31,9 @@ function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_
     settingsBoundsTimer = setTimeout(() => {
       try {
         const [x, y] = settingsWin.getPosition();
-        // Só a posição: o tamanho é fixo (SETTINGS_W/H) e ignorado no load —
-        // gravá-lo só persistiria dados mortos e confundiria versões futuras.
+        // Only the position: the size is fixed (SETTINGS_W/H) and ignored on
+        // load — saving it would only persist dead data and confuse future
+        // versions.
         fs.writeFileSync(SETTINGS_BOUNDS_FILE, JSON.stringify({ x, y }));
       } catch {}
     }, 300);
@@ -39,28 +42,31 @@ function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_
   function createSettingsWindow() {
     if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return; }
     const b = loadSettingsBounds() || {};
-    // Clampa à altura da área útil do display: em telas baixas (ex.: 1366×768,
-    // work area ~728px) a altura ideal (761) não cabe e, com resizable:false, o
-    // rodapé/Fechar + o fim da aba Geral ficariam abaixo da tela, inalcançáveis.
-    // O .tab-body (overflow-y:auto) rola; header/abas/.actions (flex:0 0 auto)
-    // ficam fixos — o "Fechar" nunca some. Display mais próximo da posição salva
-    // cobre multi-monitor; sem posição, cai no primário.
+    // Clamps to the display work area height: on short screens (e.g. 1366×768,
+    // work area ~728px) the ideal height (761) doesn't fit and, with
+    // resizable:false, the footer/Close + the end of the General tab would
+    // end up below the screen, unreachable.
+    // The .tab-body (overflow-y:auto) scrolls; header/tabs/.actions
+    // (flex:0 0 auto) stay fixed — "Close" never disappears. The display
+    // nearest to the saved position covers multi-monitor; with no position,
+    // falls to the primary.
     const disp = (typeof b.x === 'number' && typeof b.y === 'number')
       ? screen.getDisplayNearestPoint({ x: b.x, y: b.y })
       : screen.getPrimaryDisplay();
-    const winH = Math.min(SETTINGS_H, disp.workAreaSize.height - 24); // 24 = respiro
+    const winH = Math.min(SETTINGS_H, disp.workAreaSize.height - 24); // 24 = breathing room
     settingsWin = new BrowserWindow({
       width: SETTINGS_W, height: winH,
-      useContentSize: true,               // width/height = área web (o .prefs preenche)
-      resizable: false,                   // tamanho travado na maior aba (pedido do usuário)
+      useContentSize: true,               // width/height = web area (the .prefs fills it)
+      resizable: false,                   // size locked to the largest tab (user request)
       maximizable: false, fullscreenable: false,
-      x: typeof b.x === 'number' ? b.x : undefined,   // posição é lembrada; tamanho não
+      x: typeof b.x === 'number' ? b.x : undefined,   // position is remembered; size is not
       y: typeof b.y === 'number' ? b.y : undefined,
       title: T('prefs_title'),
       icon: path.join(appDir, 'build/icon.png'),
-      // Mesmo chrome custom do overlay (ver createWindow acima): sem moldura
-      // nativa + fundo transparente — o .prefs (settings.css) desenha o painel
-      // arredondado com borda e sombra, e o header .bar é arrastável.
+      // Same custom chrome as the overlay (see createWindow above): no
+      // native frame + transparent background — the .prefs (settings.css)
+      // draws the rounded panel with border and shadow, and the .bar header
+      // is draggable.
       frame: false,
       transparent: true,
       hasShadow: false,
@@ -68,30 +74,32 @@ function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_
       autoHideMenuBar: true,
       webPreferences: { preload: path.join(appDir, 'preload.js'), contextIsolation: true, nodeIntegration: false },
     });
-    // O overlay é always-on-top nível 'screen-saver' — sem elevar as Preferências
-    // ao MESMO nível, elas abrem ATRÁS dele quando as janelas se sobrepõem.
-    // Mesmo nível + criada depois = fica na frente.
+    // The overlay is always-on-top at 'screen-saver' level — without raising
+    // Preferences to the SAME level, they open BEHIND it when the windows
+    // overlap. Same level + created later = in front.
     settingsWin.setAlwaysOnTop(true, 'screen-saver');
     settingsWin.loadFile(path.join(appDir, 'src/settings.html'));
-    settingsWin.on('move', saveSettingsBounds);          // só posição (tamanho é fixo)
+    settingsWin.on('move', saveSettingsBounds);          // position only (size is fixed)
     settingsWin.on('closed', () => { settingsWin = null; });
   }
   ipcMain.handle('get-settings', () => getSettings());
-  // Feature sync = build beta. O renderer pergunta pra saber se mostra a aba
-  // Sincronização (some na estável/fonte — só existe em versão -beta.N).
+  // Sync feature = beta build. The renderer asks to know whether to show the
+  // Synchronization tab (gone in stable/source — only exists in a -beta.N
+  // version).
   ipcMain.handle('sync-available', () => settingsLib.isPrerelease(APP_VERSION));
   ipcMain.handle('get-lang', () => getLang());
-  ipcMain.handle('get-version', () => APP_VERSION);              // rodapé das Preferências
+  ipcMain.handle('get-version', () => APP_VERSION);              // Preferences footer
   ipcMain.on('open-external', (_e, url) => {
-    // Só aceita http(s) — guarda: qualquer string não vira comando/protocolo.
+    // Only accepts http(s) — guard: any random string doesn't become a
+    // command/protocol.
     if (typeof url === 'string' && /^https?:\/\//.test(url)) { try { shell.openExternal(url); } catch {} }
   });
   ipcMain.handle('get-repo-url', () => REPO_URL);
   ipcMain.on('open-settings', () => createSettingsWindow());
 
-  // ---- som de alerta customizado ----
-  // Escolher um arquivo de áudio: abre o diálogo nativo e COPIA o arquivo pra
-  // BASE_DIR/sounds/alert.<ext> (sobrevive a mover/apagar o original).
+  // ---- custom alert sound ----
+  // Picking an audio file: opens the native dialog and COPIES the file to
+  // BASE_DIR/sounds/alert.<ext> (survives moving/deleting the original).
   ipcMain.handle('pick-sound-file', async () => {
     try {
       const r = await dialog.showOpenDialog({
@@ -113,8 +121,9 @@ function setupSettingsIpc({ ipcMain, getSettings, getLang, T, APP_VERSION, REPO_
       return dest;
     } catch { return null; }
   });
-  // Ler os bytes do som custom pro renderer decodificar (Web Audio). TRAVA DE
-  // SEGURANÇA: só lê de dentro de BASE_DIR/sounds (nunca caminho arbitrário).
+  // Reads the custom sound bytes for the renderer to decode (Web Audio).
+  // SECURITY LOCK: only reads from inside BASE_DIR/sounds (never an arbitrary
+  // path).
   ipcMain.handle('get-sound-bytes', (_e, file) => {
     try {
       if (typeof file !== 'string') return null;

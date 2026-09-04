@@ -14,7 +14,14 @@
       <span class="bar-divider"></span>
       <span class="counts" id="counts">—</span>
       <span class="spacer"></span>
+      <input class="search" id="searchInput" type="text" placeholder="" data-i18n-placeholder="search_placeholder" spellcheck="false" autocomplete="off" hidden>
       <button class="btn-ver" id="verBtn" hidden></button>
+      <button class="btn" id="searchBtn" data-tip="buscar sessões (/)" data-i18n-tip="tooltip_search" aria-label="buscar sessões">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+      <button class="btn" id="groupBtn" data-tip="agrupar por máquina" data-i18n-tip="tooltip_group_hosts" aria-label="agrupar por máquina" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M8 12h12M12 18h8"/></svg>
+      </button>
       <button class="btn" id="forceUsageBtn" data-tip="atualizar uso agora" data-i18n-tip="tooltip_force_usage" aria-label="atualizar uso agora">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
       </button>
@@ -37,6 +44,7 @@
     <div class="launcher-bar" id="launcher" hidden></div>
     <div class="grip" id="grip" data-tip="arraste para redimensionar" data-i18n-tip="tooltip_grip"></div>
     <div class="tt" id="tooltip" role="tooltip" aria-hidden="true"><span class="tt__label"></span><span class="tt__arrow"></span></div>
+    <div class="ctx" id="ctxMenu" hidden></div>
   </div>
   <script src="agents.js"></script>
   <script src="state-machine.js"></script>
@@ -44,6 +52,7 @@
   <script src="tooltip.js"></script>
   <script src="sound.js"></script>
   <script src="identity.js"></script>
+  <script src="fuzzy.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 #
-# install.sh — instala e configura o AI Traffic Lights (AppImage) no Linux.
+# install.sh — installs and configures AI Traffic Lights (AppImage) on Linux.
 #
-# Uso (1 linha):
+# Usage (1 line):
 #   curl -fsSL https://raw.githubusercontent.com/aronpc/ai-traffic-lights/main/install.sh | bash
 #
-# Ou baixe e rode:
-#   bash install.sh                       # instala/atualiza para o latest
-#   bash install.sh --uninstall           # remove tudo
-#   INSTALL_DIR=~/bin bash install.sh     # diretório de destino custom
-#   GITHUB_TOKEN=ghp_xxx bash install.sh  # evita rate-limit da API do GitHub
-#   ATL_PKG=deb bash install.sh           # (Debian/Ubuntu) via .deb: apt resolve as deps
+# Or download and run:
+#   bash install.sh                       # installs/upgrades to latest
+#   bash install.sh --uninstall           # removes everything
+#   INSTALL_DIR=~/bin bash install.sh     # custom destination directory
+#   GITHUB_TOKEN=ghp_xxx bash install.sh  # avoids GitHub API rate-limit
+#   ATL_PKG=deb bash install.sh           # (Debian/Ubuntu) via .deb: apt resolves deps
 #
-# Instala automaticamente as dependências de runtime que faltarem: libfuse2
-# (FUSE 2, exigida pelo AppImage clássico) + libs do Electron (libgbm/nss/gtk)
-# + wmctrl/xdotool/jq/tmux (foco de janela/aba/painel e integração).
+# Automatically installs missing runtime dependencies: libfuse2
+# (FUSE 2, required by the classic AppImage) + Electron libs (libgbm/nss/gtk)
+# + wmctrl/xdotool/jq/tmux (window/tab/pane focus and integration).
 #
 set -euo pipefail
 
 REPO="aronpc/ai-traffic-lights"
 APP_TITLE="AI Traffic Lights"
-BIN_NAME="ai-traffic-lights"          # base p/ Icon=, StartupWMClass, ícone hicolor e launcher
+BIN_NAME="ai-traffic-lights"          # base for Icon=, StartupWMClass, hicolor icon and launcher
 APPIMAGE_NAME="AI-Traffic-Lights.AppImage"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/Applications}"
 APPS_DIR="$HOME/.local/share/applications"
-ICON_SIZES="256 512"   # tamanhos hicolor instalados (alguns DEs querem 256, não só 512)
+ICON_SIZES="256 512"   # hicolor sizes installed (some DEs want 256, not just 512)
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 
@@ -34,7 +34,7 @@ warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "faltando dependência: $1 (instale e tente de novo)."; }
 
-# Escapa um caminho pro campo Exec= do .desktop (backslash em espaço/$/`/").
+# Escapes a path for the .desktop Exec= field (backslash on space/$/`/").
 desktop_escape() { printf '%s' "$1" | sed 's/["$`]/\\&/g; s/ /\\ /g'; }
 
 ACTION="install"
@@ -54,7 +54,7 @@ DESKTOP_PATH="$APPS_DIR/$BIN_NAME.desktop"
 LAUNCHER_PATH="$INSTALL_DIR/$BIN_NAME"
 VERSION_FILE="$INSTALL_DIR/.$BIN_NAME.version"
 
-# ---------- detecção do gerenciador de pacotes (p/ deps de runtime) ----------
+# ---------- package manager detection (for runtime deps) ----------
 # shellcheck disable=SC1091
 . /etc/os-release 2>/dev/null || true          # ID / ID_LIKE / VERSION_ID
 PM=""
@@ -64,8 +64,9 @@ done
 SUDO=""
 { [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"; } || true
 have_lib() { ldconfig -p 2>/dev/null | grep -q "$1"; }
-# apt: ecoa o 1º pacote com candidato instalável — resolve a transição t64 do
-# Ubuntu 24.04+/Debian 13 (libfuse2 -> libfuse2t64 etc.) sem hardcode de versão.
+# apt: echoes the 1st package with an installable candidate — handles the
+# t64 transition on Ubuntu 24.04+/Debian 13 (libfuse2 -> libfuse2t64 etc.)
+# without hardcoding versions.
 apt_pick() {
   local p out
   for p in "$@"; do
@@ -79,7 +80,7 @@ apt_pick() {
   return 1
 }
 
-# Instala as dependências de runtime que faltarem (não-interativo, não-fatal).
+# Installs missing runtime dependencies (non-interactive, non-fatal).
 ensure_runtime_deps() {
   info "verificando dependências de runtime..."
   case "$PM" in
@@ -111,9 +112,10 @@ ensure_runtime_deps() {
         || warn "não instalei tudo — instale fuse-libs/mesa-libgbm/nss/gtk3 se o app não abrir."
       ;;
     pacman)
-      # -S --needed (sem -Sy): -Sy isolado é partial upgrade (sincroniza índice sem
-      # atualizar o sistema), anti-pattern documentado pela própria Arch como capaz
-      # de instalar libs incompatíveis. Assumimos índice já atualizado (PR-32 #31).
+      # -S --needed (no -Sy): -Sy alone is a partial upgrade (syncs the index
+      # without updating the system), an anti-pattern documented by Arch itself
+      # as able to install incompatible libs. We assume the index is already
+      # updated (PR-32 #31).
       $SUDO pacman -S --noconfirm --needed fuse2 mesa nss alsa-lib gtk3 wmctrl xdotool jq tmux \
         || warn "não instalei tudo — instale fuse2/mesa/nss/gtk3 se o app não abrir."
       ;;
@@ -127,8 +129,8 @@ ensure_runtime_deps() {
   esac
 }
 
-# Smoke test barato (só ldconfig, não abre a GUI): confirma FUSE + libs críticas
-# do Chromium. Não é fatal — o launcher tem fallback sem FUSE.
+# Cheap smoke test (ldconfig only, doesn't open the GUI): checks FUSE + the
+# Chromium critical libs. Not fatal — the launcher has a FUSE-less fallback.
 smoke_test() {
   if have_lib 'libfuse\.so\.2'; then
     ok "smoke test: FUSE 2 presente"
@@ -143,18 +145,18 @@ smoke_test() {
   return 0
 }
 
-# Verifica a integridade (sha512) do arquivo baixado. Só um 404 confirmado no
-# sidecar habilita o fallback legado via latest-linux.yml; falha de rede/TLS,
-# HTTP inesperado ou corpo malformado abortam.
+# Verifies the integrity (sha512) of the downloaded file. Only a confirmed 404
+# on the sidecar enables the legacy fallback via latest-linux.yml; network/TLS
+# failure, unexpected HTTP status or malformed body abort.
 verify_checksum() {
   local file="$1" asset_url="$2" yml yml_url base expected actual
   base="$(basename "${asset_url%%\?*}")"
-  # Tier 0: o sidecar <arquivo>.sha512 publicado pelo release.sh. É o caminho
-  # preferido porque não depende do formato do electron-builder nem de qual
-  # target foi construído — o macOS perdeu o latest-mac.yml quando o build
-  # deixou de gerar o zip (ArchiveTarget só emite update info para `zip`).
-  # URL SEM query string: o `base` logo abaixo já antecipa que ela pode ter uma,
-  # e "…AppImage?token=x.sha512" daria 404 — pulando o tier 0 em silêncio.
+  # Tier 0: the <file>.sha512 sidecar published by release.sh. It's the
+  # preferred path because it doesn't depend on the electron-builder format
+  # nor on which target was built — macOS lost latest-mac.yml when the build
+  # stopped generating the zip (ArchiveTarget only emits update info for `zip`).
+  # URL WITHOUT query string: the `base` right below already anticipates one,
+  # and "…AppImage?token=x.sha512" would 404 — silently skipping tier 0.
   local sc_body sc_code
   sc_body="$(mktemp)"
   sc_code="$(curl -sSL --connect-timeout 15 --max-time 30 \
@@ -169,9 +171,9 @@ verify_checksum() {
     yml_url="${asset_url%/*}/latest-linux.yml"
     yml="$(curl -fsSL --connect-timeout 15 --max-time 60 "$yml_url" 2>/dev/null)" \
       || { info "sem sidecar .sha512 nem latest-linux.yml — pulei a verificação de integridade"; return 0; }
-    # `|| :` em cada tentativa: sob set -euo pipefail um grep sem match derruba o
-    # script AQUI, sem mensagem, e os tiers de baixo viram código morto. É o
-    # mesmo perigo que o install_macos.sh já tratava (achado #2 do review da PR-46).
+    # `|| :` on each attempt: under set -euo pipefail a grep with no match kills
+    # the script HERE, without a message, and the tiers below become dead code.
+    # Same danger install_macos.sh already handled (finding #2 of the PR-46 review).
     expected="$(printf '%s\n' "$yml" | grep -F -A3 "url: $base" | grep -oE 'sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
     [ -n "$expected" ] || expected="$(printf '%s\n' "$yml" | grep -oE '^sha512:[[:space:]]*[A-Za-z0-9+/=]+' | head -1 | sed -E 's/^sha512:[[:space:]]*//')" || :
   else
@@ -193,9 +195,10 @@ verify_checksum() {
   fi
 }
 
-# Instala via .deb (Debian/Ubuntu, opt-in ATL_PKG=deb): o apt resolve as Depends
-# automaticamente e o app roda de /opt SEM FUSE. NÃO auto-atualiza via
-# electron-updater — a atualização passa a ser via apt / re-rodando este script.
+# Installs via .deb (Debian/Ubuntu, opt-in ATL_PKG=deb): apt resolves the
+# Depends automatically and the app runs from /opt WITHOUT FUSE. Does NOT
+# auto-update via electron-updater — updates now happen via apt / re-running
+# this script.
 install_via_deb() {
   local f; f="$(mktemp "${TMPDIR:-/tmp}/atl-XXXXXX.deb")"
   info "baixando .deb e instalando via apt (resolve dependências automaticamente)..."
@@ -214,9 +217,9 @@ install_via_deb() {
 # ----------------------------- uninstall -----------------------------
 if [ "$ACTION" = "uninstall" ]; then
   info "removendo $APP_TITLE..."
-  # Instalado via .deb (ATL_PKG=deb)? O pacote deb NÃO é coberto pela remoção dos
-  # artefatos AppImage abaixo — sem isto, --uninstall deixava o pacote dpkg
-  # instalado e mesmo assim imprimia "removido" (PR-32 #32).
+  # Installed via .deb (ATL_PKG=deb)? The deb package is NOT covered by the
+  # removal of the AppImage artifacts below — without this, --uninstall left
+  # the dpkg package installed while still printing "removido" (PR-32 #32).
   if command -v dpkg >/dev/null 2>&1; then
     DEB_PKG="$(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -iE 'ai-traffic-lights|aitrafficlights' | head -1 || true)"
     if [ -n "$DEB_PKG" ]; then
@@ -226,9 +229,9 @@ if [ "$ACTION" = "uninstall" ]; then
     fi
   fi
   rm -f "$APPIMAGE_PATH" "$DESKTOP_PATH" "$LAUNCHER_PATH" "$VERSION_FILE"
-  rm -f "$HOME/.config/autostart/$BIN_NAME.desktop"        # autostart criado pelo próprio app
+  rm -f "$HOME/.config/autostart/$BIN_NAME.desktop"        # autostart created by the app itself
   for sz in $ICON_SIZES; do rm -f "$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps/$BIN_NAME.png"; done
-  if [ -f /etc/systemd/system/atl-agent.service ]; then     # agente headless (sync P2P), se instalado
+  if [ -f /etc/systemd/system/atl-agent.service ]; then     # headless agent (P2P sync), if installed
     $SUDO systemctl disable --now atl-agent 2>/dev/null || true
     $SUDO rm -f /etc/systemd/system/atl-agent.service
     $SUDO systemctl daemon-reload 2>/dev/null || true
@@ -251,12 +254,12 @@ umask 022
 mkdir -p "$INSTALL_DIR" "$APPS_DIR" || die "não consegui criar $INSTALL_DIR"
 [ -w "$INSTALL_DIR" ] || die "$INSTALL_DIR não é gravável (rode sem sudo, ou ajuste INSTALL_DIR)."
 
-# limpeza do arquivo temporário em qualquer saída (download interrompido não deixa lixo)
+# temp file cleanup on any exit (an interrupted download leaves no garbage)
 TMP_NEW=""
 cleanup() { [ -n "$TMP_NEW" ] && rm -f "$TMP_NEW" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-# --- consulta o release mais recente (token opcional, timeout, rate-limit claro) ---
+# --- query the latest release (optional token, timeout, clear rate-limit error) ---
 info "consultando a versão mais recente..."
 GH_ERR="$(mktemp)"; TMP_NEW="$GH_ERR"
 gh_auth=()
@@ -278,7 +281,7 @@ else
   version="$(printf '%s\n' "$json" | grep -oE '"tag_name":[[:space:]]*"v[^"]+"' | head -1 | sed -E 's/.*"v([^"]+)"$/\1/')" || true
 fi
 
-# asset .deb (para o caminho opt-in ATL_PKG=deb)
+# .deb asset (for the opt-in ATL_PKG=deb path)
 if command -v jq >/dev/null 2>&1; then
   deb_url="$(printf '%s' "$json" | jq -r '.assets[].browser_download_url | select(endswith(".deb"))' | head -1)" || true
 else
@@ -286,8 +289,9 @@ else
 fi
 info "versão mais recente: v${version:-?}"
 
-# caminho .deb opt-in: em Debian/Ubuntu o apt resolve as dependências nativamente
-# e o app roda sem FUSE. O padrão continua sendo o AppImage (auto-atualizável).
+# opt-in .deb path: on Debian/Ubuntu apt resolves dependencies natively
+# and the app runs without FUSE. The default remains the AppImage
+# (auto-updatable).
 if [ "${ATL_PKG:-}" = "deb" ]; then
   [ "$PM" = "apt-get" ] || die "ATL_PKG=deb requer apt (Debian/Ubuntu). Gerenciador detectado: ${PM:-nenhum}."
   [ -n "$deb_url" ] || die "não encontrei o asset .deb no release latest do $REPO."
@@ -297,16 +301,16 @@ fi
 
 [ -n "$download_url" ] || die "não encontrei o asset .AppImage no release latest do $REPO."
 
-# idempotência: já na última versão e binário presente → nada a fazer
+# idempotency: already on the latest version and binary present → nothing to do
 if [ -f "$VERSION_FILE" ] && [ "$(cat "$VERSION_FILE" 2>/dev/null)" = "$version" ] && [ -x "$APPIMAGE_PATH" ]; then
   ok "já na v$version — nada a atualizar."
   exit 0
 fi
 
-# --- preflight: instala as dependências de runtime que faltarem ---
+# --- preflight: install missing runtime dependencies ---
 ensure_runtime_deps
 
-# --- download atômico ---
+# --- atomic download ---
 info "baixando AppImage -> $APPIMAGE_PATH"
 TMP_NEW="$APPIMAGE_PATH.new"
 curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 -o "$TMP_NEW" "$download_url"
@@ -316,7 +320,7 @@ chmod +x "$APPIMAGE_PATH"
 printf '%s' "$version" > "$VERSION_FILE"
 ok "AppImage instalada"
 
-# --- launcher resiliente: usa FUSE se houver; senão --appimage-extract-and-run ---
+# --- resilient launcher: uses FUSE if available; else --appimage-extract-and-run ---
 cat > "$LAUNCHER_PATH" <<EOF
 #!/usr/bin/env bash
 # launcher do AI Traffic Lights — usa FUSE 2 se disponível; senão cai para
@@ -331,10 +335,10 @@ EOF
 chmod +x "$LAUNCHER_PATH"
 ok "launcher criado (fallback sem FUSE embutido)"
 
-# --- smoke test (não abre a janela) ---
+# --- smoke test (doesn't open the window) ---
 smoke_test
 
-# --- ícone hicolor ---
+# --- hicolor icon ---
 info "ícone hicolor (${ICON_SIZES})"
 icon_ok=0
 for sz in $ICON_SIZES; do
@@ -343,7 +347,7 @@ for sz in $ICON_SIZES; do
 done
 [ "$icon_ok" = 1 ] && ok "ícone instalado" || info "ícone não baixado (pode aparecer genérico no dock)"
 
-# --- .desktop (Exec = launcher resiliente; TryExec deixa o DE esconder entrada quebrada) ---
+# --- .desktop (Exec = resilient launcher; TryExec lets the DE hide a broken entry) ---
 info ".desktop -> $DESKTOP_PATH"
 cat > "$DESKTOP_PATH" <<EOF
 [Desktop Entry]

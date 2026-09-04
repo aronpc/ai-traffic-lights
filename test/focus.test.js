@@ -1,4 +1,4 @@
-// Testes da lógica pura de click-to-focus (issue #1).
+// Tests for the pure click-to-focus logic (issue #1).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
@@ -16,9 +16,9 @@ test('parseWindowId: hex, decimal, inválidos', () => {
 });
 
 const wins = [
-  { id: '0x0a', idNum: 0x0a, pid: 100 }, // outra app
-  { id: '0x0b', idNum: 0x0b, pid: 200 }, // terminal da sessão
-  { id: '0x0c', idNum: 0x0c, pid: 200 }, // 2ª janela do mesmo terminal
+  { id: '0x0a', idNum: 0x0a, pid: 100 }, // another app
+  { id: '0x0b', idNum: 0x0b, pid: 200 }, // session's terminal
+  { id: '0x0c', idNum: 0x0c, pid: 200 }, // 2nd window of the same terminal
 ];
 
 test('#1/H2 pickWindow: windowid válido (pid da sessão) é usado', () => {
@@ -26,8 +26,8 @@ test('#1/H2 pickWindow: windowid válido (pid da sessão) é usado', () => {
 });
 
 test('#1/H2 pickWindow: windowid obsoleto/reciclado (pid alheio) é DESCARTADO', () => {
-  // 0x0a existe mas pertence a outra app (pid 100 ∉ ancestrais) → não ativa
-  // essa janela; cai na 1ª janela da sessão (pid 200).
+  // 0x0a exists but belongs to another app (pid 100 ∉ ancestors) → doesn't
+  // activate that window; falls to the session's 1st window (pid 200).
   assert.equal(pickWindow('0x0a', wins, new Set([200])), '0x0b');
 });
 
@@ -64,10 +64,11 @@ test('tabChannel: iTerm2 provado → só o uuid do ITERM_SESSION_ID', () => {
   );
 });
 
-// O bug relatado: um WARP_FOCUS_URL congelado no environ de um tmux server que
-// nasceu dentro do Warp vaza pra todo pane. Reancorar no client NÃO resolve
-// sozinho — quando o client está no Tilix ele não tem focus_url nenhum, e um
-// `live.focus_url || t.focus_url` deixaria o fantasma passar. A prova resolve.
+// The reported bug: a WARP_FOCUS_URL frozen in the environ of a tmux server
+// born inside Warp leaks to every pane. Re-anchoring on the client does NOT
+// solve it alone — when the client is in Tilix it has no focus_url at all,
+// and a `live.focus_url || t.focus_url` would let the ghost through. The test
+// proves the fix.
 test('tabChannel: focus_url fantasma, mas o terminal provado é Tilix → NÃO chama o Warp', () => {
   const contaminado = { focus_url: 'warp://session/0e03aa52', tilix_id: 'uuid-real', terminal: 'tilix' };
   assert.deepEqual(tabChannel(contaminado), { kind: 'tilix', value: 'uuid-real' });
@@ -94,7 +95,7 @@ test('#1 parseEnviron: extrai os hints de foco do environ (NUL-sep)', () => {
 
 test('#1 parseEnviron: vazio/null → todos os hints nulos, nunca lança', () => {
   for (const entrada of ['', null, undefined]) assert.deepEqual(parseEnviron(entrada), SEM_HINTS);
-  // valor com '=' interno preservado; chave sem '=' ignorada
+  // value with inner '=' preserved; key without '=' ignored
   assert.equal(parseEnviron('WARP_FOCUS_URL=warp://s/a=b\0BARE').focus_url, 'warp://s/a=b');
 });
 
@@ -110,15 +111,16 @@ test('tmuxTarget: sem tmux_pane → null', () => {
 });
 
 test('tmuxTarget: valor fora do formato %N é REJEITADO (vira argumento do tmux)', () => {
-  assert.equal(tmuxTarget({ tmux_pane: '3' }), null);             // sem o %
-  assert.equal(tmuxTarget({ tmux_pane: '%abc' }), null);          // não-numérico
-  assert.equal(tmuxTarget({ tmux_pane: '%3 ; rm -rf /' }), null); // tentativa de injeção
+  assert.equal(tmuxTarget({ tmux_pane: '3' }), null);             // without the %
+  assert.equal(tmuxTarget({ tmux_pane: '%abc' }), null);          // non-numeric
+  assert.equal(tmuxTarget({ tmux_pane: '%3 ; rm -rf /' }), null); // injection attempt
   assert.equal(tmuxTarget({ tmux_pane: '$(evil)' }), null);
 });
 
-// tmuxClientPid: sob tmux o PID do agente não alcança o terminal (o server é
-// daemon reparentado pro init). Quem é filho do emulador é o CLIENT anexado à
-// sessão do pane — este é o elo usado pro raise e pro focus_url por-aba.
+// tmuxClientPid: under tmux the agent's PID doesn't reach the terminal (the
+// server is a daemon reparented to init). What is a child of the emulator is
+// the CLIENT attached to the pane's session — that's the link used for the
+// raise and for the per-tab focus_url.
 const panes = [
   { pane: '%28', session: '29' },
   { pane: '%41', session: '41' },
@@ -135,14 +137,14 @@ test('tmuxClientPid: pane → sessão → client anexado', () => {
 });
 
 test('tmuxClientPid: sessão detached (sem client) → null', () => {
-  // %37 está na sessão 37, que ninguém anexou → nada a focar
+  // %37 is in session 37, which nobody attached to → nothing to focus
   assert.equal(tmuxClientPid('%37', panes, clients), null);
 });
 
 test('tmuxClientPid: N clients na mesma sessão → o de activity mais recente', () => {
   const multi = [
     { session: '41', pid: 111, activity: 500 },
-    { session: '41', pid: 222, activity: 900 },   // mais recente
+    { session: '41', pid: 222, activity: 900 },   // most recent
     { session: '41', pid: 333, activity: 700 },
   ];
   assert.equal(tmuxClientPid('%41', panes, multi), 222);
@@ -154,18 +156,18 @@ test('tmuxClientPid: pane desconhecido / entradas inválidas → null', () => {
   assert.equal(tmuxClientPid('%41', null, clients), null);
   assert.equal(tmuxClientPid('%41', panes, null), null);
   assert.equal(tmuxClientPid('%41', panes, []), null);
-  // pid inválido (parse falhou) não vira alvo
+  // invalid pid (parse failed) doesn't become a target
   assert.equal(tmuxClientPid('%41', panes, [{ session: '41', pid: NaN, activity: 1 }]), null);
 });
 
-// ---- fronteira de confiança dos canais ----
-// O valor sai de um environ (ou de um campo mandado pelo renderer via IPC) e
-// vira argumento de um programa externo. `valid` roda DEPOIS de `map` e checa o
-// formato — é mais seguro que escapar.
+// ---- channel trust boundary ----
+// The value comes out of an environ (or a field sent by the renderer via IPC)
+// and becomes an argument to an external program. `valid` runs AFTER `map`
+// and checks the format — safer than escaping.
 
 test('tabChannel: iterm_id com newline é REJEITADO (seria injeção no osascript)', () => {
-  // o uuid é interpolado no corpo do AppleScript: um \n fecharia o `if` e as
-  // linhas seguintes rodariam como comandos na conta do usuário.
+  // the uuid is interpolated into the AppleScript body: a \n would close the
+  // `if` and the following lines would run as commands on the user's account.
   const injecao = 'w0t0p0:abc"\nend if\ndo shell script "touch /tmp/PWNED"\nif true then\n';
   assert.equal(tabChannel({ terminal: 'iterm', iterm_id: injecao }), null);
   assert.equal(tabChannel({ terminal: 'iterm', iterm_id: 'w0t0p0:a b' }), null);
@@ -187,13 +189,14 @@ test('tabChannel: ids legítimos seguem passando', () => {
 test('#1 tabChannel: sem canal e entradas degeneradas → null', () => {
   assert.equal(tabChannel({}), null);
   assert.equal(tabChannel(null), null);
-  // focus_url não-warp é ignorado (allowlist de esquema), mesmo com Warp provado
+  // non-warp focus_url is ignored (scheme allowlist), even with Warp proven
   assert.equal(tabChannel({ focus_url: 'http://evil', terminal: 'warp' }), null);
 });
 
-// ---- sessão de outra máquina (sync P2P) ----
-// O pid de um peer é de OUTRO kernel: interpretá-lo aqui focaria um processo
-// local homônimo — a mesma classe de erro do windowid reciclado, um nível acima.
+// ---- session from another machine (P2P sync) ----
+// A peer's pid belongs to ANOTHER kernel: interpreting it here would focus a
+// homonymous local process — the same error class as a recycled windowid, one
+// level up.
 
 test('isRemoteSession: origin de peer → true; local/ausente → false', () => {
   assert.equal(isRemoteSession({ origin: 'thinkpad' }), true);
@@ -206,7 +209,7 @@ test('focusFailure: sessão remota → remote, mesmo que algo tenha sido levanta
   assert.equal(focusFailure({ origin: 'thinkpad', raised: true, hasTab: true }), 'remote');
 });
 
-// ---- desfecho do clique ----
+// ---- click outcome ----
 
 test('focusFailure: levantou a janela ou alcançou a aba → null (teve efeito)', () => {
   assert.equal(focusFailure({ wayland: true, raised: true, hasTab: false }), null);

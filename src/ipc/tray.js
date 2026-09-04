@@ -1,12 +1,13 @@
-// src/ipc/tray.js — tray + notify IPC (extraído do main.js, REF passo 8).
-// Ícone tray dinâmico (pinta com a pior cor) + notificações + handlers notify/
-// set-tray-level. buildTrayMenu FICA no main (compositor — referencia launcherIpc/
-// updateIpc/hooks/settings) e é injetado como callback `buildMenu`.
+// src/ipc/tray.js — tray + notify IPC (extracted from main.js, REF step 8).
+// Dynamic tray icon (painted with the worst color) + notifications + notify/
+// set-tray-level handlers. buildTrayMenu STAYS in main (composer — references
+// launcherIpc/updateIpc/hooks/settings) and is injected as the `buildMenu`
+// callback.
 //
-// notifyUser é a DI compartilhada (update/focus/launcher a recebem do main, que a
-// obtém daqui). setupTrayIpc NÃO cria o tray — retorna createTray() p/ o boot
-// chamar DEPOIS dos outros módulos (buildMenu referencia launcherIpc/updateIpc,
-// que só existem após os respectivos setups).
+// notifyUser is the shared DI (update/focus/launcher receive it from main,
+// which gets it from here). setupTrayIpc does NOT create the tray — it returns
+// createTray() for boot to call AFTER the other modules (buildMenu references
+// launcherIpc/updateIpc, which only exist after their respective setups).
 
 function setupTrayIpc({ ipcMain, APP_VERSION, buildMenu, toggleWin, assetsDir }) {
   const path = require('path');
@@ -17,12 +18,13 @@ function setupTrayIpc({ ipcMain, APP_VERSION, buildMenu, toggleWin, assetsDir })
   }
 
   let tray = null;
-  // ---- tray dinâmico: ícone pinta com a pior cor + tooltip com a contagem ----
-  // Variante por nível (bolinha colorida no canto do ícone-base). Sem sessões,
-  // cai no ícone neutro (não dá "tudo verde" com nada rodando).
-  // No macOS usamos os ícones com sufixo -mac.png (PNG com alpha, fundo
-  // transparente) que ficam bem na menu bar em qualquer tema. No Linux ficam os
-  // originais coloridos, sem sufixo. (portado do PR #46)
+  // ---- dynamic tray: icon painted with the worst color + tooltip with the count ----
+  // Variant per level (colored dot on the corner of the base icon). With no
+  // sessions, falls to the neutral icon (doesn't show "all green" with nothing
+  // running).
+  // On macOS we use the icons with the -mac.png suffix (PNG with alpha,
+  // transparent background) which look good in the menu bar on any theme. On
+  // Linux the original colored ones stay, no suffix. (ported from PR #46)
   const IS_MAC = process.platform === 'darwin';
   const trayIconFile = (name) => (IS_MAC ? name.replace('.png', '-mac.png') : name);
   const TRAY_ICON_FILE = {
@@ -37,9 +39,10 @@ function setupTrayIpc({ ipcMain, APP_VERSION, buildMenu, toggleWin, assetsDir })
   }
   const trayIconBase = (() => {
     const img = nativeImage.createFromPath(path.join(assetsDir, trayIconFile('tray-icon.png')));
-    // macOS: o ícone de boot/zero-sessões vira template — a menu bar adapta o
-    // traço sozinha (claro/escuro). O PNG base é cinza de alpha baixo: sem
-    // template ele sumia na menu bar escura (a cor RGB é ignorada, só o alpha).
+    // macOS: the boot/zero-sessions icon becomes a template — the menu bar
+    // adapts the stroke by itself (light/dark). The base PNG is low-alpha
+    // gray: without template it would vanish in the dark menu bar (RGB color
+    // is ignored, only alpha counts).
     if (IS_MAC) img.setTemplateImage(true);
     return img;
   })();
@@ -60,21 +63,23 @@ function setupTrayIpc({ ipcMain, APP_VERSION, buildMenu, toggleWin, assetsDir })
     tray = new Tray(trayIconBase.isEmpty() ? nativeImage.createEmpty() : trayIconBase);
     tray.setToolTip(`AI Traffic Lights v${APP_VERSION}`);
     if (IS_MAC) {
-      // macOS: NÃO seta menu permanente — com ele o left-click abre o menu e o
-      // toggle do overlay nunca acontece. Aqui o menu é manual no right-click.
-      // E ignoreDoubleClickEvents: por padrão o 2º clique rápido é COALESCIDO em
-      // double-click, o 'click' é suprimido e o "esconder" nunca dispara (clica
-      // pra mostrar, mas não consegue esconder). É o método oficial p/ toggle.
+      // macOS: does NOT set a permanent menu — with one, left-click opens the
+      // menu and the overlay toggle never happens. Here the menu is manual on
+      // right-click.
+      // And ignoreDoubleClickEvents: by default the fast 2nd click is
+      // COALESCED into a double-click, 'click' is suppressed and "hide" never
+      // fires (clicks to show, but can't hide). It's the official method for
+      // a toggle.
       tray.setIgnoreDoubleClickEvents(true);
       tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
     } else {
-      tray.setContextMenu(buildMenu());   // compositor (main): referencia launcherIpc/updateIpc
+      tray.setContextMenu(buildMenu());   // composer (main): references launcherIpc/updateIpc
     }
     tray.on('click', toggleWin);
   }
 
-  // O menu do tray no macOS é construído a cada right-click, então trocar de
-  // idioma não precisa reconstruí-lo; no Linux ele é permanente e precisa.
+  // The macOS tray menu is rebuilt on every right-click, so switching
+  // language doesn't need to rebuild it; on Linux it's permanent and does.
   function refreshMenu() { if (!IS_MAC && tray && !tray.isDestroyed()) tray.setContextMenu(buildMenu()); }
 
   ipcMain.on('notify', (_e, { title, body }) => {

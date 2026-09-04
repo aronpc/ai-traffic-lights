@@ -1,15 +1,16 @@
-// Regra de ouro do contrato de state file, em teste.
+// The golden rule of the state file contract, as a test.
 //
-// "Preserve, don't regress" vivia só em prosa (docs/ARCHITECTURE.md) e por isso
-// foi violada: o adapter do Kiro apagava transcript_path e os campos de foco a
-// cada evento — achado 08 do review da PR #46. Regra em comentário é sugestão.
+// "Preserve, don't regress" lived only in prose (docs/ARCHITECTURE.md) and was
+// therefore violated: the Kiro adapter wiped transcript_path and the focus
+// fields on every event — finding 08 of the PR #46 review. A rule in a comment
+// is a suggestion.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { atomicWrite, mergeState, PRESERVADOS } = require('../src/state-writer.js');
 
 test('mergeState: chave de TERCEIRO sobrevive a um evento que não a conhece', () => {
-  // o caso que quebrou de verdade: o backfillModels() do overlay escreve
-  // transcript_path, e o evento seguinte do adapter o apagava.
+  // the case that actually broke: the overlay's backfillModels() writes
+  // transcript_path, and the adapter's next event wiped it.
   const ex = { session_id: 's', transcript_path: '/t.jsonl', campo_de_outro: 42 };
   const out = mergeState(ex, { last_event: 'Stop' });
   assert.equal(out.transcript_path, '/t.jsonl');
@@ -80,7 +81,7 @@ test('atomicWrite: escreve no .tmp e só então renomeia (leitor nunca vê meio 
 });
 
 test('atomicWrite: falha de I/O devolve false em vez de lançar', () => {
-  // um adapter roda dentro do processo do host: exceção aqui derruba o app.
+  // an adapter runs inside the host process: an exception here takes the app down.
   const explode = { writeFileSync: () => { throw new Error('ENOSPC'); }, renameSync: () => {} };
   assert.equal(atomicWrite('/s/x.json', { a: 1 }, explode), false);
   const explodeNoRename = { writeFileSync: () => {}, renameSync: () => { throw new Error('EACCES'); } };
@@ -90,18 +91,18 @@ test('atomicWrite: falha de I/O devolve false em vez de lançar', () => {
 // ---- contrato do notification_type ----
 
 test('mergeState: notification_type é limpo quando o evento não é Notification', () => {
-  // docs/ARCHITECTURE.md: "null unless last_event == Notification". O hook o
-  // reescreve a cada evento; preservá-lo faria o computeState classificar a
-  // PRÓXIMA notificação sem tipo pelo discriminador da anterior.
+  // docs/ARCHITECTURE.md: "null unless last_event == Notification". The hook
+  // rewrites it on every event; preserving it would make computeState classify
+  // the NEXT untyped notification by the previous one's discriminator.
   const ex = { last_event: 'Notification', notification_type: 'permission_prompt' };
   assert.equal(mergeState(ex, { last_event: 'Stop' }).notification_type, null);
   assert.equal(mergeState(ex, { last_event: 'PreToolUse' }).notification_type, null);
 });
 
 test('mergeState: notification_type vem do PATCH, nunca do state anterior', () => {
-  // este teste fixava o contrário e escondia o furo: uma Notification NOVA sem
-  // tipo herdava o discriminador da anterior, e o computeState a classificava
-  // pelo motivo errado. O campo descreve o evento ATUAL.
+  // this test used to assert the opposite and hid the hole: a NEW Notification
+  // without a type inherited the previous discriminator, and computeState
+  // classified it by the wrong reason. The field describes the CURRENT event.
   const ex = { last_event: 'Notification', notification_type: 'permission_prompt' };
   assert.equal(mergeState(ex, { last_event: 'Notification' }).notification_type, null,
     'Notification sem tipo não herda o tipo da anterior');
@@ -116,8 +117,8 @@ test('mergeState: patch degenerado não lança (o catch cego do adapter engoliri
 });
 
 test('atomicWrite: rename que falha não deixa .tmp órfão', () => {
-  // o payload já foi escrito; sem limpeza o .tmp fica para sempre (os leitores
-  // filtram `.json` e não o recolhem).
+  // the payload was already written; without cleanup the .tmp stays forever
+  // (readers filter by `.json` and never collect it).
   const arquivos = new Map();
   const io = {
     writeFileSync: (p, d) => arquivos.set(p, d),

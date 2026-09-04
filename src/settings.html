@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="prefs">
-    <!-- header custom (arrastável), reusa .bar/.title/.logo/.btn do overlay -->
+    <!-- custom header (draggable), reuses .bar/.title/.logo/.btn from the overlay -->
     <header class="bar">
       <span class="title"><img class="logo" src="../assets/tray-icon.png" alt=""><span data-i18n="prefs_h1">Preferências</span></span>
       <span class="spacer"></span>
@@ -85,7 +85,7 @@
 
       </section>
 
-      <!-- ===================== ABA: NOTIFICAÇÕES ===================== -->
+      <!-- ===================== TAB: NOTIFICATIONS ===================== -->
       <section class="tab-panel" data-panel="notifications" hidden>
         <div class="section">
           <div class="section-title" data-i18n="sec_quota_reset">Reset de cota</div>
@@ -150,7 +150,7 @@
         </div>
       </section>
 
-      <!-- ===================== ABA: INTEGRAÇÃO ===================== -->
+      <!-- ===================== TAB: INTEGRATION ===================== -->
       <section class="tab-panel" data-panel="integration" hidden>
         <div class="section">
           <div class="section-title" data-i18n="sec_integration">Integração (agentes)</div>
@@ -192,7 +192,7 @@
         </div>
       </section>
 
-      <!-- ===================== ABA: ATUALIZAÇÕES ===================== -->
+      <!-- ===================== TAB: UPDATES ===================== -->
       <section class="tab-panel" data-panel="updates" hidden>
         <div class="section">
           <div class="section-title" data-i18n="sec_channel">Canal</div>
@@ -203,7 +203,7 @@
           <div class="hint" data-i18n="beta_channel_hint">Versões novas antes de virarem estáveis — podem ter bugs. Desligue para voltar à última estável.</div>
         </div>
       </section>
-      <!-- ===================== ABA: SINCRONIZAÇÃO ===================== -->
+      <!-- ===================== TAB: SYNC ===================== -->
       <section class="tab-panel" data-panel="sync" hidden>
         <div class="section">
           <div class="section-title" data-i18n="sec_sync">Sincronização multi-máquina (P2P via Tailscale)</div>
@@ -247,7 +247,7 @@
       </section>
     </div>
 
-    <!-- footer fixo: versão + repo à esquerda, Fechar à direita (nada fica pendente) -->
+    <!-- fixed footer: version + repo on the left, Close on the right (nothing left pending) -->
     <div class="actions">
       <span class="appmeta">
         <span class="ver">AI Traffic Lights v<span id="ver">…</span></span>
