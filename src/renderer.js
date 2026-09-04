@@ -86,6 +86,7 @@ function openExternal(s) {
   window.trafficLight.focus({
     pid: s.pid, origin: s.origin, windowid: s.windowid,
     focus_url: s.focus_url, tilix_id: s.tilix_id, iterm_id: s.iterm_id, tmux_pane: s.tmux_pane,
+    headless: !!s.headless,   // main needs it for the focus-failure reason (no window exists)
   });
 }
 
