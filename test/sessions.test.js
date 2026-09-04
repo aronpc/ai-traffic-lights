@@ -88,3 +88,12 @@ test('mesmo pid + mesma origin ainda dedupe (mantém mais recente)', () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].session_id, 'b');
 });
+
+// ---- headless: discovered sem terminal entra com a flag (e SEM term_program) ----
+test('discovered headless: flag headless=true e term_program=null', () => {
+  const out = mergeSessions([], [{ pid: 4242, agent: 'claude', headless: true }]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].session_id, 'proc-4242');
+  assert.equal(out[0].headless, true, 'flag preservada no merge');
+  assert.equal(out[0].term_program, null, "'terminal' seria mentira — não há shell embaixo");
+});

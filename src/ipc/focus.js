@@ -344,7 +344,7 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     // with the reason instead of looking broken — silence here is the worst
     // outcome.
     const why = focus.focusFailure({
-      wayland: IS_WAYLAND, raised, hasTab: tabbed, detached: st.detached,
+      wayland: IS_WAYLAND, raised, hasTab: tabbed, detached: st.detached, headless: !!st.headless,
     });
     if (why) notifyUser(T(`ntf_focus_${why}`));
   }

@@ -417,6 +417,10 @@ html, body {
 .row__llm { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; color: var(--agent-color, var(--ink-dim)); }
 .row__llm svg { width: 15px; height: 15px; display: block; }
 .row__llm:empty { display: none; }
+/* coluna do terminal (⌨): sessão headless (nohup/SDK/agente spawnado por outra
+   ferramenta) — não há janela para focar. Célula SEMPRE presente (vazia quando
+   attachada): tabela sem as linhas, cada coluna guarda sua largura em toda row. */
+.row__tty { flex: none; width: 18px; text-align: center; font-size: 11px; color: var(--ink-dim); }
 
 .row__main { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
 .row__label {
