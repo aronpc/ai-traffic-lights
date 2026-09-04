@@ -509,13 +509,18 @@ function render() {
     }
 
     // Terminal column (⌨): ALWAYS-present cell — attached rows leave it empty,
-    // headless ones (nohup, SDK, spawned by another tool) carry the glyph. A
-    // table without gridlines: every column keeps its width on every row.
+    // headless ones (nohup, SDK, spawned by another tool) carry the glyph, and
+    // so do tmux-detached ones (probe in collect.js — same glyph, its own
+    // tooltip). A table without gridlines: every column keeps its width on
+    // every row.
     const ttyCol = document.createElement('span');
     ttyCol.className = 'row__tty';
     if (s.headless) {
       ttyCol.textContent = '⌨';
       ttyCol.title = T('headless_tip');
+    } else if (s.tmux_detached) {
+      ttyCol.textContent = '⌨';
+      ttyCol.title = T('tmux_detached_tip');
     }
 
     const main = document.createElement('span');

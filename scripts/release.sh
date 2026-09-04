@@ -220,9 +220,17 @@ build_mac() {
 # MODE beta — pre-release X.Y.Z-beta.N
 # ===========================================================================
 release_beta() {
-  # Base: patch+1 from package.json (0.7.2 → 0.7.3), or --base.
+  # Base: package.json. No suffix → patch+1 (0.7.2 → 0.7.3). WITH a -beta.N
+  # suffix (the post-promote bump, e.g. 0.9.1-beta.0) the base was already
+  # decided by that bump → the X.Y.Z itself. Plain awk coerces "1-beta"→1 and
+  # adds +1, turning 0.9.1-beta.0 into base 0.9.2 mid-cycle (measured when
+  # shipping 0.9.1-beta.1, which needed an explicit --base to escape it).
   if [ -z "$BASE" ]; then
-    BASE="$(printf '%s' "$PKG_VERSION" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')"
+    if [[ "$PKG_VERSION" == *-* ]]; then
+      BASE="${PKG_VERSION%%-*}"
+    else
+      BASE="$(printf '%s' "$PKG_VERSION" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')"
+    fi
   fi
   [[ "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "base inválida: '$BASE' (esperado X.Y.Z)"
 

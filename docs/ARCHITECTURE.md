@@ -126,6 +126,7 @@ A real file (trimmed):
 | `model` | string \| null | Optional | Model name (e.g. `gpt-5.5`, `glm-5.2`). Drives the usage strip and per-line label. |
 | `term_program` | string \| null | Optional | Source terminal (`$TERM_PROGRAM`), e.g. `WarpTerminal`. Headless sessions set it to `null`. |
 | `headless` | boolean | Optional | Set when the process has **no controlling terminal** (`tty_nr=0` / `ps -o tty=` → `??`): `nohup`, SDK, `claude -p` spawned by another tool. Shows the ⌨ glyph in the overlay's terminal column, "none (headless)" in details, and a dedicated focus-failure reason. Travels in the sync payload (it's a session property, not a machine-local pointer). |
+| `tmux_detached` | boolean | Optional | Set (collector probe) when the session's tmux session has **no attached client** — one `tmux list-panes -a -F '#{pane_id} #{session_attached}'` per tick answers every pane; count `0` = detached, tmux missing/unreachable asserts nothing. Shows the ⌨ glyph with its own tooltip (attach it to see it), surfacing BEFORE the click what the click's `detached` focus-failure would explain. Like `headless`, travels in the sync payload — the origin is authoritative about its own tmux. |
 | `windowid` | string \| null | Optional | X11 window id (decimal or `0x…` hex; app normalizes) for click-to-focus. |
 | `focus_url` | string \| null | Optional | Warp tab focus URI (`warp://session/<uuid>`), opened via `xdg-open`. |
 | `tilix_id` | string \| null | Optional | Tilix terminal id for exact-tab focus via D-Bus `activate-terminal`. |
@@ -374,6 +375,12 @@ flowchart TD
   tool-spawned `claude -p`), flagged with `headless: true`. The tty signal wins
   over the parent: a `claude -p` run by another agent's Bash tool has a shell
   parent but no tty, and is headless. Cached for 4s.
+- **tmux probe** — `flagTmuxDetached()` (right after `flagHeadless`) asks tmux
+  itself whether each session's pane belongs to a session with an attached
+  client (`list-panes -a -F '#{pane_id} #{session_attached}'`, one call for
+  every pane, cached 4s). Count `0` → `tmux_detached: true` → the ⌨ glyph in
+  the list, before the click. No tmux (or server down) asserts nothing — the
+  same "don't claim without asking" contract as the focus flow.
 - **Reaping** — every 5s `reapDead()` removes state files whose `pid` no longer
   exists, so crashed/killed sessions don't linger as zombie lights.
 

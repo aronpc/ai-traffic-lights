@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { findTranscript, parseStatFields, acceptedProc, psTtyHeadless, flagHeadless } = require('../src/collect.js');
+const { findTranscript, parseStatFields, acceptedProc, psTtyHeadless, flagHeadless, parsePanesAttached, flagTmuxDetached } = require('../src/collect.js');
 
 const realHome = process.env.HOME;
 function withHome(h, fn) { process.env.HOME = h; try { return fn(); } finally { process.env.HOME = realHome; } }
@@ -115,4 +115,41 @@ test('flagHeadless: pid vivo sem tty ganha headless=true E term_program=null (co
   } finally {
     try { process.kill(child.pid, 9); } catch {}
   }
+});
+
+// ---- tmux detached probe (glifo ⌨ na lista ANTES do clique) ----
+test('parsePanesAttached: saída do list-panes -a vira Map pane→clientes; linha ruim pula', () => {
+  // Formato real: '#{pane_id} #{session_attached}' — "%3 0" é um pane cuja
+  // sessão está detached; "%4 1" tem um cliente anexado.
+  const m = parsePanesAttached('%3 0\n%4 1\n%12 2\n\njunk\n%5 x\n%6\n');
+  assert.deepEqual([...m.entries()], [['%3', 0], ['%4', 1], ['%12', 2]]);
+  assert.equal(parsePanesAttached(null).size, 0, 'sem saída → mapa vazio');
+});
+
+test('flagTmuxDetached: attached=0 marca; attached>0 e pane ausente não afirmam; gates respeitados', () => {
+  const panes = new Map([['%3', 0], ['%4', 1]]);
+  const mk = (over) => ({ session_id: 's', pid: 10, agent: 'claude', last_event: 'Stop', last_event_ts: 1, ...over });
+  const out = flagTmuxDetached([
+    mk({ tmux_pane: '%3' }),                    // detached
+    mk({ tmux_pane: '%4' }),                    // attached
+    mk({ tmux_pane: '%9' }),                    // pane ausente do mapa (tmux reiniciou) → sem afirmação
+    mk({}),                                     // sem pane → não é candidato
+    mk({ tmux_pane: 'evil; rm' }),              // pane inválido nunca vira argumento
+    mk({ tmux_pane: '%3', origin: 'peerhost' }),// remoto: a ORIGEM cuida do próprio tmux
+    mk({ tmux_pane: '%3', headless: true }),    // headless não é sobrescrito
+  ], panes);
+  assert.equal(out[0].tmux_detached, true, 'attached=0 → flag');
+  assert.equal(out[1].tmux_detached, undefined, 'attached>1 → não marca');
+  assert.equal(out[2].tmux_detached, undefined, 'pane ausente → sem afirmação');
+  assert.equal(out[3].tmux_detached, undefined, 'sem pane → intocado');
+  assert.equal(out[4].tmux_detached, undefined, 'pane inválido → intocado');
+  assert.equal(out[5].tmux_detached, undefined, 'sessão remota é do provedor da origem');
+  assert.equal(out[6].tmux_detached, undefined, 'headless segue sendo o sinal da linha');
+});
+
+test('flagTmuxDetached: probe indisponível (null) não afirma nada de ninguém', () => {
+  // tmux ausente da máquina / server fora → o mapa é null e NENHUMA row é
+  // pintada de detached (contrato espelhado no asked=false do foco).
+  const out = flagTmuxDetached([{ session_id: 's', pid: 1, tmux_pane: '%3', agent: 'claude' }], null);
+  assert.equal(out[0].tmux_detached, undefined, 'sem tmux → sem flag');
 });

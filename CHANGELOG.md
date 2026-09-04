@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sessões headless na descoberta (sem terminal attachado).** O sinal é o
+  terminal controlador do kernel (`tty_nr=0` no `/proc/<pid>/stat` no Linux;
+  `??` no `ps -o tty=` no macOS), não o processo pai — um `claude -p`
+  disparado pela Bash tool de outro agente tem pai shell mas não tem janela
+  para focar. Sessões headless ganham o glifo ⌨ na coluna do terminal, o
+  clique explica que não existe janela (motivo `headless` no foco) e o campo
+  `term_program` vai nulo, como o contrato do schema.
+- **Glifo ⌨ para sessão em tmux sem cliente anexado.** Antes o "detached" só
+  era descoberto no clique, com a notificação explicando que não há janela
+  para focar. Agora o coletor pergunta ao próprio tmux (`list-panes -a`, uma
+  chamada por ciclo com cache de 4 s) e marca a linha na lista com o mesmo
+  glifo do headless — tooltip próprio: há terminal, só falta o attach (⧉ ou
+  `tmux attach`). Sem tmux na máquina nenhuma linha é marcada; a flag viaja
+  no sync como propriedade da sessão, igual ao `headless`.
+
 ## [0.9.0] - 2026-09-02
 
 ### Added
