@@ -87,7 +87,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   // Tray mirror in the Preferences window
   getAutostart: () => ipcRenderer.invoke('get-autostart'),
   setAutostart: (on) => ipcRenderer.send('set-autostart', on),
-  installHooks: () => ipcRenderer.send('install-hooks'),
-  removeHooks: () => ipcRenderer.send('remove-hooks'),
+  installHooks: () => ipcRenderer.invoke('install-hooks'),
+  removeHooks: () => ipcRenderer.invoke('remove-hooks'),
   quit: () => ipcRenderer.send('quit'),
 });
