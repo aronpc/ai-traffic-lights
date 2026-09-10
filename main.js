@@ -727,8 +727,14 @@ function installHookFromApp() {
       kiroAdapter.start(chokidar, () => collect.invalidateDiscovery()); // invalidates the discovery cache on 1st write
       parts.push('Kiro: ' + T('ntf_plugin_ok'));
     }
-    notifyUser(parts.length ? parts.join(' · ') : T('ntf_none_found'));
-  } catch (e) { notifyUser(T('ntf_install_fail', { msg: e.message })); }
+    const msg = parts.length ? parts.join(' · ') : T('ntf_none_found');
+    notifyUser(msg);
+    return msg;
+  } catch (e) {
+    const msg = T('ntf_install_fail', { msg: e.message });
+    notifyUser(msg);
+    return msg;
+  }
 }
 function removeHookFromApp() {
   try {
@@ -744,8 +750,14 @@ function removeHookFromApp() {
     // and stop() never ran: "Remove hooks" was silently a no-op.
     kiroAdapter.stop();
     if (hookInstaller.removeKiro(BASE_DIR).removed) parts.push('Kiro: ' + T('ntf_plugin_removed'));
-    notifyUser(parts.length ? parts.join(' · ') : T('ntf_nothing_installed'));
-  } catch (e) { notifyUser(T('ntf_remove_fail', { msg: e.message })); }
+    const msg = parts.length ? parts.join(' · ') : T('ntf_nothing_installed');
+    notifyUser(msg);
+    return msg;
+  } catch (e) {
+    const msg = T('ntf_remove_fail', { msg: e.message });
+    notifyUser(msg);
+    return msg;
+  }
 }
 // notifyUser: implementation in src/ipc/tray.js (REF step 8). Stub reassigned
 // at boot to trayIpc.notifyUser (DI for update/focus/launcher).
@@ -937,8 +949,8 @@ ipcMain.on('copy-text', (_e, text) => {
 // reuse the already-registered 'toggle-visibility' and 'quit' channels.
 ipcMain.handle('get-autostart', () => autostartEnabled());
 ipcMain.on('set-autostart', (_e, on) => setAutostart(!!on));
-ipcMain.on('install-hooks', () => installHookFromApp());
-ipcMain.on('remove-hooks', () => removeHookFromApp());
+ipcMain.handle('install-hooks', () => installHookFromApp());
+ipcMain.handle('remove-hooks', () => removeHookFromApp());
 
 // Red notification.
 // ('notify' handler moved to src/ipc/tray.js — REF step 8)

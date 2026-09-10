@@ -37,6 +37,7 @@ const $syncShare = document.getElementById('syncShare');
 const $syncShareTr = document.getElementById('syncShareTr');
 const $syncAttach = document.getElementById('syncAttach');
 const $syncPeers = document.getElementById('syncPeers');
+const $hooksStatus = document.getElementById('hooksStatus');
 
 let captured = null;        // captured accelerator (string) or null
 let capturing = false;
@@ -261,11 +262,27 @@ for (const t of $tabs) t.addEventListener('click', () => selectTab(t.dataset.tab
 document.getElementById('closeBtn').addEventListener('click', () => window.close());
 document.getElementById('closeFooter').addEventListener('click', () => window.close());
 
-// ---- tray mirror: autostart + hooks (show/hide and quit stay tray-only) ----
 const $autostart = document.getElementById('autostart');
 $autostart.addEventListener('change', () => window.trafficLight.setAutostart($autostart.checked));
-document.getElementById('installHooks').addEventListener('click', () => window.trafficLight.installHooks());
-document.getElementById('removeHooks').addEventListener('click', () => window.trafficLight.removeHooks());
+
+let hooksStatusTimer = null;
+function showHookStatus(msg, isError) {
+  clearTimeout(hooksStatusTimer);
+  $hooksStatus.textContent = msg;
+  const mod = isError === null ? '' : (isError ? ' hook-status-error' : ' hook-status-ok');
+  $hooksStatus.className = 'hook-status' + mod;
+  $hooksStatus.hidden = false;
+  if (isError !== null) hooksStatusTimer = setTimeout(() => { $hooksStatus.hidden = true; }, 6000);
+}
+function hookAction(btn, fn) {
+  btn.disabled = true;
+  showHookStatus('…', null);
+  fn().then((msg) => { showHookStatus('✓ ' + (msg || ''), false); })
+      .catch((e) => { showHookStatus('✗ ' + (e && e.message || e), true); })
+      .finally(() => { btn.disabled = false; });
+}
+document.getElementById('installHooks').addEventListener('click', function () { hookAction(this, () => window.trafficLight.installHooks()); });
+document.getElementById('removeHooks').addEventListener('click', function () { hookAction(this, () => window.trafficLight.removeHooks()); });
 
 // Shows the custom command field only in 'custom' mode (hoisted — used above).
 function syncTerminalCmdField() { $terminalCmdField.hidden = $terminal.value !== 'custom'; }
