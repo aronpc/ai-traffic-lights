@@ -13,6 +13,7 @@ const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
 const kiroAdapter   = require('./adapters/kiro/ai-traffic-lights');
 const focus = require('./src/focus');
+const appimageEnv = require('./src/appimage-env');
 const sessions = require('./src/sessions');
 const collect = require('./src/collect');
 const net = require('./src/net');
@@ -1129,7 +1130,10 @@ let ptyLib = null;
 // restricted PATH (no /usr/bin) → tmux/bash not found → the tmux auto-wrap
 // failed silently. Appends the base dirs at the end (does not overwrite what is already there).
 function ptyEnv() {
-  const env = Object.assign({}, process.env);
+  // cleanEnv, not process.env: a shell in the tab can start a GUI app, and an
+  // AppImage-aware updater inheriting our APPIMAGE overwrites the overlay's
+  // own .AppImage with itself (see src/appimage-env.js).
+  const env = appimageEnv.cleanEnv(process.env);
   const cur = String(env.PATH || '').split(':').filter(Boolean);
   for (const d of ['/usr/local/bin', '/usr/bin', '/bin']) if (!cur.includes(d)) cur.push(d);
   env.PATH = cur.join(':');
