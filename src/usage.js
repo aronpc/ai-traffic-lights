@@ -44,6 +44,39 @@ const CLAUDE_ORG_LABEL = {
   claude_enterprise: 'Claude Enterprise',
 };
 
+// ---- tier → short CAPACITY suffix of the seat ("5×"/"20×") ----
+// The tier is NOT the plan. A Team premium seat carries `default_claude_max_5x`
+// as its QUOTA while the subscription is 'team', so testing the tier first made
+// EVERY Team account read "Claude Max 5×" — two different orgs ending up with
+// the same wrong plan name. Here the tier only refines the label.
+const CLAUDE_TIER_SHORT = {
+  default_claude_max_5x: '5×',
+  default_claude_max_20x: '20×',
+};
+
+// `subscriptionType` (credentials) and `organizationType` (.claude.json) say the
+// same thing with different spellings ('team' / 'claude_team'). Normalize to one
+// vocabulary; unknown → null, and the caller falls back to the generic label.
+const CLAUDE_SUB_LABEL = { max: 'Max', team: 'Team', pro: 'Pro', enterprise: 'Enterprise' };
+function claudeSubscriptionLabel(subscriptionType, organizationType) {
+  const sub = String(subscriptionType || '').toLowerCase();
+  if (CLAUDE_SUB_LABEL[sub]) return CLAUDE_SUB_LABEL[sub];
+  const org = String(organizationType || '').toLowerCase().replace(/^claude_/, '');
+  return CLAUDE_SUB_LABEL[org] || null;
+}
+
+// Plan label from every available hint. The subscription names the plan and the
+// tier refines it ("Team 5×"); with no subscription at all a known Max tier
+// names it alone ("Max 5×" — the personal account case). null when nothing is
+// known. The ACCOUNT name is deliberately not part of this: the renderer
+// appends it separately as `plan · account` (multi-account, #58).
+function claudePlanLabel({ subscriptionType, rateLimitTier, organizationType } = {}) {
+  const tier = CLAUDE_TIER_SHORT[rateLimitTier] || null;
+  const head = claudeSubscriptionLabel(subscriptionType, organizationType);
+  if (!head) return tier ? 'Claude Max ' + tier : null;
+  return 'Claude ' + (tier ? head + ' ' + tier : head);
+}
+
 // =========================== PURE LOGIC (parse) ===========================
 
 // Extracts reset/plan/passes/identity from an already-parsed .claude.json object.
@@ -75,11 +108,14 @@ function parseClaudeConfig(cfg, now) {
   if (acc.organizationUuid && typeof acc.organizationUuid === 'string') out.accountOrgUuid = acc.organizationUuid;
   if (acc.organizationName && typeof acc.organizationName === 'string') out.accountName = acc.organizationName;
   if (acc.emailAddress && typeof acc.emailAddress === 'string') out.accountEmail = acc.emailAddress;
-  if (acc.organizationRateLimitTier && CLAUDE_TIER_LABEL[acc.organizationRateLimitTier]) {
-    out.plan = 'Claude ' + CLAUDE_TIER_LABEL[acc.organizationRateLimitTier];
-  } else if (acc.organizationType && CLAUDE_ORG_LABEL[acc.organizationType]) {
-    out.plan = CLAUDE_ORG_LABEL[acc.organizationType];
-  } else if (acc.organizationType || acc.organizationUuid || acc.emailAddress) {
+  // The SEAT's tier is `userRateLimitTier`; `organizationRateLimitTier` usually
+  // carries an opaque internal code of the org (e.g. 'default_raven') — reading
+  // only the latter threw away the real tier sitting in the same object.
+  out.plan = claudePlanLabel({
+    rateLimitTier: acc.userRateLimitTier || acc.organizationRateLimitTier,
+    organizationType: acc.organizationType,
+  });
+  if (!out.plan && (acc.organizationType || acc.organizationUuid || acc.emailAddress)) {
     // account exists (some identity field), but type/tier unmapped →
     // doesn't vanish from the overlay; shows the generic label.
     out.plan = 'Claude';
@@ -337,15 +373,13 @@ function readClaudeCreds({ home, dir } = {}) {
   } catch { return { accessToken: null, subscriptionType: null, rateLimitTier: null }; }
 }
 
-// Resolves the plan label from the credentials (trusted source). A known Max
-// tier wins; otherwise the subscriptionType (team/pro/enterprise) becomes the label.
+// Resolves the plan label from the credentials (trusted source of BOTH the tier
+// and the subscription). The subscription wins and the tier refines it — testing
+// the tier first returned before ever looking at `subscriptionType: 'team'`,
+// which is why every Team seat showed up as "Claude Max 5×".
 // Returns null if the credentials aren't enough (the caller falls back to the .claude.json).
 function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
-  if (rateLimitTier && CLAUDE_TIER_LABEL[rateLimitTier]) return 'Claude ' + CLAUDE_TIER_LABEL[rateLimitTier];
-  const sub = (subscriptionType || '').toLowerCase();
-  const SUB_LABEL = { max: 'Claude Max', team: 'Claude Team', pro: 'Claude Pro', enterprise: 'Claude Enterprise' };
-  if (SUB_LABEL[sub]) return SUB_LABEL[sub];
-  return null;
+  return claudePlanLabel({ subscriptionType, rateLimitTier });
 }
 
 // Claude collector. Tries the OAuth usage API (REAL % AND reset of the 5h and
@@ -1336,5 +1370,5 @@ if (typeof module !== 'undefined') module.exports = {
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
-  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
+  readClaudeCreds, claudePlanFromCreds, claudePlanLabel, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
 };
