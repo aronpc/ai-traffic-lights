@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Toda conta Team aparecia como `Claude(Max 5×)`.** O rótulo do plano saía do
+  `rateLimitTier`, que numa conta Team não é o plano: o assento premium carrega
+  `default_claude_max_5x` como COTA enquanto a assinatura é `team`. O teste do
+  tier vinha primeiro e devolvia antes de olhar `subscriptionType`, então as
+  duas orgs de trabalho e a conta pessoal 5× ficavam com o mesmo rótulo errado.
+  Agora a assinatura nomeia o plano e o tier só refina — `Claude(Team 5× ·
+  Newfold Digital Orion)`, com a conta seguindo do lado como sempre (#58). Conta
+  pessoal sem assinatura declarada continua em `Claude(Max 20×)`.
+- **`userRateLimitTier` era ignorado.** O `.claude.json` traz o tier real do
+  assento nesse campo e um código interno opaco (`default_raven`) em
+  `organizationRateLimitTier` — o coletor lia só o segundo e descartava o tier
+  que estava no mesmo objeto, caindo no rótulo genérico.
+
 ### Added
 
 - **Sessões headless na descoberta (sem terminal attachado).** O sinal é o
