@@ -13,7 +13,12 @@
 function setupLauncherIpc({ ipcMain, getSettings, notifyUser, T, scanPathBin, hasBin, lastSessionCwd, ensureTermWin, addTermSession, spawnPtyLocal }) {
   const fs = require('fs');
   const path = require('path');
-  const { spawn } = require('child_process');
+  const cp = require('child_process');
+  const { withCleanEnv } = require('../appimage-env');
+  // Same boundary as in ipc/focus.js: what we launch here is a TERMINAL, the
+  // most likely thing to be an auto-updating app — it must not inherit the
+  // path of our .AppImage (src/appimage-env.js).
+  const spawn = withCleanEnv(cp.spawn);
   const { AGENTS } = require('../agents');
   const launcher = require('../launcher');
 

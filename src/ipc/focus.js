@@ -17,7 +17,12 @@
 // getProcessEnviron stay in main (shared w/ usage/launcher).
 
 function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }) {
-  const { execFileSync } = require('child_process');
+  const cp = require('child_process');
+  const { withCleanEnv } = require('../appimage-env');
+  // Every process spawned here runs with the AppImage vars STRIPPED — the
+  // `xdg-open warp://` channel below is exactly what leaked them into a Warp
+  // that then overwrote our own .AppImage (src/appimage-env.js).
+  const execFileSync = withCleanEnv(cp.execFileSync);
   const fs = require('fs');
   const path = require('path');
   const focus = require('../focus');
