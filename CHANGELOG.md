@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tmux attach`). Sem tmux na máquina nenhuma linha é marcada; a flag viaja
   no sync como propriedade da sessão, igual ao `headless`.
 
+### Fixed
+
+- **Captura de atalho travada no macOS quando a combinação usava Alt.** O campo
+  de atalho das Preferências derivava a tecla de `e.key` — o caractere gerado.
+  No macOS o Option é modificador de composição, então `Option+H` chega como
+  `˙`, que não casa com `[A-Z0-9]`: a captura devolvia `null` e nenhum atalho
+  com Alt podia ser configurado (o sintoma era o campo não reagir à tecla). No
+  Linux/X11 o mesmo evento chega como `h` e passa, o que deixou o bug invisível
+  de um lado só. A tecla passa a sair de `e.code` (posição física, independente
+  de layout), com `e.key` de fallback para eventos sem code. A lógica saiu do
+  renderer para `src/accel.js`, coberta por `test/accel.test.js`.
+
 ## [0.9.0] - 2026-09-02
 
 ### Added
