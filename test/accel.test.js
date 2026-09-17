@@ -41,6 +41,13 @@ test('accelFromEvent: e.key is the fallback when there is no usable code', () =>
   assert.equal(keyFromChar('˙'), null);
 });
 
+test('accelFromEvent: a code outside the subset is rejected, not rescued by e.key', () => {
+  // Numpad5 carries key '5': falling back would save Control+5, which
+  // globalShortcut binds to the number ROW — a key the user never pressed.
+  assert.equal(accelFromEvent(ev('Numpad5', '5', { ctrl: true })), null);
+  assert.equal(accelFromEvent(ev('Backquote', '`', { ctrl: true })), null);
+});
+
 test('accelFromEvent: null while only modifiers are held', () => {
   assert.equal(accelFromEvent(ev('ControlLeft', 'Control', { ctrl: true })), null);
   assert.equal(accelFromEvent(ev('AltLeft', 'Alt', { alt: true })), null);

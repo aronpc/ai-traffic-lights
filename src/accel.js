@@ -30,7 +30,10 @@ function keyFromChar(key) {
 function accelFromEvent(e) {
   const mods = [];
   for (const [prop, name] of Object.entries(MODNAME)) if (e[prop]) mods.push(name);
-  const key = keyFromCode(e.code) || keyFromChar(e.key);
+  // e.key ONLY without a code: a code outside the subset (Numpad5, Backquote)
+  // must be rejected, never rescued by its character — the accelerator would
+  // then name a different physical key than the one pressed.
+  const key = e.code ? keyFromCode(e.code) : keyFromChar(e.key);
   if (!key) return null;            // lone modifier / unsupported key
   return [...mods, key].join('+');
 }
