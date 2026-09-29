@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Metainfo AppStream no AppImage.** `build/dev.aitrafficlights.app.metainfo.xml`
+  entra em `usr/share/metainfo/` via `linux.extraFiles`, com descrição e
+  screenshots (`overlay.png`, `preferences.png`). O catálogo
+  [appimage.github.io](https://appimage.github.io) passa a usar esses
+  screenshots em vez da captura automática do overlay vazio.
 - **Sessões headless na descoberta (sem terminal attachado).** O sinal é o
   terminal controlador do kernel (`tty_nr=0` no `/proc/<pid>/stat` no Linux;
   `??` no `ps -o tty=` no macOS), não o processo pai — um `claude -p`

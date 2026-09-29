@@ -57,7 +57,13 @@
         "--disable-dev-shm-usage",
         "--ozone-platform=x11"
       ],
-      "syncDesktopName": true
+      "syncDesktopName": true,
+      "extraFiles": [
+        {
+          "from": "build/dev.aitrafficlights.app.metainfo.xml",
+          "to": "usr/share/metainfo/dev.aitrafficlights.app.metainfo.xml"
+        }
+      ]
     },
     "appImage": {
       "artifactName": "${name}-${version}.${ext}"
