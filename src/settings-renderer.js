@@ -62,21 +62,7 @@ function applyI18n() {
   if (typeof relabelAllSelects === 'function') relabelAllSelects(); // custom dropdowns follow the language
 }
 
-const KEYNAME = { ' ': 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' };
-const MODNAME = { ctrlKey: 'Control', altKey: 'Alt', shiftKey: 'Shift', metaKey: 'Super' };
-
-// keydown → "Mod+...+Key" accelerator. Returns null if only modifiers so far.
-function accelFromEvent(e) {
-  const mods = [];
-  for (const [prop, name] of Object.entries(MODNAME)) if (e[prop]) mods.push(name);
-  let key = KEYNAME[e.key];
-  if (!key) {
-    if (/^[a-z0-9]$/i.test(e.key)) key = e.key.toUpperCase();
-    else if (/^F([1-9]|1[0-2])$/i.test(e.key)) key = e.key.toUpperCase();
-  }
-  if (!key) return null;            // lone modifier / unsupported key
-  return [...mods, key].join('+');
-}
+// accelFromEvent lives in accel.js (pure logic, covered by test/accel.test.js).
 
 function pretty(acc) {
   if (!acc) return '—';

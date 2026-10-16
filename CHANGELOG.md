@@ -9,14 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Upgrade do plano Max continuava mostrando o tier velho no overlay.** Na
-  troca de plano (ex.: 5×→20×) o Claude Code atualiza o
-  `oauthAccount.organizationRateLimitTier` do `.claude.json`, mas o
-  `rateLimitTier` das credenciais OAuth congela no valor do último login — e o
-  app priorizava as credenciais incondicionalmente, mantendo o rótulo "Max 5×"
-  com a assinatura já em 20×. A resolução agora é reconciliada
-  (`resolveClaudePlan`): tier Max conhecido no `oauthAccount` vence; tier
-  opaco (ex.: `default_raven`) continua deferrindo para as credenciais.
+- **Toda conta Team aparecia como `Claude(Max 5×)`.** O rótulo do plano saía do
+  `rateLimitTier`, que numa conta Team não é o plano: o assento premium carrega
+  `default_claude_max_5x` como COTA enquanto a assinatura é `team`. O teste do
+  tier vinha primeiro e devolvia antes de olhar `subscriptionType`, então as
+  duas orgs de trabalho e a conta pessoal 5× ficavam com o mesmo rótulo errado.
+  Agora a assinatura nomeia o plano e o tier só refina — `Claude(Team 5× ·
+  Newfold Digital Orion)`, com a conta seguindo do lado como sempre (#58). Conta
+  pessoal sem assinatura declarada continua em `Claude(Max 20×)`.
+- **`userRateLimitTier` era ignorado.** O `.claude.json` traz o tier real do
+  assento nesse campo e um código interno opaco (`default_raven`) em
+  `organizationRateLimitTier` — o coletor lia só o segundo e descartava o tier
+  que estava no mesmo objeto, caindo no rótulo genérico.
+- **Upgrade do plano continuava mostrando o tier velho no overlay.** Na troca
+  de plano (ex.: 5×→20×) o `rateLimitTier` das credenciais OAuth congela no
+  valor do último login, enquanto o `oauthAccount` do `.claude.json` já traz o
+  tier novo — e o app priorizava as credenciais incondicionalmente, mantendo o
+  rótulo "Max 5×" com a assinatura já em 20×. A resolução agora é reconciliada
+  (`resolveClaudePlan`): tier de assento conhecido no `oauthAccount` vence
+  (refinando o nome que a assinatura dá); tier opaco continua deferrindo para
+  as credenciais.
 
 ### Added
 
@@ -39,6 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   glifo do headless — tooltip próprio: há terminal, só falta o attach (⧉ ou
   `tmux attach`). Sem tmux na máquina nenhuma linha é marcada; a flag viaja
   no sync como propriedade da sessão, igual ao `headless`.
+
+### Fixed
+
+- **Captura de atalho travada no macOS quando a combinação usava Alt.** O campo
+  de atalho das Preferências derivava a tecla de `e.key` — o caractere gerado.
+  No macOS o Option é modificador de composição, então `Option+H` chega como
+  `˙`, que não casa com `[A-Z0-9]`: a captura devolvia `null` e nenhum atalho
+  com Alt podia ser configurado (o sintoma era o campo não reagir à tecla). No
+  Linux/X11 o mesmo evento chega como `h` e passa, o que deixou o bug invisível
+  de um lado só. A tecla passa a sair de `e.code` (posição física, independente
+  de layout), com `e.key` de fallback para eventos sem code. A lógica saiu do
+  renderer para `src/accel.js`, coberta por `test/accel.test.js`.
 
 ## [0.9.0] - 2026-09-02
 
