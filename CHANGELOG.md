@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assento nesse campo e um código interno opaco (`default_raven`) em
   `organizationRateLimitTier` — o coletor lia só o segundo e descartava o tier
   que estava no mesmo objeto, caindo no rótulo genérico.
+- **Upgrade do plano continuava mostrando o tier velho no overlay.** Na troca
+  de plano (ex.: 5×→20×) o `rateLimitTier` das credenciais OAuth congela no
+  valor do último login, enquanto o `oauthAccount` do `.claude.json` já traz o
+  tier novo — e o app priorizava as credenciais incondicionalmente, mantendo o
+  rótulo "Max 5×" com a assinatura já em 20×. A resolução agora é reconciliada
+  (`resolveClaudePlan`): tier de assento conhecido no `oauthAccount` vence
+  (refinando o nome que a assinatura dá); tier opaco continua deferrindo para
+  as credenciais.
 
 ### Added
 

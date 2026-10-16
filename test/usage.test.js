@@ -10,6 +10,7 @@ const {
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
   collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
+  resolveClaudePlan,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
@@ -90,7 +91,7 @@ test('parseClaudeConfig: sem oauthAccount → plan null (sem conta, some do over
 test('parseClaudeConfig: payload vazio/malformado → tudo null', () => {
   const r = parseClaudeConfig({}, NOW);
   assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
-    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null });
+    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null, accountTier: null });
   assert.deepEqual(parseClaudeConfig(null, NOW).plan, null);
 });
 
@@ -294,6 +295,45 @@ test('claudePlanFromCreds: the SUBSCRIPTION names the plan, the tier only refine
   assert.equal(claudePlanFromCreds({}), null);   // no info → null (caller uses .claude.json)
 });
 
+// =========================== resolveClaudePlan (creds × .claude.json) ===========================
+// Real case (2026-10-15): plan upgraded 5×→20×. The .credentials.json kept
+// rateLimitTier='default_claude_max_5x' (a snapshot from the last login/token
+// exchange) while the .claude.json oauthAccount already carried
+// 'default_claude_max_20x' (Claude Code rewrites it from live account metadata).
+// The overlay kept showing "Max 5×" because the credentials won unconditionally.
+
+test('resolveClaudePlan: oauthAccount com tier Max CONHECIDO vence sobre o snapshot velho das creds (upgrade 5×→20×)', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_20x' } }, NOW);
+  const creds = { subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' };
+  assert.equal(resolveClaudePlan(creds, pc), 'Claude Max 20×');
+});
+
+test('resolveClaudePlan: tier OPACO no oauthAccount (default_raven) defere para as creds', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_max', organizationRateLimitTier: 'default_raven' } }, NOW);
+  assert.equal(resolveClaudePlan({ rateLimitTier: 'default_claude_max_5x' }, pc), 'Claude Max 5×');
+});
+
+test('resolveClaudePlan: oauthAccount sem tier (só orgType) + creds com tier → creds mais específicas', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_max' } }, NOW);
+  assert.equal(resolveClaudePlan({ rateLimitTier: 'default_claude_max_20x' }, pc), 'Claude Max 20×');
+  assert.equal(resolveClaudePlan({ subscriptionType: 'max' }, pc), 'Claude Max');
+});
+
+test('resolveClaudePlan: sem creds → plan do .claude.json; sem nada → null', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationRateLimitTier: 'default_claude_max_5x' } }, NOW);
+  assert.equal(resolveClaudePlan({}, pc), 'Claude Max 5×');
+  assert.equal(resolveClaudePlan({}, null), null);
+});
+
+test('resolveClaudePlan: seat TEAM com tier conhecido no oauthAccount → "Team 5×" (subscription nomeia, tier fresco refina)', () => {
+  // Integration of #73 × #76: the KNOWN seat tier from the .claude.json wins over
+  // the creds' snapshot, but the SUBSCRIPTION still names the plan — a Team seat
+  // must stay "Team 5×", never "Max 5×".
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_team', userRateLimitTier: 'default_claude_max_5x' } }, NOW);
+  const creds = { subscriptionType: 'team', rateLimitTier: 'default_claude_max_5x' };
+  assert.equal(resolveClaudePlan(creds, pc), 'Claude Team 5×');
+});
+
 test('parseClaudeConfig: userRateLimitTier is the SEAT tier (organizationRateLimitTier is opaque)', () => {
   // Real data from a Team account: the org carries 'default_raven' while the
   // seat carries the real tier in the SAME object. Reading only the org's field
@@ -319,6 +359,24 @@ test('parseClaudeConfig: two Team orgs of the same login get the same plan, diff
   assert.equal(orion.plan, artemis.plan, 'same subscription and capacity');
   assert.notEqual(orion.accountName, artemis.accountName);
   assert.notEqual(orion.accountOrgUuid, artemis.accountOrgUuid);
+});
+
+test('readClaudeUsage: creds 5× × .claude.json 20× → tiles trazem o plano NOVO (20×)', async () => {
+  // The two files exactly as they diverged on the real machine after the upgrade.
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({
+    oauthAccount: { organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_20x' },
+  }));
+  fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.claude/.credentials.json'), JSON.stringify({
+    claudeAiOauth: { accessToken: 'oauth-tok', subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' },
+  }));
+  const f = mockFetcher({ five_hour: { utilization: 23, resets_at: '2026-07-07T17:00:00Z' }, seven_day: { utilization: 78, resets_at: '2026-07-09T12:00:00Z' } });
+  const r = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f });
+  assert.equal(r.length, 2);
+  assert.ok(r.every((e) => e.plan === 'Claude Max 20×'), 'todas as linhas trazem o plano novo');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('readClaudeUsage: extra_usage vira tile id=claude-extra (não colide com 7d)', async () => {
