@@ -59,7 +59,7 @@ const CLAUDE_ORG_LABEL = {
 // email never shows in the UI (only the local-part, and only in the renderer).
 function parseClaudeConfig(cfg, now) {
   const out = { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
-    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null };
+    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null, accountTier: null };
   if (!cfg || typeof cfg !== 'object') return out;
 
   // plan reset: cachedGrowthBookFeatures.tengu_saffron_lattice.planLimitsEndDate
@@ -75,6 +75,10 @@ function parseClaudeConfig(cfg, now) {
   if (acc.organizationUuid && typeof acc.organizationUuid === 'string') out.accountOrgUuid = acc.organizationUuid;
   if (acc.organizationName && typeof acc.organizationName === 'string') out.accountName = acc.organizationName;
   if (acc.emailAddress && typeof acc.emailAddress === 'string') out.accountEmail = acc.emailAddress;
+  // accountTier: the RAW tier string (e.g. 'default_claude_max_20x') — resolveClaudePlan
+  // needs it to distinguish "known Max tier" (wins over the credentials) from an
+  // opaque internal code ('default_raven' → falls through to the credentials).
+  if (acc.organizationRateLimitTier && typeof acc.organizationRateLimitTier === 'string') out.accountTier = acc.organizationRateLimitTier;
   if (acc.organizationRateLimitTier && CLAUDE_TIER_LABEL[acc.organizationRateLimitTier]) {
     out.plan = 'Claude ' + CLAUDE_TIER_LABEL[acc.organizationRateLimitTier];
   } else if (acc.organizationType && CLAUDE_ORG_LABEL[acc.organizationType]) {
@@ -319,12 +323,12 @@ function readClaudeOAuthToken({ home } = {}) {
   return readClaudeCreds({ home }).accessToken;
 }
 
-// Reads the OAuth credentials: accessToken + subscriptionType + rateLimitTier. These
-// last two are the MOST reliable source of the plan (the .claude.json may carry an
-// opaque internal tier like 'default_raven', while the credentials carry the
-// real tier 'default_claude_max_5x'). Never throws — missing fields become null.
-// Path via claude-config.js: <configdir>/.credentials.json (configdir may be a
-// profile/dd-claude symlink — traversed automatically on access).
+// Reads the OAuth credentials: accessToken + subscriptionType + rateLimitTier.
+// The last two are ONLY a snapshot of the last login/token exchange — on a plan
+// change they linger on the old tier (see resolveClaudePlan for the precedence).
+// Never throws — missing fields become null. Path via claude-config.js:
+// <configdir>/.credentials.json (configdir may be a profile/dd-claude symlink —
+// traversed automatically on access).
 function readClaudeCreds({ home, dir } = {}) {
   try {
     const creds = JSON.parse(fs.readFileSync(claudePaths.credsFile({ home, dir }), 'utf8'));
@@ -346,6 +350,24 @@ function claudePlanFromCreds({ subscriptionType, rateLimitTier } = {}) {
   const SUB_LABEL = { max: 'Claude Max', team: 'Claude Team', pro: 'Claude Pro', enterprise: 'Claude Enterprise' };
   if (SUB_LABEL[sub]) return SUB_LABEL[sub];
   return null;
+}
+
+// Reconciles the plan label between the TWO local sources when they disagree.
+// Precedence (verified on a real 5×→20× upgrade, 2026-10-15):
+//   1. .claude.json oauthAccount with a KNOWN Max tier — Claude Code rewrites
+//      oauthAccount from live account metadata, so this is the field that follows
+//      a plan change first.
+//   2. Credentials (rateLimitTier known → subscriptionType) — a snapshot of the
+//      last login/token exchange; on the same upgrade it kept saying Max 5×
+//      while the org already was 20×.
+//   3. .claude.json fallbacks (orgType → generic 'Claude').
+// An OPAQUE oauthAccount tier ('default_raven') is not in CLAUDE_TIER_LABEL →
+// falls through to the credentials, preserving the original reason creds exist
+// here (they can carry the real tier when the org field is internal-only).
+// Pure and exported — the resolution order is the specification, tests pin it.
+function resolveClaudePlan(creds, pc) {
+  if (pc && pc.accountTier && CLAUDE_TIER_LABEL[pc.accountTier]) return 'Claude ' + CLAUDE_TIER_LABEL[pc.accountTier];
+  return claudePlanFromCreds(creds) || (pc ? pc.plan : null);
 }
 
 // Claude collector. Tries the OAuth usage API (REAL % AND reset of the 5h and
@@ -390,10 +412,10 @@ function claudePlanOnlyTile(plan, pc, dir) {
 async function readClaudeUsage({ home, dir, now, fetcher, cooldownUntil, cooldownFails, setCooldown, allowFetch = true } = {}) {
   const pc = readClaudeConfig({ home, now, dir });
   const creds = readClaudeCreds({ home, dir });
-  // Plan: credentials first (REAL tier/subscription — e.g. 'default_claude_max_5x'),
-  // then the .claude.json (which may have only an opaque internal tier). If neither
-  // resolves but there's an account, falls back to the .claude.json generic (or null = no account).
-  const plan = claudePlanFromCreds(creds) || (pc ? pc.plan : null);
+  // Plan: reconcile credentials × .claude.json (resolveClaudePlan — a KNOWN Max
+  // tier in oauthAccount wins over the creds' snapshot, which goes stale on a
+  // plan change; an opaque org tier still defers to the creds).
+  const plan = resolveClaudePlan(creds, pc);
   const token = creds.accessToken;
   const planOnly = claudePlanOnlyTile(plan, pc, dir);
   if (!token) return planOnly;
@@ -1336,5 +1358,5 @@ if (typeof module !== 'undefined') module.exports = {
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
-  readClaudeCreds, claudePlanFromCreds, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
+  readClaudeCreds, claudePlanFromCreds, resolveClaudePlan, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
 };

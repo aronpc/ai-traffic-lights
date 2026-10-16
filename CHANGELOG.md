@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Upgrade do plano Max continuava mostrando o tier velho no overlay.** Na
+  troca de plano (ex.: 5×→20×) o Claude Code atualiza o
+  `oauthAccount.organizationRateLimitTier` do `.claude.json`, mas o
+  `rateLimitTier` das credenciais OAuth congela no valor do último login — e o
+  app priorizava as credenciais incondicionalmente, mantendo o rótulo "Max 5×"
+  com a assinatura já em 20×. A resolução agora é reconciliada
+  (`resolveClaudePlan`): tier Max conhecido no `oauthAccount` vence; tier
+  opaco (ex.: `default_raven`) continua deferrindo para as credenciais.
+
 ### Added
 
 - **Metainfo AppStream no AppImage.** `build/dev.aitrafficlights.app.metainfo.xml`
