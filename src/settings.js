@@ -13,6 +13,7 @@ const DEFAULTS = Object.freeze({
   terminalCmd: '',              // custom command for 'custom' (e.g. 'kitty --directory {cwd} -e {cmd}')
   launchers: {},                // path override per agent: { claude: '/usr/local/bin/claude' }
   showUsage: true,              // footer: true = usage bars | false = launcher icons
+  hideFooter: false,           // footer: true = completely hides the bottom bar
   groupByHost: true,            // list: per-machine headers when there are sessions from >1 host (#54)
   collapsed: false,             // window state: collapsed (header+footer only) | expanded
   opacity: 0.97,               // panel transparency (0.6–1.0; alpha of the overlay background)
@@ -105,6 +106,7 @@ function mergeWithDefaults(raw) {
     }
     if (typeof raw.escalateIdle === 'boolean') out.escalateIdle = raw.escalateIdle;
     if (typeof raw.showUsage === 'boolean') out.showUsage = raw.showUsage;
+    if (typeof raw.hideFooter === 'boolean') out.hideFooter = raw.hideFooter;
     if (typeof raw.groupByHost === 'boolean') out.groupByHost = raw.groupByHost;
     if (typeof raw.collapsed === 'boolean') out.collapsed = raw.collapsed;
     // opacity: number in [0.6, 1.0] (below 0.6 becomes unreadable). Out of
