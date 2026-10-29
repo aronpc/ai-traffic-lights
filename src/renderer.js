@@ -742,8 +742,12 @@ function applyAppearance() {
 
 // Footer mode: showUsage (settings) decides whether the USAGE bar or the
 // LAUNCHER bar shows — only one at a time. Default true (usage). The header toggle
-// switches and persists it via save-settings.
+// switches and persists it via save-settings. hideFooter overrides both.
+function footerHidden() {
+  return !!(settingsCfg && settingsCfg.hideFooter);
+}
 function footerShowsUsage() {
+  if (footerHidden()) return false;
   return !settingsCfg || settingsCfg.showUsage !== false;
 }
 // Group by host (#54): default ON (mergeWithDefaults); the header toggle
@@ -752,15 +756,23 @@ function groupByHostOn() {
   return !settingsCfg || settingsCfg.groupByHost !== false;
 }
 function applyFooterMode() {
-  const showUsage = footerShowsUsage();
-  renderUsage();
-  renderLauncher();
-  // Real visibility is decided inside each render (they may be empty),
-  // but the mode hides the other one for good.
-  const $l = document.getElementById('launcher');
-  if (showUsage) { if ($l) $l.hidden = true; }
-  else { if ($usage) $usage.hidden = true; }
-  if ($toggleFooter) $toggleFooter.classList.toggle('is-on', !showUsage); // highlights in launcher mode
+  const hidden = footerHidden();
+  if ($toggleFooter) $toggleFooter.hidden = hidden;
+  if (hidden) {
+    if ($usage) { $usage.hidden = true; $usage.replaceChildren(); }
+    const $l = document.getElementById('launcher');
+    if ($l) { $l.hidden = true; $l.replaceChildren(); }
+  } else {
+    const showUsage = footerShowsUsage();
+    renderUsage();
+    renderLauncher();
+    // Real visibility is decided inside each render (they may be empty),
+    // but the mode hides the other one for good.
+    const $l = document.getElementById('launcher');
+    if (showUsage) { if ($l) $l.hidden = true; }
+    else { if ($usage) $usage.hidden = true; }
+    if ($toggleFooter) $toggleFooter.classList.toggle('is-on', !showUsage); // highlights in launcher mode
+  }
   // Re-measures the height: expanded → autosize; collapsed → new footer's height
   // (autosize is a no-op when collapsed, so the window kept the previous
   // footer's space — empty space was left when switching usage↔launcher while collapsed).
@@ -860,7 +872,7 @@ function renderLauncher() {
     $bar.append(btn);
   }
   // Launcher only shows when the footer mode is NOT usage and there are launchers.
-  $bar.hidden = footerShowsUsage() || launchers.length === 0;
+  $bar.hidden = footerHidden() || footerShowsUsage() || launchers.length === 0;
 }
 
 // Version + update in the HEADER (left of the gear). No update: discreet

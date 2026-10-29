@@ -10,6 +10,7 @@ const $lang = document.getElementById('lang');
 const $sc = document.getElementById('shortcut');
 const $opacity = document.getElementById('opacity');
 const $opacityVal = document.getElementById('opacityVal');
+const $hideFooter = document.getElementById('hideFooter');
 const $markRead = document.getElementById('markRead');
 const $notifyReset = document.getElementById('notifyReset');
 const $revealRed = document.getElementById('revealOnRed');
@@ -88,6 +89,7 @@ function buildCfg() {
   cfg.terminal = $terminal.value;            // Quick Launcher: spawn terminal
   if ($terminal.value === 'custom') cfg.terminalCmd = $terminalCmd.value.trim();
   cfg.opacity = (parseInt($opacity.value, 10) || 97) / 100;  // slider 60–100 → 0.6–1.0
+  cfg.hideFooter = $hideFooter.checked;      // hide bottom bar completely
   cfg.markReadOnClick = $markRead.checked;   // click marks as read
   cfg.notifyOnReset = $notifyReset.checked;  // notify when the quota resets
   cfg.revealOnRed = $revealRed.checked;      // bring to front when it turns red
@@ -155,6 +157,7 @@ $sc.addEventListener('keydown', (e) => {
 // ---- each control applies immediately ----
 $idle.addEventListener('change', pushLive);
 $lang.addEventListener('change', pushLive);
+$hideFooter.addEventListener('change', pushLive);
 $markRead.addEventListener('change', pushLive);
 $notifyReset.addEventListener('change', pushLive);
 $revealRed.addEventListener('change', pushLive);
@@ -303,6 +306,7 @@ window.trafficLight.getSettings().then((c) => {
     const opct = Math.round((typeof c.opacity === 'number' ? c.opacity : 0.97) * 100);
     $opacity.value = String(opct);
     $opacityVal.textContent = opct + '%';
+    $hideFooter.checked = c.hideFooter === true;      // default off
     $markRead.checked = c.markReadOnClick !== false; // default on
     $notifyReset.checked = c.notifyOnReset !== false; // default on
     $revealRed.checked = c.revealOnRed === true;      // default off
