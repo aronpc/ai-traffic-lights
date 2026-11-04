@@ -1696,18 +1696,22 @@ function gatewayCredsFromSessions() {
     let env;
     try {
       const raw = getProcessEnviron(s.pid);
-      env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+      env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL']);
     } catch { continue; }
     if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
     if (/api\.anthropic\.com|api\.z\.ai|bigmodel\.cn/i.test(env.ANTHROPIC_BASE_URL)) continue;
+    // One gateway key serves several providers: the session's model (ANTHROPIC_MODEL,
+    // e.g. "kimi/k3.1-pro") decides WHICH account's quota that session shows, so the
+    // dedup key is token+model — two sessions on different providers stay two tiles.
     const token = env.ANTHROPIC_AUTH_TOKEN;
-    if (byToken.has(token)) continue;
+    const key = token + '\0' + (env.ANTHROPIC_MODEL || '');
+    if (byToken.has(key)) continue;
     let suffix;
-    try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
+    try { suffix = crypto_().createHash('sha256').update(key).digest('hex').slice(0, 6); }
     catch { suffix = String(byToken.size + 1); }
     let label = '';
     try { label = new URL(env.ANTHROPIC_BASE_URL).host; } catch { /* invalid base */ }
-    byToken.set(token, { env, label, suffix });
+    byToken.set(key, { env, label, suffix });
   }
   return [...byToken.values()];
 }

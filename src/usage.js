@@ -904,15 +904,20 @@ async function readGatewayUsage({ env, now, fetcher, label, suffix } = {}) {
   if (/(^|\.)api\.anthropic\.com$/i.test(host)) return null; // official → claude collector
   if (/api\.z\.ai|bigmodel\.cn/i.test(base)) return null;    // GLM collector
 
+  // The session's model picks the account when one gateway key fronts several
+  // providers (gateway resolves provider(model)); absent → gateway infers from the key.
+  const model = E.ANTHROPIC_MODEL || '';
   const nowMs = now || Date.now();
-  const cached = _gatewayCacheByToken.get(token);
+  const cacheKey = token + '\0' + model;
+  const cached = _gatewayCacheByToken.get(cacheKey);
   if (cached && (nowMs - cached.at) < CACHE_MS) return cached.entries;
 
   const sfx = suffix ? ':' + suffix : '';
   const planTag = label ? ' (' + label + ')' : '';
+  const query = model ? '?model=' + encodeURIComponent(model) : '';
   let payload;
   try {
-    payload = await _httpsGetJson(`${base}/api/oauth/usage`, {
+    payload = await _httpsGetJson(`${base}/api/oauth/usage${query}`, {
       Authorization: 'Bearer ' + token,
       'anthropic-beta': 'oauth-2025-04-20',
       'Content-Type': 'application/json',
@@ -925,7 +930,7 @@ async function readGatewayUsage({ env, now, fetcher, label, suffix } = {}) {
       plan: (label || host) + planTag,
       source: 'gateway.oauth', error: String(e.message || e),
     };
-    _gatewayCacheByToken.set(token, { at: nowMs, entries: [entry] });
+    _gatewayCacheByToken.set(cacheKey, { at: nowMs, entries: [entry] });
     return [entry];
   }
 
@@ -949,7 +954,7 @@ async function readGatewayUsage({ env, now, fetcher, label, suffix } = {}) {
     resetInMin: null, extra: null, plan: planBase + planTag,
     source: 'gateway.oauth', error: 'no windows parsed',
   }];
-  _gatewayCacheByToken.set(token, { at: nowMs, entries: result });
+  _gatewayCacheByToken.set(cacheKey, { at: nowMs, entries: result });
   return result;
 }
 

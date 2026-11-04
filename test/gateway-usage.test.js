@@ -83,3 +83,21 @@ test('readGatewayUsage: payload sem janelas → entry "no windows parsed"', asyn
   assert.equal(out[0].usedPct, null);
   assert.match(out[0].error, /no windows/);
 });
+
+test('readGatewayUsage: ANTHROPIC_MODEL vai em ?model= (a conta é a do provider do modelo)', async () => {
+  _clearGatewayCache();
+  const env = { ANTHROPIC_BASE_URL: 'https://9router.aronpc.dev/', ANTHROPIC_AUTH_TOKEN: 'tok', ANTHROPIC_MODEL: 'kimi/k3.1-pro' };
+  const f = mockFetcher({ five_hour: { utilization: 23, resets_at: null } });
+  await readGatewayUsage({ env, now: NOW, fetcher: f });
+  assert.equal(f.calls[0].url, 'https://9router.aronpc.dev/api/oauth/usage?model=kimi%2Fk3.1-pro');
+});
+
+test('readGatewayUsage: mesmo token, modelos diferentes → cache separado (2 chamadas)', async () => {
+  _clearGatewayCache();
+  const base = { ANTHROPIC_BASE_URL: 'https://9router.aronpc.dev', ANTHROPIC_AUTH_TOKEN: 'tok' };
+  const f = mockFetcher({ five_hour: { utilization: 5, resets_at: null } });
+  await readGatewayUsage({ env: { ...base, ANTHROPIC_MODEL: 'kimi/k3.1-pro' }, now: NOW, fetcher: f });
+  await readGatewayUsage({ env: { ...base, ANTHROPIC_MODEL: 'cc/claude-sonnet-5-5' }, now: NOW, fetcher: f });
+  await readGatewayUsage({ env: { ...base, ANTHROPIC_MODEL: 'kimi/k3.1-pro' }, now: NOW, fetcher: f }); // cache hit
+  assert.equal(f.calls.length, 2);
+});
