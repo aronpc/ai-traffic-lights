@@ -281,9 +281,15 @@ test('readClaudeUsage: OAuth ok → 2 linhas (5h + 7d) com % e reset reais', asy
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('claudePlanFromCreds: tier Max conhecido vence; senão subscriptionType', () => {
+test('claudePlanFromCreds: the SUBSCRIPTION names the plan, the tier only refines it', () => {
+  // This test used to encode the opposite rule ("known Max tier wins") and stayed
+  // green because it never exercised the conflict — which IS the bug: on a Team
+  // seat the tier is the QUOTA (every premium seat carries default_claude_max_5x)
+  // while the subscription is 'team', so both work orgs read "Claude Max 5×".
   const { claudePlanFromCreds } = require('../src/usage');
-  assert.equal(claudePlanFromCreds({ rateLimitTier: 'default_claude_max_5x' }), 'Claude Max 5×');
+  assert.equal(claudePlanFromCreds({ subscriptionType: 'team', rateLimitTier: 'default_claude_max_5x' }), 'Claude Team 5×');
+  assert.equal(claudePlanFromCreds({ rateLimitTier: 'default_claude_max_5x' }), 'Claude Max 5×'); // no subscription → the tier names it
+  assert.equal(claudePlanFromCreds({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' }), 'Claude Max 20×');
   assert.equal(claudePlanFromCreds({ subscriptionType: 'team', rateLimitTier: 'default_raven' }), 'Claude Team');
   assert.equal(claudePlanFromCreds({ subscriptionType: 'enterprise' }), 'Claude Enterprise');
   assert.equal(claudePlanFromCreds({}), null);   // no info → null (caller uses .claude.json)
@@ -317,6 +323,42 @@ test('resolveClaudePlan: sem creds → plan do .claude.json; sem nada → null',
   const pc = parseClaudeConfig({ oauthAccount: { organizationRateLimitTier: 'default_claude_max_5x' } }, NOW);
   assert.equal(resolveClaudePlan({}, pc), 'Claude Max 5×');
   assert.equal(resolveClaudePlan({}, null), null);
+});
+
+test('resolveClaudePlan: seat TEAM com tier conhecido no oauthAccount → "Team 5×" (subscription nomeia, tier fresco refina)', () => {
+  // Integration of #73 × #76: the KNOWN seat tier from the .claude.json wins over
+  // the creds' snapshot, but the SUBSCRIPTION still names the plan — a Team seat
+  // must stay "Team 5×", never "Max 5×".
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_team', userRateLimitTier: 'default_claude_max_5x' } }, NOW);
+  const creds = { subscriptionType: 'team', rateLimitTier: 'default_claude_max_5x' };
+  assert.equal(resolveClaudePlan(creds, pc), 'Claude Team 5×');
+});
+
+test('parseClaudeConfig: userRateLimitTier is the SEAT tier (organizationRateLimitTier is opaque)', () => {
+  // Real data from a Team account: the org carries 'default_raven' while the
+  // seat carries the real tier in the SAME object. Reading only the org's field
+  // threw away the tier that was right there.
+  const cfg = { oauthAccount: {
+    organizationName: 'Newfold Digital Orion', organizationType: 'claude_team',
+    organizationRateLimitTier: 'default_raven', userRateLimitTier: 'default_claude_max_5x',
+  } };
+  const r = parseClaudeConfig(cfg, NOW);
+  assert.equal(r.plan, 'Claude Team 5×');
+  assert.equal(r.accountName, 'Newfold Digital Orion', 'the account keeps labelling the bar separately');
+});
+
+test('parseClaudeConfig: two Team orgs of the same login get the same plan, different account', () => {
+  // The plan half says the subscription; the account half (#58) is what tells
+  // Orion from Artemis. Neither may claim to be the other.
+  const mk = (org, uuid) => parseClaudeConfig({ oauthAccount: {
+    accountUuid: 'acc-1', organizationUuid: uuid, organizationName: org,
+    organizationType: 'claude_team', userRateLimitTier: 'default_claude_max_5x',
+  } }, NOW);
+  const orion = mk('Newfold Digital Orion', 'org-a');
+  const artemis = mk('Newfold Digital Artemis', 'org-b');
+  assert.equal(orion.plan, artemis.plan, 'same subscription and capacity');
+  assert.notEqual(orion.accountName, artemis.accountName);
+  assert.notEqual(orion.accountOrgUuid, artemis.accountOrgUuid);
 });
 
 test('readClaudeUsage: creds 5× × .claude.json 20× → tiles trazem o plano NOVO (20×)', async () => {

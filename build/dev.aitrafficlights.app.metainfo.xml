@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.aitrafficlights.app</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>AI Traffic Lights</name>
+  <summary>Traffic light overlay for terminal AI agent sessions</summary>
+  <developer id="dev.aitrafficlights">
+    <name>Aron Peyroteo</name>
+  </developer>
+  <description>
+    <p>
+      An always-on-top desktop overlay with one traffic light per AI agent
+      session (Claude Code, Antigravity, Codex, OpenCode, Gemini). Green means
+      the agent finished and is waiting, yellow means it is working, red means
+      it needs you: a question, a permission request or a failed tool.
+    </p>
+    <p>
+      Sessions are tracked through agent hooks that write local state files.
+      The overlay also shows plan usage and reset times, and clicking a
+      session focuses its terminal.
+    </p>
+  </description>
+  <launchable type="desktop-id">ai-traffic-lights.desktop</launchable>
+  <url type="homepage">https://github.com/aronpc/ai-traffic-lights</url>
+  <url type="bugtracker">https://github.com/aronpc/ai-traffic-lights/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Overlay listing agent sessions and plan usage</caption>
+      <image>https://github.com/aronpc/ai-traffic-lights/raw/main/assets/screenshots/overlay.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Preferences</caption>
+      <image>https://github.com/aronpc/ai-traffic-lights/raw/main/assets/screenshots/preferences.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Utility</category>
+    <category>Development</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>

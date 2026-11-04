@@ -43,13 +43,16 @@ main() {
   local sid=""
   if [[ $input =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     sid="${BASH_REMATCH[1]}"
+  elif [[ $input =~ \"conversationId\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+    sid="${BASH_REMATCH[1]}"
   fi
   if [[ ! $sid =~ ^[A-Za-z0-9._-]+$ ]]; then return 0; fi
 
-  # hook_event_name via bash regex (fork-free) — used 3x below
   local evt=""
   if [[ $input =~ \"hook_event_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
     evt="${BASH_REMATCH[1]}"
+  elif [ -n "${AI_TL_EVENT:-}" ]; then
+    evt="$AI_TL_EVENT"
   fi
 
   # Dialect translation → contract's canonical vocabulary (fork-free).
@@ -196,17 +199,19 @@ main() {
     --arg awin "$awin" --arg furl "$furl" --arg tid "$tid" --arg iid "$iid" \
     --arg win "$win" --arg tp "$tp" --arg zs "$zs" --arg tmuxs "$tmuxs" --arg tmuxp "$tmuxp" --arg model "$model" --arg tpath "$transcript" --arg ntype "$ntype" '
       (try ($exs | fromjson) catch {}) as $ex
-      | ($in.session_id // "") as $sid
+      | ($in.session_id // $in.conversationId // "") as $sid
       | $cevt as $evt
-      | ($in.cwd // "") as $cwd
-      | ($in.tool_name // "") as $tool
+      | ($in.cwd // ($in.workspacePaths // [])[0] // "") as $cwd
+      | ($in.tool_name // $in.toolCall.name // "") as $tool
+      | ($tpath != "" | if . then $tpath else ($in.transcriptPath // null) end) as $tpath2
+      | ($model != "" | if . then $model else ($in.modelName // null) end) as $model2
       | $ex + {
           schema_version: 2,
           agent: $agent,
           session_id: $sid, pid: $pid,
           cwd: (if $cwd == "" then ($ex.cwd // null) else $cwd end),
-          transcript_path: (if $tpath == "" then ($ex.transcript_path // null) else $tpath end),
-          model: (if $model == "" then ($ex.model // null) else $model end),
+          transcript_path: ($tpath2 // ($ex.transcript_path // null)),
+          model: ($model2 // ($ex.model // null)),
           term_program: (if $tp == "" then ($ex.term_program // null) else $tp end),
           windowid: (if $awin != "" then $awin elif $win != "" then $win else ($ex.windowid // null) end),
           focus_url: (if $furl != "" then $furl else ($ex.focus_url // null) end),

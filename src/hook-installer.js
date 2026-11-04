@@ -40,7 +40,7 @@ const TARGETS = {
     settings: path.join(os.homedir(), '.gemini', 'config', 'hooks.json'),
     detectDir: path.join(os.homedir(), '.gemini', 'config'),
     events: ['PreInvocation', 'PreToolUse', 'PostToolUse', 'PostInvocation', 'Stop'],
-    command: (dest) => `AI_TL_AGENT=antigravity bash ${shellQuote(dest)}`,
+    command: (dest, evt) => `AI_TL_AGENT=antigravity AI_TL_EVENT=${evt || ''} bash ${shellQuote(dest)}`,
   },
   codex: {
     // Codex uses the SAME hooks schema as Claude (hooks.json in JSON, same
@@ -120,20 +120,36 @@ function backupAndWrite(settingsPath, settings) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 }
 
+const AGY_GROUPED_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
+
 function installAntigravityHooks(target, hookDest) {
   const settings = load(target.settings);
-  const hookCmd = target.command(hookDest);
   settings['ai-traffic-lights'] = settings['ai-traffic-lights'] || {};
   const hookGroup = settings['ai-traffic-lights'];
   let added = 0, updated = 0;
   for (const evt of target.events) {
+    const hookCmd = target.command(hookDest, evt);
     hookGroup[evt] = hookGroup[evt] || [];
-    let found = hookGroup[evt].find(h => h && h.type === 'command' && String(h.command).includes(HOOK_MARKER));
-    if (found) {
-      if (found.command !== hookCmd) { found.command = hookCmd; updated++; }
+    if (AGY_GROUPED_EVENTS.has(evt)) {
+      hookGroup[evt] = hookGroup[evt].filter(g => !(g && g.type === 'command' && String(g.command).includes(HOOK_MARKER)));
+      let group = hookGroup[evt].find(g => g && g.matcher === '*');
+      if (!group) { group = { matcher: '*', hooks: [] }; hookGroup[evt].push(group); }
+      group.hooks = group.hooks || [];
+      const found = group.hooks.find(h => h && String(h.command).includes(HOOK_MARKER));
+      if (found) {
+        if (found.command !== hookCmd) { found.command = hookCmd; updated++; }
+      } else {
+        group.hooks.push({ type: 'command', command: hookCmd });
+        added++;
+      }
     } else {
-      hookGroup[evt].push({ type: 'command', command: hookCmd });
-      added++;
+      const found = hookGroup[evt].find(h => h && h.type === 'command' && String(h.command).includes(HOOK_MARKER));
+      if (found) {
+        if (found.command !== hookCmd) { found.command = hookCmd; updated++; }
+      } else {
+        hookGroup[evt].push({ type: 'command', command: hookCmd });
+        added++;
+      }
     }
   }
   const wrote = added > 0 || updated > 0;
@@ -148,14 +164,22 @@ function removeAntigravityHooks(target) {
   const hookGroup = settings['ai-traffic-lights'];
   for (const evt of Object.keys(hookGroup)) {
     if (!Array.isArray(hookGroup[evt])) continue;
-    const before = hookGroup[evt].length;
-    hookGroup[evt] = hookGroup[evt].filter(h => !(h && h.type === 'command' && String(h.command).includes(HOOK_MARKER)));
-    removed += before - hookGroup[evt].length;
+    if (AGY_GROUPED_EVENTS.has(evt)) {
+      for (const g of hookGroup[evt]) {
+        if (!Array.isArray(g.hooks)) continue;
+        const before = g.hooks.length;
+        g.hooks = g.hooks.filter(h => !(h && String(h.command).includes(HOOK_MARKER)));
+        removed += before - g.hooks.length;
+      }
+      hookGroup[evt] = hookGroup[evt].filter(g => (g.hooks || []).length > 0);
+    } else {
+      const before = hookGroup[evt].length;
+      hookGroup[evt] = hookGroup[evt].filter(h => !(h && h.type === 'command' && String(h.command).includes(HOOK_MARKER)));
+      removed += before - hookGroup[evt].length;
+    }
     if (hookGroup[evt].length === 0) delete hookGroup[evt];
   }
-  if (Object.keys(hookGroup).length === 0) {
-    delete settings['ai-traffic-lights'];
-  }
+  if (Object.keys(hookGroup).length === 0) delete settings['ai-traffic-lights'];
   const wrote = removed > 0;
   if (wrote) backupAndWrite(target.settings, settings);
   return { removed, wrote };

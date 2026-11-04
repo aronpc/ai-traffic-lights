@@ -239,3 +239,19 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(63, 1
 /* Sub-toggles do sync desabilitados quando o mestre `enabled` está off. */
 input:disabled, textarea:disabled, select:disabled { opacity: 0.4; cursor: not-allowed; }
 .row:has(input:disabled) > label { opacity: 0.5; }
+
+.hook-status[hidden] { display: none; }
+.hook-status {
+  display: inline-block;
+  margin-top: 7px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  max-width: 100%;
+  word-break: break-word;
+}
+.hook-status-ok    { color: var(--green); border-color: rgba(63,185,107,0.5); background: rgba(63,185,107,0.14); }
+.hook-status-error { color: var(--red);   border-color: rgba(224,86,63,0.5);  background: rgba(224,86,63,0.14);  }
