@@ -10,6 +10,7 @@ const {
   parseAntigravityTier, parseAntigravityQuota,
   lastCodexRateLimits, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage,
   collectUsage, parseEnviron, mergeUsage, detectReset, parseRetryAfter, isSummaryEntry, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
+  resolveClaudePlan,
   _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache,
   parseOpencodeUsage, readOpencodeUsage,
 } = require('../src/usage');
@@ -90,7 +91,7 @@ test('parseClaudeConfig: sem oauthAccount → plan null (sem conta, some do over
 test('parseClaudeConfig: payload vazio/malformado → tudo null', () => {
   const r = parseClaudeConfig({}, NOW);
   assert.deepEqual(r, { usedPct: null, resetAt: null, resetInMin: null, plan: null, passes: null,
-    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null });
+    accountUuid: null, accountOrgUuid: null, accountName: null, accountEmail: null, accountTier: null });
   assert.deepEqual(parseClaudeConfig(null, NOW).plan, null);
 });
 
@@ -286,6 +287,54 @@ test('claudePlanFromCreds: tier Max conhecido vence; senão subscriptionType', (
   assert.equal(claudePlanFromCreds({ subscriptionType: 'team', rateLimitTier: 'default_raven' }), 'Claude Team');
   assert.equal(claudePlanFromCreds({ subscriptionType: 'enterprise' }), 'Claude Enterprise');
   assert.equal(claudePlanFromCreds({}), null);   // no info → null (caller uses .claude.json)
+});
+
+// =========================== resolveClaudePlan (creds × .claude.json) ===========================
+// Real case (2026-10-15): plan upgraded 5×→20×. The .credentials.json kept
+// rateLimitTier='default_claude_max_5x' (a snapshot from the last login/token
+// exchange) while the .claude.json oauthAccount already carried
+// 'default_claude_max_20x' (Claude Code rewrites it from live account metadata).
+// The overlay kept showing "Max 5×" because the credentials won unconditionally.
+
+test('resolveClaudePlan: oauthAccount com tier Max CONHECIDO vence sobre o snapshot velho das creds (upgrade 5×→20×)', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_20x' } }, NOW);
+  const creds = { subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' };
+  assert.equal(resolveClaudePlan(creds, pc), 'Claude Max 20×');
+});
+
+test('resolveClaudePlan: tier OPACO no oauthAccount (default_raven) defere para as creds', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_max', organizationRateLimitTier: 'default_raven' } }, NOW);
+  assert.equal(resolveClaudePlan({ rateLimitTier: 'default_claude_max_5x' }, pc), 'Claude Max 5×');
+});
+
+test('resolveClaudePlan: oauthAccount sem tier (só orgType) + creds com tier → creds mais específicas', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationType: 'claude_max' } }, NOW);
+  assert.equal(resolveClaudePlan({ rateLimitTier: 'default_claude_max_20x' }, pc), 'Claude Max 20×');
+  assert.equal(resolveClaudePlan({ subscriptionType: 'max' }, pc), 'Claude Max');
+});
+
+test('resolveClaudePlan: sem creds → plan do .claude.json; sem nada → null', () => {
+  const pc = parseClaudeConfig({ oauthAccount: { organizationRateLimitTier: 'default_claude_max_5x' } }, NOW);
+  assert.equal(resolveClaudePlan({}, pc), 'Claude Max 5×');
+  assert.equal(resolveClaudePlan({}, null), null);
+});
+
+test('readClaudeUsage: creds 5× × .claude.json 20× → tiles trazem o plano NOVO (20×)', async () => {
+  // The two files exactly as they diverged on the real machine after the upgrade.
+  _clearClaudeCache();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-'));
+  fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({
+    oauthAccount: { organizationType: 'claude_max', organizationRateLimitTier: 'default_claude_max_20x' },
+  }));
+  fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.claude/.credentials.json'), JSON.stringify({
+    claudeAiOauth: { accessToken: 'oauth-tok', subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' },
+  }));
+  const f = mockFetcher({ five_hour: { utilization: 23, resets_at: '2026-07-07T17:00:00Z' }, seven_day: { utilization: 78, resets_at: '2026-07-09T12:00:00Z' } });
+  const r = await readClaudeUsage({ home: tmp, now: NOW, fetcher: f });
+  assert.equal(r.length, 2);
+  assert.ok(r.every((e) => e.plan === 'Claude Max 20×'), 'todas as linhas trazem o plano novo');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('readClaudeUsage: extra_usage vira tile id=claude-extra (não colide com 7d)', async () => {

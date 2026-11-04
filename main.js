@@ -13,6 +13,7 @@ const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
 const kiroAdapter   = require('./adapters/kiro/ai-traffic-lights');
 const focus = require('./src/focus');
+const appimageEnv = require('./src/appimage-env');
 const sessions = require('./src/sessions');
 const collect = require('./src/collect');
 const net = require('./src/net');
@@ -1117,7 +1118,10 @@ let ptyLib = null;
 // restricted PATH (no /usr/bin) → tmux/bash not found → the tmux auto-wrap
 // failed silently. Appends the base dirs at the end (does not overwrite what is already there).
 function ptyEnv() {
-  const env = Object.assign({}, process.env);
+  // cleanEnv, not process.env: a shell in the tab can start a GUI app, and an
+  // AppImage-aware updater inheriting our APPIMAGE overwrites the overlay's
+  // own .AppImage with itself (see src/appimage-env.js).
+  const env = appimageEnv.cleanEnv(process.env);
   const cur = String(env.PATH || '').split(':').filter(Boolean);
   for (const d of ['/usr/local/bin', '/usr/bin', '/bin']) if (!cur.includes(d)) cur.push(d);
   env.PATH = cur.join(':');
@@ -1666,6 +1670,37 @@ function glmCredsFromSessions() {
   return [...byToken.values()];
 }
 
+// Anthropic-compatible gateways (9router etc.): same discovery as GLM — sweep the
+// local sessions' /proc/<pid>/environ for ANTHROPIC_BASE_URL + token — but WITHOUT
+// the model filter: any session whose base is not official/z.ai/bigmodel qualifies.
+// readGatewayUsage re-filters by base URL, so an account lands in exactly one
+// collector. Dedup by token (same gateway account in N terminals → 1 block).
+function gatewayCredsFromSessions() {
+  let sessions = [];
+  try { sessions = readSessions(); } catch { return []; }
+  const byToken = new Map(); // token → { env, label, suffix }
+  for (const s of sessions) {
+    if (!isLocalSession(s) || !s.pid) continue;
+    let env;
+    try {
+      const raw = getProcessEnviron(s.pid);
+      env = usage.parseEnviron(raw, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN']);
+    } catch { continue; }
+    if (!env.ANTHROPIC_BASE_URL || !env.ANTHROPIC_AUTH_TOKEN) continue;
+    if (/api\.anthropic\.com|api\.z\.ai|bigmodel\.cn/i.test(env.ANTHROPIC_BASE_URL)) continue;
+    const token = env.ANTHROPIC_AUTH_TOKEN;
+    if (byToken.has(token)) continue;
+    let suffix;
+    try { suffix = crypto_().createHash('sha256').update(token).digest('hex').slice(0, 6); }
+    catch { suffix = String(byToken.size + 1); }
+    let label = '';
+    try { label = new URL(env.ANTHROPIC_BASE_URL).host; } catch { /* invalid base */ }
+    byToken.set(token, { env, label, suffix });
+  }
+  return [...byToken.values()];
+}
+
+
 // FALLBACK: the Claude Code MAIN process sometimes does not inherit the GLM
 // env vars in its environ (launched via a wrapper/alias that does not pass
 // them through), but its SUBPROCESSES do (MCP servers, child shells, etc.).
@@ -1930,7 +1965,7 @@ async function collectAndSendUsage({ claudeFetch = false } = {}) {
     const codexCwds = codexCwdsFromSessions();
     const claudeAccounts = claudeAccountsFromSessions();   // Claude multi-account #58
     const entries = await usage.collectUsage({
-      glmCreds, codexCwds, home: app.getPath('home'), claudeAccounts,
+      glmCreds, gatewayCreds: gatewayCredsFromSessions(), codexCwds, home: app.getPath('home'), claudeAccounts,
       opencodeEnv: ocCred ? ocCred.env : undefined,
       opencodeLabel: ocCred ? ocCred.label : undefined,
       opencodeSuffix: ocCred ? ocCred.suffix : undefined,

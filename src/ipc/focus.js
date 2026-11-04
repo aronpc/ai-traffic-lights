@@ -17,7 +17,13 @@
 // getProcessEnviron stay in main (shared w/ usage/launcher).
 
 function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }) {
-  const { execFileSync } = require('child_process');
+  const cp = require('child_process');
+  const { withCleanEnv } = require('../appimage-env');
+  // Every process spawned here runs with the AppImage vars STRIPPED — the
+  // `xdg-open warp://` channel below is exactly what leaked them into a Warp
+  // that then overwrote our own .AppImage (src/appimage-env.js).
+  const execFileSync = withCleanEnv(cp.execFileSync);
+  const execFileAsync = withCleanEnv(require('util').promisify(cp.execFile));
   const fs = require('fs');
   const path = require('path');
   const focus = require('../focus');
@@ -162,11 +168,77 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
 
   // Runs the chosen channel. Returns whether the tab was actually reached —
   // the caller needs the truth to decide whether to notify the user.
-  function focusTab(state) {
+  // Hands the warp:// URL STRAIGHT to the Warp instance hosting the session,
+  // via org.freedesktop.Application.Open on that instance's own bus name. This
+  // is what makes the click land on the right TAB: xdg-open can only reach the
+  // holder of the well-known `dev.warp.Warp` name, and when that is a different
+  // instance the URL either opens a duplicated window or switches a tab in the
+  // wrong window. Addressing the connection directly sidesteps the name race.
+  //
+  // ASYNC AND IN PARALLEL, on purpose. Only ONE of an instance's connections
+  // serves /dev/warp/Warp; it answers in ~0ms, while the others never reply at
+  // all — a call to them hangs until it is cut off (measured: 28s without a
+  // timeout). Probing them in series with execFileSync froze the Electron main
+  // process for seconds on every click. Firing them together means the serving
+  // connection wins immediately and the silent ones just expire; `-t 1` bounds
+  // them at the D-Bus level instead of leaving a killed gdbus behind.
+  async function warpOpenDirect(ancestors, uri) {
+    if (process.platform !== 'linux' || !focus.safeWarpUri(uri)) return false;
+    let listing = '';
+    try {
+      // The bus daemon has no pid->name index, so one busctl call maps the
+      // whole bus; probing 284 connections with gdbus would be far worse.
+      listing = (await execFileAsync('busctl', ['--user', 'list', '--no-pager', '--no-legend'],
+        { encoding: 'utf8', timeout: 2000 })).stdout;
+    } catch { return false; }   // no busctl (non-systemd) → caller falls back
+    const names = focus.busNamesInTree(listing, ancestors);
+    if (!names.length) return false;
+    const tries = names.map((name) => execFileAsync('gdbus', ['call', '--session', '-t', '1',
+      '--dest', name, '--object-path', '/dev/warp/Warp', '--method',
+      'org.freedesktop.Application.Open', `['${uri}']`, '{}'], { timeout: 3000 }));
+    // First one to answer wins; Promise.any only rejects when every one failed.
+    try { await Promise.any(tries); return true; } catch { return false; }
+  }
+
+  // PID owning the `dev.warp.Warp` D-Bus name — the only process that receives
+  // the `warp://` URLs dispatched by xdg-open. With no owner (or an owner that
+  // is not the session's Warp) xdg-open has nobody to hand the URL to and
+  // launches a fresh instance: a duplicated window instead of focus. Two gdbus
+  // calls (GetNameOwner -> GetConnectionUnixProcessID); gdbus is already a
+  // dependency of the Tilix channel. null = undetermined (no gdbus, no owner,
+  // error) — the gate then blocks nothing on its own.
+  function warpDbusOwnerPid() {
+    const call = (method, arg) => execFileSync('gdbus', ['call', '--session',
+      '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus',
+      '--method', `org.freedesktop.DBus.${method}`, arg], { encoding: 'utf8', timeout: 2000 });
+    try {
+      const owner = (call('GetNameOwner', 'dev.warp.Warp').match(/'([^']+)'/) || [])[1];
+      if (!owner) return null;
+      // gdbus prints `(uint32 1234,)` — a bare \d+ would capture the 32 of uint32.
+      const m = call('GetConnectionUnixProcessID', owner).match(/uint32\s+(\d+)/);
+      return m ? parseInt(m[1], 10) : null;
+    } catch { return null; }
+  }
+
+  // Is the dev.warp.Warp owner inside the session's process tree? Reuses the
+  // tree focusSession already scanned. null when it cannot be determined.
+  function warpOwnerInTree(ancestors) {
+    if (process.platform !== 'linux' || !ancestors || !ancestors.size) return null;
+    const owner = warpDbusOwnerPid();
+    return owner == null ? null : ancestors.has(owner);
+  }
+
+  async function focusTab(state, raised) {
     const ch = focus.tabChannel(state);
     if (!ch) return false;
     try {
       if (ch.kind === 'warp') {
+        // Preferred path: talk to the instance that actually hosts the session.
+        if (await warpOpenDirect(state.ancestors, ch.value)) return true;
+        // Fallback: xdg-open hands the URL to whoever owns dev.warp.Warp, which
+        // spawns a SECOND Warp when that is not this session's instance. Gated
+        // so a click never trades a missed tab for a duplicated window.
+        if (!focus.canFocusTab(ch.kind, raised, warpOwnerInTree(state.ancestors))) return false;
         const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
         execFileSync(cmd, [ch.value], { timeout: 2000 });
       } else if (ch.kind === 'tilix') {
@@ -308,7 +380,7 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     };
   }
 
-  function focusSession(target) {
+  async function focusSession(target) {
     if (!target) return;
     // Session from ANOTHER machine (P2P sync): the pid belongs to another
     // kernel. We refuse BEFORE touching /proc or wmctrl — interpreting that
@@ -321,16 +393,16 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     // on macOS each level costs a fork of `ps`.
     const ancestors = ancestorPidsOf(t.anchorPid || t.pid);
     const term = detectTerminal(ancestors);
-    const st = { ...t, terminal: term ? term.key : null };
+    const st = { ...t, terminal: term ? term.key : null, ancestors };
     const macApp = term ? (term.mac || null) : null;
 
     let raised = false, tabbed = false;
     if (IS_WAYLAND) {
-      tabbed = focusTab(st);
+      tabbed = await focusTab(st, raised);
       raised = raiseWindow(st.windowid, ancestors, macApp);
     } else {
       raised = raiseWindow(st.windowid, ancestors, macApp);
-      tabbed = focusTab(st);
+      tabbed = await focusTab(st, raised);
     }
     // Complementary: the agent's pane inside tmux. NOT counted in the success
     // computation: `tmux select-pane` exits 0 even when the window containing
@@ -349,7 +421,9 @@ function setupFocusIpc({ ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND }
     if (why) notifyUser(T(`ntf_focus_${why}`));
   }
 
-  ipcMain.on('focus', (_e, target) => focusSession(target));
+  // focusSession swallows its own I/O errors; the catch is a guard against an
+  // unhandled rejection ever escaping into the main process.
+  ipcMain.on('focus', (_e, target) => { focusSession(target).catch(() => {}); });
 }
 
 module.exports = { setupFocusIpc };
