@@ -167,6 +167,52 @@ function isRemoteSession(state) {
   return !!state && !!state.origin && state.origin !== 'local';
 }
 
+// Unique bus names (":1.234") of the connections owned by a process in the
+// session's tree, parsed from `busctl --user list`. The D-Bus daemon offers no
+// pid->name index, and probing every connection with gdbus would cost hundreds
+// of process spawns per click — one busctl call gives the whole map. Only
+// unique names are useful here: a well-known name is an alias for one of them
+// and would just repeat work. Kept pure so the parsing is testable without a
+// live bus; the caller does the I/O.
+//   out       — stdout of `busctl --user list --no-legend`
+//   ancestors — Set of pids in the session's process tree
+function busNamesInTree(out, ancestors) {
+  const names = [];
+  if (!out || !ancestors || !ancestors.size) return names;
+  for (const line of String(out).split('\n')) {
+    const m = line.match(/^(:\S+)\s+(\d+)\s/);
+    if (m && ancestors.has(parseInt(m[2], 10)) && !names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
+}
+
+// A warp:// URI safe to interpolate into a gvariant literal ("['<uri>']").
+// execFileSync does not go through a shell, but a quote inside the value would
+// break gdbus's parse and the call would fail silently — the same class of
+// problem the tilix_id validation guards against.
+function safeWarpUri(uri) {
+  return /^warp:\/\/[A-Za-z0-9._~:\/?#[\]@!$&()*+,;=%-]+$/.test(String(uri || ''));
+}
+
+// Decides whether the tab channel may fire. On Warp the channel is
+// `xdg-open warp://session/<uuid>`, and it only REUSES the running window when
+// the process hosting the session owns the `dev.warp.Warp` D-Bus name. With a
+// different owner (or none), xdg-open spawns a NEW instance — a duplicated
+// window instead of focus, and that new instance then steals the name, so every
+// later click targets the duplicate while the original is orphaned.
+// Rule: once the window is already up via wmctrl, the channel fires only when
+// it is safe; with no raise the channel is the only shot at focusing, so it is
+// worth trying even at the cost of a duplicate.
+//   kind      — tabChannel().kind ('warp' | 'tilix' | 'iterm')
+//   raised    — raiseWindow() brought the session's window up
+//   warpOwned — the dev.warp.Warp owner is in the session's process tree
+//               (null = undetermined: no gdbus, no owner, or non-Warp channel)
+function canFocusTab(kind, raised, warpOwned) {
+  if (kind !== 'warp') return true;   // tilix/iterm channels never duplicate a window
+  if (!raised) return true;           // no window up: only shot at focusing
+  return warpOwned === true;
+}
+
 // Click outcome: null when it had an effect, otherwise the REASON for the
 // no-op, so the caller can pick the message. Previously only Wayland was
 // reported, but the same silence happens on X11/macOS when the session is in
@@ -192,7 +238,8 @@ function focusFailure(state) {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    parseWindowId, pickWindow, tabChannel, tmuxTarget, tmuxClientPid,
+    parseWindowId, pickWindow, tabChannel, canFocusTab, busNamesInTree, safeWarpUri,
+    tmuxTarget, tmuxClientPid,
     parseEnviron, focusFailure, isRemoteSession, TAB_CHANNELS, ENV_HINTS,
   };
 }

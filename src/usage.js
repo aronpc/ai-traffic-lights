@@ -886,6 +886,75 @@ async function readGlmUsage({ env, now, fetcher, label, suffix } = {}) {
 // Clears the cache (tests / credential change).
 function _clearGlmCache() { _glmCacheByToken.clear(); }
 
+// ---- Anthropic-compatible gateway (9router and the like) — ACTIVE ----
+// Any ANTHROPIC_BASE_URL that is NOT the official API, z.ai or bigmodel speaks the
+// Anthropic protocol (Claude Code only does that), so the usage endpoint is the
+// standard one: GET {base}/api/oauth/usage. One collector serves every such
+// gateway — model identification only changes the tile label, not the protocol.
+// 5-min cache per token (same budget as GLM).
+const _gatewayCacheByToken = new Map();
+async function readGatewayUsage({ env, now, fetcher, label, suffix } = {}) {
+  const E = env || process.env;
+  const base = (E.ANTHROPIC_BASE_URL || '').replace(/\/+$/, '');
+  const token = E.ANTHROPIC_AUTH_TOKEN || '';
+  if (!token || !base) return null;
+  // Bases owned by other collectors — never duplicate their tile.
+  let host = '';
+  try { host = new URL(base).host; } catch { return null; }
+  if (/(^|\.)api\.anthropic\.com$/i.test(host)) return null; // official → claude collector
+  if (/api\.z\.ai|bigmodel\.cn/i.test(base)) return null;    // GLM collector
+
+  const nowMs = now || Date.now();
+  const cached = _gatewayCacheByToken.get(token);
+  if (cached && (nowMs - cached.at) < CACHE_MS) return cached.entries;
+
+  const sfx = suffix ? ':' + suffix : '';
+  const planTag = label ? ' (' + label + ')' : '';
+  let payload;
+  try {
+    payload = await _httpsGetJson(`${base}/api/oauth/usage`, {
+      Authorization: 'Bearer ' + token,
+      'anthropic-beta': 'oauth-2025-04-20',
+      'Content-Type': 'application/json',
+      'User-Agent': 'ai-traffic-lights',
+    }, fetcher);
+  } catch (e) {
+    const entry = {
+      id: 'gw' + sfx, agent: 'claude', title: null, usedPct: null, resetAt: null,
+      resetInMin: null, extra: null,
+      plan: (label || host) + planTag,
+      source: 'gateway.oauth', error: String(e.message || e),
+    };
+    _gatewayCacheByToken.set(token, { at: nowMs, entries: [entry] });
+    return [entry];
+  }
+
+  const windows = parseAnthropicUsage(payload, nowMs);
+  // payload.plan is a non-spec extra the gateway sends (e.g. "Kimi Coding").
+  const planBase = (payload && payload.plan) ? String(payload.plan) : (label || host);
+  const entries = windows.map((w) => ({
+    id: 'gw-' + w.title.replace(/\s+/g, '') + sfx,
+    agent: 'claude',
+    title: w.title,
+    plan: planBase + planTag,
+    usedPct: w.usedPct,
+    resetAt: w.resetAt,
+    resetInMin: w.resetInMin,
+    extra: w.extra || null,
+    source: 'gateway.oauth',
+    error: null,
+  }));
+  const result = entries.length ? entries : [{
+    id: 'gw' + sfx, agent: 'claude', title: null, usedPct: null, resetAt: null,
+    resetInMin: null, extra: null, plan: planBase + planTag,
+    source: 'gateway.oauth', error: 'no windows parsed',
+  }];
+  _gatewayCacheByToken.set(token, { at: nowMs, entries: result });
+  return result;
+}
+
+function _clearGatewayCache() { _gatewayCacheByToken.clear(); }
+
 const _opencodeCacheByToken = new Map(); // token → { at, entries }
 
 // Reads usage from the OpenCode Go API (https://opencode.ai/zen/go/v1/usage)
@@ -1013,6 +1082,11 @@ async function collectUsage(opts = {}) {
     : (opts.env ? [{ env: opts.env }] : []);
   const multi = creds.length > 1;              // >1 account → labels each block
 
+  // Anthropic-compatible gateways (9router etc.): same credential shape as GLM
+  // (ANTHROPIC_BASE_URL + token from the live sessions), filtered by base URL —
+  // readGlmUsage owns z.ai/bigmodel, readGatewayUsage owns the rest.
+  const gwCreds = Array.isArray(opts.gatewayCreds) ? opts.gatewayCreds : [];
+
   // Claude multi-account (#58): opts.claudeAccounts = [{ dir, label? }] —
   // main.js collects the CLAUDE_CONFIG_DIRs from the live sessions' environs
   // (dir null = the default ~/.claude symlink account). Identity dedup
@@ -1092,11 +1166,16 @@ async function collectUsage(opts = {}) {
       label: multi ? c.label : undefined,
       suffix: multi ? c.suffix : undefined,
     }).catch(() => null)),                       // readGlmUsage already catches; double defense
+    ...gwCreds.map((c) => readGatewayUsage({
+      env: c.env, now: opts.now, fetcher: opts.fetcher,
+      label: c.label, suffix: c.suffix,
+    }).catch(() => null)),                       // readGatewayUsage already catches; double defense
   ]);
   const nClaude = claudeAccounts.length;
   const antigravity = results[nClaude];
   const opencode = results[nClaude + 1];
-  const glm = results.slice(nClaude + 2);
+  const glm = results.slice(nClaude + 2, nClaude + 2 + creds.length);
+  const gateways = results.slice(nClaude + 2 + creds.length);
 
   // Claude: >1 account → suffixed id (claude-5h:<sfx>, like glm-month:<sha>) +
   // account/accountId fields for the renderer and the nickname rename. 1 account →
@@ -1139,6 +1218,7 @@ async function collectUsage(opts = {}) {
   }
 
   for (const r of glm) if (Array.isArray(r)) out.push(...r);
+  for (const r of gateways) if (Array.isArray(r)) out.push(...r);
   return out;
 }
 
@@ -1393,10 +1473,10 @@ function detectReset(prevState, entries, now, threshold) {
 
 if (typeof module !== 'undefined') module.exports = {
   parseClaudeConfig, parseAnthropicUsage, parseGlmQuota, parseCodexRateLimits, parseAntigravityTier, parseAntigravityQuota, parseOpencodeUsage,
-  readClaudeConfig, readClaudeUsage, readGlmUsage, readCodexUsage, readAntigravityUsage, readOpencodeUsage, collectUsage, parseEnviron,
+  readClaudeConfig, readClaudeUsage, readGlmUsage, readGatewayUsage, readCodexUsage, readAntigravityUsage, readOpencodeUsage, collectUsage, parseEnviron,
   findCodexRollout, lastCodexRateLimits, mergeUsage, isSummaryEntry, detectReset, parseRetryAfter,
   USAGE_STALE_MS, USAGE_DROP_MS, CLAUDE_429_COOLDOWN_MS, CLAUDE_CACHE_MS,
   CLAUDE_429_BACKOFF_FACTOR, CLAUDE_429_MAX_BACKOFF_MS,
-  _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
+  _clearGlmCache, _clearClaudeCache, _clearCodexCache, _clearOpencodeCache, _clearGatewayCache, _httpsGetJson, CLAUDE_TIER_LABEL, CLAUDE_ORG_LABEL,
   readClaudeCreds, claudePlanFromCreds, claudePlanLabel, resolveClaudePlan, claudeAccountSfx, claudeAccountKey, accountLabel, apiProviderFromSettings,
 };

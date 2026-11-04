@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quota de gateway Anthropic-compatível (9router e afins).** Qualquer
+  `ANTHROPIC_BASE_URL` que não seja a API oficial, z.ai ou bigmodel passa a ter
+  barra de quota: o coletor chama o endpoint padrão `GET {base}/api/oauth/usage`
+  com o token da sessão (descoberto no environ do processo, dedup por token).
+  Antes a sessão Kimi via 9router aparecia sem quota.
+
 - **Metainfo AppStream no AppImage.** `build/dev.aitrafficlights.app.metainfo.xml`
   entra em `usr/share/metainfo/` via `linux.extraFiles`, com descrição e
   screenshots (`overlay.png`, `preferences.png`). O catálogo

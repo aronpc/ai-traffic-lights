@@ -2,7 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  parseWindowId, pickWindow, tabChannel, tmuxTarget, tmuxClientPid,
+  parseWindowId, pickWindow, tabChannel, canFocusTab, busNamesInTree, safeWarpUri,
+  tmuxTarget, tmuxClientPid,
   parseEnviron, focusFailure, isRemoteSession,
 } = require('../src/focus.js');
 
@@ -240,4 +241,75 @@ test('focusFailure: X11/macOS sem janela e sem canal → nowindow (antes era sil
 test('focusFailure: null / state vazio → nunca lança', () => {
   assert.equal(focusFailure(null), null);
   assert.equal(focusFailure({}), 'nowindow');
+});
+
+// canFocusTab — gate against Warp's duplicated window. `xdg-open warp://` only
+// reuses the running window when the dev.warp.Warp D-Bus owner is the session's
+// Warp; with any other owner it launches a second instance.
+test('canFocusTab: warp raised + owner in tree -> fires (switches the tab)', () => {
+  assert.equal(canFocusTab('warp', true, true), true);
+});
+
+test('canFocusTab: warp raised + owner is ANOTHER Warp -> blocked (no duplicate)', () => {
+  assert.equal(canFocusTab('warp', true, false), false);
+});
+
+test('canFocusTab: warp raised + owner undetermined -> blocked (window already up)', () => {
+  assert.equal(canFocusTab('warp', true, null), false);
+});
+
+test('canFocusTab: warp with no raise -> always fires (only shot at focusing)', () => {
+  assert.equal(canFocusTab('warp', false, false), true);
+  assert.equal(canFocusTab('warp', false, null), true);
+});
+
+test('canFocusTab: tilix/iterm are never blocked (their channels do not duplicate)', () => {
+  assert.equal(canFocusTab('tilix', true, false), true);
+  assert.equal(canFocusTab('iterm', true, null), true);
+});
+
+// busNamesInTree — picks the bus connections owned by the session's own Warp,
+// so the warp:// URL can be delivered to THAT instance instead of whoever holds
+// the well-known dev.warp.Warp name.
+const BUSCTL = [
+  ':1.161453   2954500 warp-terminal aron :1.161453 user@1000.service - -',
+  ':1.161454   2954500 warp-terminal aron :1.161454 user@1000.service - -',
+  ':1.232321   1146607 warp-terminal aron :1.232321 user@1000.service - -',
+  'dev.warp.Warp 1146607 warp-terminal aron :1.232321 user@1000.service - -',
+].join('\n');
+
+test('busNamesInTree: only the connections of pids in the tree', () => {
+  assert.deepEqual(busNamesInTree(BUSCTL, new Set([2954500])), [':1.161453', ':1.161454']);
+  assert.deepEqual(busNamesInTree(BUSCTL, new Set([1146607])), [':1.232321']);
+});
+
+test('busNamesInTree: skips well-known names (aliases of a unique name)', () => {
+  assert.equal(busNamesInTree(BUSCTL, new Set([1146607])).includes('dev.warp.Warp'), false);
+});
+
+test('busNamesInTree: pid outside the tree yields nothing', () => {
+  assert.deepEqual(busNamesInTree(BUSCTL, new Set([424242])), []);
+});
+
+test('busNamesInTree: empty/invalid input never throws', () => {
+  assert.deepEqual(busNamesInTree('', new Set([1])), []);
+  assert.deepEqual(busNamesInTree(BUSCTL, new Set()), []);
+  assert.deepEqual(busNamesInTree(null, null), []);
+});
+
+// safeWarpUri — the value is interpolated into a gvariant literal ("['<uri>']").
+test('safeWarpUri: accepts a real Warp session URL', () => {
+  assert.equal(safeWarpUri('warp://session/8e59def0a52a4149bfcca46de09f7fed'), true);
+});
+
+test('safeWarpUri: rejects quotes and whitespace that would break the gvariant', () => {
+  assert.equal(safeWarpUri("warp://x'y"), false);
+  assert.equal(safeWarpUri('warp://x y'), false);
+  assert.equal(safeWarpUri('warp://x\ny'), false);
+});
+
+test('safeWarpUri: rejects another scheme and empty input', () => {
+  assert.equal(safeWarpUri('file:///etc/passwd'), false);
+  assert.equal(safeWarpUri(''), false);
+  assert.equal(safeWarpUri(null), false);
 });
