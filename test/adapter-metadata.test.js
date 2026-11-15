@@ -46,6 +46,16 @@ test('OpenCode preserva metadados e tmux quando o boot não os informa', async (
   }
 });
 
+test('OpenCode adapter expõe entrypoint V2 (id + setup)', async () => {
+  // OpenCode 2.x only loads a default export with an id and an effect/setup
+  // function. A named-only export fails with SchemaError(Missing key ["default"]).
+  const source = fs.readFileSync(path.join(ROOT, 'adapters', 'opencode', 'ai-traffic-lights.js'), 'utf8');
+  const mod = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  assert.equal(mod.default.id, 'ai-traffic-lights');
+  assert.equal(typeof mod.default.setup, 'function');
+  assert.equal(typeof mod.AiTrafficLights, 'function', 'o entrypoint V1 continua exportado por nome');
+});
+
 test('traffic-hook preserva metadados e tmux quando o evento não os informa', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'atl-hook-'));
   try {
