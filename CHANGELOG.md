@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   glifo do headless — tooltip próprio: há terminal, só falta o attach (⧉ ou
   `tmux attach`). Sem tmux na máquina nenhuma linha é marcada; a flag viaja
   no sync como propriedade da sessão, igual ao `headless`.
+- **Abrir a sessão no devpit.** Sessão local rodando dentro do devpit (identificada
+  pelo `DEVPIT_PANE` no environ do processo, lido pelo anotador) ganha um ícone na
+  linha — quadrado com `>_` — e o clique na própria linha abre o painel da sessão
+  no app `devpit-desktop` (`--open-pane <pane>`, via `execFile`, sem shell). Com o
+  binário ausente (ENOENT), o clique volta ao comportamento de antes: focar o
+  terminal onde a sessão roda. Dentro do AppImage, o processo filho recebe um env
+  limpo — sem `APPIMAGE`/`APPDIR`/`ARGV0`/`OWD` e sem as entradas sob `$APPDIR`
+  em `PATH`/`LD_LIBRARY_PATH`/`XDG_DATA_DIRS`. Sessões remotas nunca ganham o
+  botão: o painel vive na máquina de origem.
 
 ### Fixed
 

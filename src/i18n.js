@@ -69,6 +69,7 @@ const STRINGS = {
     headless_tip: 'no terminal attached (headless — nohup, SDK, spawned by another tool)',
     tmux_detached_tip: 'tmux session with no client attached — attach it (⧉ or tmux attach) to see it',
     row_open_embedded: 'Open in the ATL terminal',
+    row_open_devpit: 'Open in devpit',
     needs_you: '{agent} needs you',
     doc_sessions: 'sessions',
     // tray
@@ -257,6 +258,7 @@ const STRINGS = {
     headless_tip: 'sem terminal attachado (headless — nohup, SDK, spawnado por outra ferramenta)',
     tmux_detached_tip: 'sessão tmux sem cliente anexado — dê attach (⧉ ou tmux attach) para vê-la',
     row_open_embedded: 'Abrir no terminal do ATL',
+    row_open_devpit: 'Abrir no devpit',
     needs_you: '{agent} precisa de você',
     doc_sessions: 'sessões',
     // tray

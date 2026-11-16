@@ -7,7 +7,7 @@ const { app, BrowserWindow, screen, ipcMain, Tray, Menu, Notification, nativeIma
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { execFileSync } = require('child_process');
+const { execFileSync, execFile } = require('child_process');
 const chokidar = require('chokidar');
 const { AGENTS, agentOf } = require('./src/agents');
 const hookInstaller = require('./src/hook-installer');
@@ -1535,6 +1535,9 @@ app.whenReady().then(() => {
   });
   require('./src/ipc/focus').setupFocusIpc({   // focus extracted (REF step 4)
     ipcMain, getProcessEnviron, notifyUser, T, IS_WAYLAND,
+  });
+  require('./src/ipc/devpit').setupDevpitIpc({   // devpit: open a local session's pane in the devpit desktop app
+    ipcMain, execFile, env: process.env,
   });
   launcherIpc = require('./src/ipc/launcher').setupLauncherIpc({   // launcher extracted (REF step 5)
     ipcMain, getSettings: () => settingsCfg, notifyUser, T, scanPathBin, hasBin, lastSessionCwd,

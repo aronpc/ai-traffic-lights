@@ -500,6 +500,7 @@ html, body {
 }
 .row:hover .row__action { opacity: 0.75; }
 .row__action:hover { background: rgba(255,255,255,0.10); color: var(--ink); opacity: 1; }
+.row__action svg { width: 14px; height: 14px; display: block; margin: 4px auto; }   /* devpit icon (inline-SVG action) */
 
 .row:hover .row__snooze { opacity: 1; }
 .row__snooze:hover { background: rgba(255,255,255,0.10); color: var(--ink); }

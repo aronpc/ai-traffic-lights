@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('trafficLight', {
   resizeMove: (dw, dh) => ipcRenderer.send('resize-move', { dw, dh }),
   // Phase 3:
   focus: (target) => ipcRenderer.send('focus', target),       // click-to-focus {pid, windowid}
+  openDevpit: (leaf) => ipcRenderer.invoke('open-devpit', leaf), // devpit: open the pane in the devpit app ({ok,motivo} — main falls back)
   getAliases: () => ipcRenderer.invoke('get-aliases'),        // rename in-place
   setAlias: (key, alias) => ipcRenderer.send('set-alias', { key, alias }),
   setAccountLabel: (accountId, label) => ipcRenderer.send('set-account-label', { accountId, label }), // nickname for the Claude ACCOUNT (multi-account #58)
