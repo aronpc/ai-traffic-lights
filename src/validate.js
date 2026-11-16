@@ -10,6 +10,13 @@ function validSessionId(s) {
   return typeof s === 'string' && s.length > 0 && s.length <= 256 && /^[A-Za-z0-9._-]+$/.test(s);
 }
 
+// devpit pane id ("leaf"): `leaf_` + 26 chars of [0-9A-Z] (ULID-style, no
+// lowercase/dashes). The annotator (src/annotate.js) stamps `devpit_pane` with
+// the DEVPIT_PANE it finds in the pid's environ — anything off this format
+// (truncated, prefixed garbage, wrong case) or absent leaves the field null,
+// never a value that would focus the wrong pane. PURE, tested.
+const DEVPIT_LEAF_RE = /^leaf_[0-9A-Z]{26}$/;
+
 // Shell-quote a path for use in a hook command (settings.json).
 // Wraps in single quotes and escapes inner '. Prevents breakage/interpretation
 // if XDG_DATA_HOME or HOME contain spaces or metacharacters.
@@ -25,7 +32,7 @@ function desktopEscape(s) {
   return s.replace(/[\\$" `'*?();<>|&#~]/g, (c) => '\\' + c);
 }
 
-if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape, boundsOnScreen };
+if (typeof module !== 'undefined') module.exports = { validSessionId, shellQuote, desktopEscape, boundsOnScreen, DEVPIT_LEAF_RE };
 
 // Does a window's saved position still fall INSIDE some active display?
 // Validates against ALL displays (not just the primary): on a multi-monitor

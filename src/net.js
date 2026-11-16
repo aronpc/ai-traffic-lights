@@ -112,12 +112,14 @@ function peerOnline(set, host) {
 // Machine-local fields that do NOT cross the network (they only make sense on this host).
 // tmux_pane focuses the pane on THIS host → local-only; tmux_session (remote attach)
 // is deliberately LEFT OUT — it needs to cross the network to the peer.
+// devpit_pane (src/annotate.js, from DEVPIT_PANE in the pid's environ): a
+// devpit leaf of THIS kernel — same rule, it points at nothing on a peer.
 //
 // TODO NEW FOCUS HINT GOES HERE. The ENV_HINTS fields (src/focus.js)
 // identify a window/tab/pane of THIS kernel; on a peer they point at
 // nothing. test/net.test.js covers the whole list precisely so it fails when
 // someone adds a hint and forgets this line.
-const LOCAL_ONLY = ['windowid', 'focus_url', 'tilix_id', 'iterm_id', 'zellij_session', 'tmux_pane'];
+const LOCAL_ONLY = ['windowid', 'focus_url', 'tilix_id', 'iterm_id', 'zellij_session', 'tmux_pane', 'devpit_pane'];
 
 // Compares the request token against the expected one without leaking timing/length:
 // hashes both (SHA-256 → fixed 32 bytes) and uses timingSafeEqual. Empty token

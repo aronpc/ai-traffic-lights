@@ -157,3 +157,82 @@ test('dir null (conta default do symlink) anota com o config do home', () => {
   t.annotate([s]);
   assert.equal(s.account, 'Default', 'sem a var = conta default, lida e cacheada (válida)');
 });
+
+// ---- devpit_pane: DEVPIT_PANE do environ de TODA sessão local ----
+// Same environ read as the account (same pid cache), but for EVERY agent and
+// BEFORE the Claude gate — devpit marks Codex/OpenCode panes too. The value is
+// a devpit "leaf" id (DEVPIT_LEAF_RE, src/validate.js): anything off the
+// format (or absent) leaves the field null, never garbage.
+const LEAF = 'leaf_ABCDEFGHIJKLMNOPQRSTUVWXYZ';     // leaf_ + 26 chars [0-9A-Z]
+
+test('devpit: sessão local do Claude com DEVPIT_PANE válido ganha devpit_pane (e a conta)', () => {
+  const t = setup({ configs: { '/home/u/.prof-a': { accountName: 'Org Alpha' } } });
+  t.env(100, `DEVPIT_PANE=${LEAF}\0CLAUDE_CONFIG_DIR=/home/u/.prof-a\0`);
+  const s = t.sess(100, 's1');
+  t.annotate([s]);
+  assert.equal(s.devpit_pane, LEAF);
+  assert.equal(s.account, 'Org Alpha', 'anotação de conta segue como antes');
+});
+
+test('devpit: Codex e OpenCode também ganham devpit_pane — leitura ANTES do filtro de conta', () => {
+  const t = setup({});
+  t.env(200, `DEVPIT_PANE=${LEAF}\0`);
+  t.env(300, `DEVPIT_PANE=${LEAF}\0`);
+  const codex = t.sess(200, 'cx1', { agent: 'codex' });
+  const oc = t.sess(300, 'oc1', { agent: 'opencode' });
+  t.annotate([codex, oc]);
+  assert.equal(codex.devpit_pane, LEAF);
+  assert.equal(oc.devpit_pane, LEAF);
+  assert.equal(t.state.reads, 2, 'leu o environ dos pids não-Claude também');
+});
+
+test('devpit: CLAUDE_CONFIG_DIR continua só do Claude — codex com a var NÃO ganha account', () => {
+  const t = setup({ configs: { '/home/u/.prof-a': { accountName: 'Org Alpha' } } });
+  t.env(200, `DEVPIT_PANE=${LEAF}\0CLAUDE_CONFIG_DIR=/home/u/.prof-a\0`);
+  const s = t.sess(200, 'cx1', { agent: 'codex' });
+  t.annotate([s]);
+  assert.equal(s.devpit_pane, LEAF);
+  assert.equal(s.account, undefined, 'sem rótulo de conta para agente não-Claude');
+});
+
+test('devpit: leaf fora do padrão (curto, sem prefixo, minúsculo) vira null', () => {
+  const t = setup({});
+  t.env(100, 'DEVPIT_PANE=leaf_SHORT\0');
+  t.env(101, 'DEVPIT_PANE=notaleaf\0');
+  t.env(102, `DEVPIT_PANE=${LEAF.toLowerCase()}\0`);
+  const a = t.sess(100, 'a');
+  const b = t.sess(101, 'b');
+  const c = t.sess(102, 'c');
+  t.annotate([a, b, c]);
+  assert.equal(a.devpit_pane, null);
+  assert.equal(b.devpit_pane, null);
+  assert.equal(c.devpit_pane, null);
+});
+
+test('devpit: sem DEVPIT_PANE no environ → campo null (checou, não achou)', () => {
+  const t = setup({});
+  t.env(100, 'PATH=/x\0TERM=xterm\0');
+  const s = t.sess(100, 's1');
+  t.annotate([s]);
+  assert.equal(s.devpit_pane, null, 'null distingue "sem pane" de "nem checou"');
+});
+
+test('devpit: cache por pid vale pro pane junto com o dir (mesma leitura)', () => {
+  const t = setup({});
+  t.env(100, `DEVPIT_PANE=${LEAF}\0`);
+  t.annotate([t.sess(100, 's1')]);
+  t.env(100, `DEVPIT_PANE=leaf_${'X'.repeat(26)}\0`);   // environ "mudou" — na vida real é imutável
+  const s2 = t.sess(100, 's1');                     // MESMA sessão: sem re-leitura
+  t.annotate([s2]);
+  assert.equal(t.state.reads, 1, 'pane viaja no MESMO cache de environ do pid');
+  assert.equal(s2.devpit_pane, LEAF, 'valor do cache, não do environ novo');
+});
+
+test('devpit: sessão REMOTA (origin) não é anotada', () => {
+  const t = setup({});
+  t.env(100, `DEVPIT_PANE=${LEAF}\0`);
+  const s = t.sess(100, 'r1', { origin: 'peerhost' });
+  t.annotate([s]);
+  assert.equal(s.devpit_pane, undefined);
+  assert.equal(t.state.reads, 0, 'nem chegou a ler o environ local');
+});

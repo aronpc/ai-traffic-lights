@@ -1,15 +1,21 @@
-// src/annotate.js — Claude account for each LOCAL session (#58 / details
-// modal). Extracted from main to be testable: resolves the account label from
-// the CLAUDE_CONFIG_DIR read out of the pid's environ — the same account
-// discovery as claudeAccountsFromSessions, but per session.
+// src/annotate.js — in-memory annotation of each LOCAL session, from the pid's
+// environ (same /proc read for everything):
+//  • devpit_pane: DEVPIT_PANE for EVERY agent (Claude, Codex, OpenCode...),
+//    stamped BEFORE the Claude account gate below — a devpit leaf marks the
+//    pane the agent runs in, whatever the agent is. Value must match
+//    DEVPIT_LEAF_RE (validate.js); anything off the format or absent → null
+//    (null = "checked, no pane", undefined = "didn't check"). Machine-local:
+//    listed in LOCAL_ONLY (net.js), never crosses the sync.
+//  • account: Claude-only label from CLAUDE_CONFIG_DIR (#58 / details modal) —
+//    the same account discovery as claudeAccountsFromSessions, per session.
 //
 // The cache here holds only what does NOT change over the process's lifetime
-// (environ → dir); the LABEL is recomputed on every call — a nickname renamed
-// in the bar tile (account-labels.json) propagates on the next cycle. Cache
-// invariants (review findings):
-//  • pid → { sid, dir } only enters with the environ READ: getEnviron returns
-//    '' on a dead pid/exec race → do NOT cache (the label would be frozen on
-//    the default account forever), retry on the next cycle;
+// (environ → { dir, pane }); the LABEL is recomputed on every call — a nickname
+// renamed in the bar tile (account-labels.json) propagates on the next cycle.
+// Cache invariants (review findings):
+//  • pid → { sid, dir, pane } only enters with the environ READ: getEnviron
+//    returns '' on a dead pid/exec race → do NOT cache (the label would be
+//    frozen on the default account forever), retry on the next cycle;
 //  • a hit only counts with the SAME session_id — a pid reused by another
 //    process arrives with a different sid and the environ is re-read; a
 //    SYNTHETIC sid (`proc-<pid>`) regenerates itself on a recycled pid and
@@ -21,6 +27,7 @@
 // LOCAL_ONLY.
 
 const { isLocalSession, isSyntheticSessionId } = require('./identity.js');
+const { DEVPIT_LEAF_RE } = require('./validate.js');
 
 function makeAnnotator({
   getEnviron,                      // (pid) → raw environ ('' = unreadable)
@@ -33,17 +40,18 @@ function makeAnnotator({
   labelsFile,                      // ACCOUNT_LABELS_FILE (account-labels.json)
   fs,
 }) {
-  const pidDir = new Map();        // pid → { sid, dir }
+  const pidDir = new Map();        // pid → { sid, dir, pane }
   return function annotate(sessions) {
     if (!Array.isArray(sessions)) return sessions;
     const alive = new Set();
     let labels;                    // lazy: labelsFile 1x per cycle (small file)
     for (const s of sessions) {
-      // LOCAL sessions only: a remote session's pid is a process on the other
-      // machine — probing it in the local /proc can collide with an unrelated
-      // local process. Locals come without origin (collect) or with 'local'
+      // LOCAL sessions with a pid, ANY agent (the devpit pane below is not
+      // Claude's): a remote session's pid is a process on the other machine —
+      // probing it in the local /proc can collide with an unrelated local
+      // process. Locals come without origin (collect) or with 'local'
       // (state file).
-      if (!isLocalSession(s) || agentOf(s) !== 'claude' || !s.pid) continue;
+      if (!isLocalSession(s) || !s.pid) continue;
       alive.add(s.pid);
       const sid = s.session_id || '';
       // SYNTHETIC sid (`proc-<pid>`, /proc discovery): derived from the pid, so
@@ -53,19 +61,36 @@ function makeAnnotator({
       // counts as a hit and never enters the cache (the environ re-read on
       // every cycle is one /proc open per discovered session — cheap).
       const synthetic = isSyntheticSessionId(sid);
+      const claude = agentOf(s) === 'claude';
       let dir;
+      let pane;
       const hit = pidDir.get(s.pid);
       if (hit && hit.sid === sid && !synthetic) {
         dir = hit.dir;             // environ does not change: cache valid for the same process
+        pane = hit.pane;
       } else {
         // '' = unreadable (pid died / fork-exec race / ps failed): do NOT
         // cache — the null/default label would become permanent.
         const raw = getEnviron(s.pid);
         if (!raw) continue;
-        try { dir = parseEnviron(raw, ['CLAUDE_CONFIG_DIR']).CLAUDE_CONFIG_DIR || null; }
+        try {
+          // One environ read feeds both annotations. DEVPIT_PANE is for every
+          // agent (BEFORE the Claude gate right below); CLAUDE_CONFIG_DIR
+          // stays CLAUDE-ONLY — a non-Claude session never resolves an
+          // account from it.
+          const env = parseEnviron(raw, ['DEVPIT_PANE', 'CLAUDE_CONFIG_DIR']);
+          pane = DEVPIT_LEAF_RE.test(env.DEVPIT_PANE || '') ? env.DEVPIT_PANE : null;
+          dir = claude ? (env.CLAUDE_CONFIG_DIR || null) : null;
+        }
         catch { continue; }
-        if (!synthetic) pidDir.set(s.pid, { sid, dir });
+        if (!synthetic) pidDir.set(s.pid, { sid, dir, pane });
       }
+      // Stamped for every local session whose environ was read: valid leaf →
+      // the id, absent/off-format → null (distinct from undefined = unchecked,
+      // e.g. remote session or unreadable environ).
+      s.devpit_pane = pane;
+      // Claude account label — the gate sits BELOW the devpit read above.
+      if (!claude) continue;
       // Label resolves on EVERY call (only the dir is cached): a rename in the
       // tile changes account-labels.json and the details modal sees it on the
       // next cycle.
