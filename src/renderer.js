@@ -98,6 +98,19 @@ function openEmbedded(s) {
   window.trafficLight.attachRemote(s.origin || 'local', s.tmux_session, s.cwd, aliases[k] || '', k, labelFor(s));
 }
 
+// Opens the session's pane in the devpit desktop app (LOCAL sessions stamped
+// with devpit_pane — annotate.js reads it from DEVPIT_PANE, LOCAL_ONLY). Every
+// failure — binary missing (ENOENT → {ok:false, motivo:'ausente'}), invalid
+// pane, IPC itself — falls back to the row's pre-devpit click behavior (focus
+// the terminal): the user still gets a terminal in front of them, never a
+// dead click.
+async function openInDevpit(s) {
+  let res = null;
+  try { res = await window.trafficLight.openDevpit(s.devpit_pane); }
+  catch { res = null; }
+  if (!res || !res.ok) openExternal(s);
+}
+
 function setExpanded(v) {
   expanded = v;
   // List disappears when collapsed (becomes just header + footer). It also hides
@@ -473,12 +486,15 @@ function render() {
       }
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        // LOCAL session: the click focuses the terminal WHERE IT ALREADY RUNS (Warp/Tilix/…).
-        // Before, any session with tmux_session was attached in the embedded terminal
-        // — the click stopped focusing the original terminal, which is the expected
-        // behavior. Opening in the ATL terminal became an explicit option (⧉ button).
-        // REMOTE: there is no local window to focus → embedded attach (or panel).
-        if (isLocal(s)) openExternal(s);
+        // What the click does is decided by rowAction (devpit.js — pure; the
+        // hover action calls the SAME function, so they can never disagree).
+        // 'focus' keeps the pre-devpit behavior: the click focuses the terminal
+        // WHERE the session ALREADY RUNS (Warp/Tilix/…) — not the embedded one;
+        // opening in the ATL terminal stayed an explicit option (⧉ button).
+        // 'remote' has no local window to focus → embedded attach (or panel).
+        const act = rowAction(s);
+        if (act === 'devpit') openInDevpit(s);
+        else if (act === 'focus') openExternal(s);
         else if (s.tmux_session) openEmbedded(s);
         else openTranscriptPanel(s);
       }, 220);
@@ -571,7 +587,10 @@ function render() {
     const mkAction = (glyph, tipKey, fn) => {
       const b = document.createElement('button');
       b.className = 'row__action';
-      b.textContent = glyph;
+      // glyph: a text glyph (⧉) or an inline SVG string (the devpit icon).
+      // Both are literals from THIS file, never user data → innerHTML is safe.
+      if (glyph.startsWith('<svg')) b.innerHTML = glyph;
+      else b.textContent = glyph;
       b.setAttribute('data-tip', T(tipKey));
       b.addEventListener('click', (e) => { e.stopPropagation(); fn(s); });
       return b;
@@ -580,6 +599,14 @@ function render() {
     // AND being local — on remote the row click ALREADY opens the embedded one, because
     // there is no local window to focus.
     if (isLocal(s) && s.tmux_session) actions.append(mkAction('⧉', 'row_open_embedded', openEmbedded));
+    // Devpit (quadrado com >_): local session stamped with devpit_pane. The
+    // SAME rowAction that routes the row click decides the button — and it
+    // never fires for remote (the pane lives on the origin machine).
+    if (rowAction(s) === 'devpit') {
+      actions.append(mkAction(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12.5 15H17"/></svg>',
+        'row_open_devpit', openInDevpit));
+    }
     li.append(actions);
 
     // Alert snooze (red only): doesn't clear the color, only silences the beep/notif.

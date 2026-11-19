@@ -33,7 +33,7 @@ test('exportSession: remove TODO campo machine-local e seta origin', () => {
     {
       session_id: 's1', pid: 1, cwd: '/x', model: 'glm-5.2',
       windowid: 99, focus_url: 'warp://x', tilix_id: 't', iterm_id: 'w0t0p0:u',
-      zellij_session: 'z', tmux_pane: '%7',
+      zellij_session: 'z', tmux_pane: '%7', devpit_pane: 'leaf_ABCDEFGHIJKLMNOPQRSTUVWXYZ',
     },
     'alienware',
   );
