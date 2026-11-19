@@ -114,8 +114,11 @@ export const AiTrafficLights = async ({ directory, $ }) => {
   const captureWindow = async () => {
     if (!process.env.DISPLAY) return
     try {
-      const r = await $`xdotool getactivewindow`.quiet().nothrow()
-      const out = (r?.stdout?.toString() || "").trim()
+      const out = execSync("xdotool getactivewindow", {
+        encoding: "utf8",
+        timeout: 1000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim()
       if (/^\d+$/.test(out)) capturedWin = out
     } catch {}
   }
@@ -178,4 +181,52 @@ export const AiTrafficLights = async ({ directory, $ }) => {
       } catch {}
     },
   }
+}
+
+// V2 plugin entrypoint. OpenCode 2.x requires a default export with an `id`
+// and a `setup` (or `effect`) function. The V1 factory above is kept as-is
+// (and exported by name) so the existing adapter contract and tests continue
+// to work; this bridge re-registers its hooks through the V2 context.
+export default {
+  id: "ai-traffic-lights",
+  async setup(ctx) {
+    const directory = (ctx && ctx.location && ctx.location.directory) || process.cwd()
+    const hooks = await AiTrafficLights({ directory, $: null })
+
+    try {
+      await ctx.session.hook("prompt", async (event) => {
+        try {
+          const sid = event && event.sessionID
+          await hooks["chat.message"]?.({ sessionID: sid }, { message: { sessionID: sid } })
+        } catch {}
+      })
+    } catch {}
+
+    try {
+      await ctx.tool.hook("execute.before", async (event) => {
+        try {
+          await hooks["tool.execute.before"]?.({ tool: event && event.tool, sessionID: event && event.sessionID })
+        } catch {}
+      })
+    } catch {}
+
+    try {
+      await ctx.tool.hook("execute.after", async (event) => {
+        try {
+          await hooks["tool.execute.after"]?.({ tool: event && event.tool, sessionID: event && event.sessionID })
+        } catch {}
+      })
+    } catch {}
+
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        for await (const e of ctx.event.subscribe({ signal: controller.signal })) {
+          try { await hooks.event?.({ event: e }) } catch {}
+        }
+      } catch {}
+    })()
+
+    return () => controller.abort()
+  },
 }
