@@ -53,6 +53,13 @@ test('mergeWithDefaults: showUsage (footer uso vs launcher) default true, aceita
   assert.equal(mergeWithDefaults({ showUsage: 'x' }).showUsage, true); // invalid → default
 });
 
+test('mergeWithDefaults: hideFooter default false, aceita bool', () => {
+  assert.equal(DEFAULTS.hideFooter, false);
+  assert.equal(mergeWithDefaults({}).hideFooter, false);
+  assert.equal(mergeWithDefaults({ hideFooter: true }).hideFooter, true);
+  assert.equal(mergeWithDefaults({ hideFooter: 'x' }).hideFooter, false); // invalid → default
+});
+
 test('mergeWithDefaults: collapsed (estado da janela) default false, aceita bool', () => {
   assert.equal(DEFAULTS.collapsed, false);
   assert.equal(mergeWithDefaults({}).collapsed, false);

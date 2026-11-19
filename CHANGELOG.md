@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Opção para ocultar completamente o rodapé.** Novo checkbox "Ocultar rodapé"
+  em Preferências → Aparência (`hideFooter`): esconde tanto as barras de consumo
+  quanto os atalhos de lançador rápido, recolhendo a janela para a altura mínima
+  apenas com os semáforos e ocultando o botão `⊞` do cabeçalho.
 - **Metainfo AppStream no AppImage.** `build/dev.aitrafficlights.app.metainfo.xml`
   entra em `usr/share/metainfo/` via `linux.extraFiles`, com descrição e
   screenshots (`overlay.png`, `preferences.png`). O catálogo
